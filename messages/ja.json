@@ -1,0 +1,30 @@
+{
+  "Header": {
+    "title": "韓日青年交流"
+  },
+  "Nav": {
+    "home": "ホーム",
+    "info": "情報",
+    "qna": "質問"
+  },
+  "Home": {
+    "sectionTitle": "最新キュレーション",
+    "cardTag": "ビザ / VISA",
+    "cardTitle": "外国人登録証 スピード発給ガイドライン",
+    "cardBody": "出入国管理事務所を訪れる前に必ずチェックすべき必要書類と、Hi Korea（ハイコリア）の予約を素早く取るコツをまとめました。",
+    "cta": "初回ミーティングに申し込む"
+  },
+  "Qna": {
+    "title": "質問と回答",
+    "nicknamePlaceholder": "ニックネーム",
+    "contentPlaceholder": "気になることを自由に書き込んでください。",
+    "submit": "質問を投稿する",
+    "submitting": "送信中...",
+    "loading": "読み込み中...",
+    "empty": "まだ質問がありません。最初の質問を投稿してみましょう！"
+  },
+  "InfoDetail": {
+    "back": "一覧へ戻る",
+    "publishedAt": "投稿日"
+  }
+}

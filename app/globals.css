@@ -1,26 +1,32 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Theme A: Zenith Canvas — 절제된 미니멀리즘 팔레트
+ * Tailwind v4에서는 tailwind.config.ts 대신 @theme으로 디자인 토큰을 등록한다.
+ *  - canvas        : 앱 전역 바탕(따뜻한 오프화이트)
+ *  - canvas-white  : 헤더/네비 등 표면(순백)
+ *  - ink           : 기본 텍스트(웜 블랙)
+ *  - ink-sub       : 보조 텍스트(뮤트 그레이)
+ *  - stone         : 옅은 구분선/테두리
+ *  - turquoise     : 액센트(메인 CTA 전용, 절제 사용)
+ */
+@theme {
+  --color-canvas: #f5f4f1;
+  --color-canvas-white: #ffffff;
+  --color-ink: #1c1c1a;
+  --color-ink-sub: #78776f;
+  --color-stone: #e7e5df;
+  --color-turquoise: #12b5a8;
+
+  /* 미묘한 표면 대비를 위한 프리미엄 소프트 엘리베이션 */
+  --shadow-premium-sm: 0 4px 20px rgba(0, 0, 0, 0.04);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }

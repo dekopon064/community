@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Serwist가 생성하는 서비스 워커 산출물 (수정 대상 아님)
+    "public/sw.js",
+    "public/swe-worker-*.js",
   ]),
 ]);
 
