@@ -44,3 +44,7 @@ next-env.d.ts
 public/sw.js
 public/sw.js.map
 public/swe-worker-*.js
+
+# python
+__pycache__/
+*.pyc

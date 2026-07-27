@@ -7,6 +7,7 @@ AI 가공(요약/카테고리 분류 등) 로직은 추후 이 스크립트에 �
 import os
 import re
 import sys
+import uuid
 from datetime import datetime, timezone
 
 from supabase import Client, create_client
@@ -35,12 +36,16 @@ def get_supabase_client() -> Client:
 def slugify(title: str, index: int) -> str:
     """제목을 기반으로 URL 친화적인 slug 를 생성한다.
 
-    한글 등 영숫자가 아닌 문자는 제거되므로, 뒤에 타임스탬프와 인덱스를 붙여
-    고유성을 확보한다. 같은 초에 여러 건이 처리돼도 index 로 충돌을 방지한다.
+    한글 등 영숫자가 아닌 문자는 제거되므로, 뒤에 타임스탬프 + 루프 인덱스 +
+    짧은 랜덤 텍스트를 강제로 결합해 무조건 고유한 값이 되도록 만든다.
+    이렇게 하면 같은 초에 여러 건이 처리되거나, 서로 다른 실행이 같은 초에
+    겹쳐도 slug 충돌이 발생하지 않는다.
     """
     base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"{base or 'policy'}-{suffix}-{index}"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    # uuid 앞 6자리로 실행 간 충돌까지 방지
+    unique = uuid.uuid4().hex[:6]
+    return f"{base or 'policy'}-{timestamp}-{index}-{unique}"
 
 
 def fetch_sample_policies() -> list[dict]:
