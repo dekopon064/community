@@ -10,10 +10,17 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
+import feedparser
 from supabase import Client, create_client
 
 # 앱과 동일한 테이블을 사용한다 (app/lib/types.ts 의 Curation 스키마 참고)
 TABLE_NAME = "curations"
+
+# 대한민국 정책브리핑 정책 RSS 피드
+POLICY_RSS_URL = "https://www.korea.kr/rss/policy.xml"
+
+# 한 번에 수집할 최신 글 개수
+MAX_ITEMS = 5
 
 
 def get_supabase_client() -> Client:
@@ -48,39 +55,36 @@ def slugify(title: str, index: int) -> str:
     return f"{base or 'policy'}-{timestamp}-{index}-{unique}"
 
 
-def fetch_sample_policies() -> list[dict]:
-    """샘플 청년 정책 데이터를 생성한다.
+def strip_html(raw: str) -> str:
+    """HTML 태그를 제거하고 공백을 정리해 순수 텍스트만 반환한다."""
+    if not raw:
+        return ""
+    # <br>, <p> 등 태그를 제거하고, 연속 공백/개행을 하나로 정리
+    text = re.sub(r"<[^>]+>", " ", raw)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
-    추후 실제 공공데이터 API 호출로 교체될 함수이다.
-    각 항목은 원본 제목(title)과 원본 내용(content)만 담고 있으며,
-    요약/카테고리 등의 가공은 이후 단계에서 채워진다.
+
+def fetch_real_policies() -> list[dict]:
+    """정책브리핑 RSS 피드를 파싱해 최신 정책 글을 가져온다.
+
+    RSS 의 title(제목)과 description(내용)을 추출하며,
+    description 에 포함된 HTML 태그는 정규식으로 제거해 순수 텍스트만 남긴다.
     """
-    return [
-        {
-            "title": "청년월세 특별지원",
-            "content": (
-                "만 19~34세 무주택 청년을 대상으로 월 최대 20만원의 임대료를 "
-                "최대 12개월간 지원하는 사업입니다. 소득 및 재산 요건 충족 시 "
-                "복지로 또는 주소지 관할 주민센터를 통해 신청할 수 있습니다."
-            ),
-        },
-        {
-            "title": "청년내일저축계좌",
-            "content": (
-                "근로 중인 저소득 청년이 매월 일정 금액을 저축하면 정부가 "
-                "동일하거나 그 이상 금액을 매칭 지원하여 목돈 마련을 돕는 자산형성 "
-                "사업입니다. 가입 기간 동안 근로를 유지해야 지원금을 받을 수 있습니다."
-            ),
-        },
-        {
-            "title": "국민취업지원제도",
-            "content": (
-                "취업을 희망하는 청년에게 취업지원 서비스와 함께 구직촉진수당을 "
-                "제공하는 제도입니다. 유형에 따라 소득·재산 요건이 다르며, "
-                "고용센터 또는 워크넷을 통해 신청할 수 있습니다."
-            ),
-        },
-    ]
+    feed = feedparser.parse(POLICY_RSS_URL)
+
+    policies: list[dict] = []
+    for entry in feed.entries[:MAX_ITEMS]:
+        title = strip_html(getattr(entry, "title", "")).strip()
+        content = strip_html(getattr(entry, "description", "")).strip()
+
+        # 제목이나 내용이 비어 있으면 저장 가치가 없으므로 건너뛴다
+        if not title or not content:
+            continue
+
+        policies.append({"title": title, "content": content})
+
+    return policies
 
 
 def save_policies(supabase: Client, policies: list[dict]) -> int:
@@ -119,9 +123,13 @@ def main() -> None:
     print("[pipeline] Supabase 클라이언트 초기화 중...")
     supabase = get_supabase_client()
 
-    print("[pipeline] 샘플 청년 정책 데이터 수집 중...")
-    policies = fetch_sample_policies()
-    print(f"[pipeline] {len(policies)}건의 샘플 데이터를 생성했습니다.")
+    print("[pipeline] 정책브리핑 RSS 피드 수집 중...")
+    policies = fetch_real_policies()
+    print(f"[pipeline] {len(policies)}건의 정책 데이터를 수집했습니다.")
+
+    if not policies:
+        print("[pipeline] 수집된 데이터가 없어 저장을 건너뜁니다.")
+        return
 
     print("[pipeline] Supabase 저장 중...")
     saved = save_policies(supabase, policies)
