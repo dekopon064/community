@@ -32,14 +32,15 @@ def get_supabase_client() -> Client:
     return create_client(supabase_url, supabase_service_key)
 
 
-def slugify(title: str) -> str:
+def slugify(title: str, index: int) -> str:
     """제목을 기반으로 URL 친화적인 slug 를 생성한다.
 
-    한글 등 영숫자가 아닌 문자는 제거되므로, 뒤에 타임스탬프를 붙여 고유성을 확보한다.
+    한글 등 영숫자가 아닌 문자는 제거되므로, 뒤에 타임스탬프와 인덱스를 붙여
+    고유성을 확보한다. 같은 초에 여러 건이 처리돼도 index 로 충돌을 방지한다.
     """
     base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"{base or 'policy'}-{suffix}"
+    return f"{base or 'policy'}-{suffix}-{index}"
 
 
 def fetch_sample_policies() -> list[dict]:
@@ -82,15 +83,16 @@ def save_policies(supabase: Client, policies: list[dict]) -> int:
 
     테이블은 slug, category, title, summary, content 컬럼을 요구한다.
     category / summary 는 AI 가공 전이므로 임시 값으로 채운다.
+    이미 존재하는 slug 라면 에러 대신 덮어쓰기(upsert)한다.
     저장에 성공한 행 수를 반환한다.
     """
     rows = []
-    for policy in policies:
+    for index, policy in enumerate(policies, start=1):
         title = policy["title"]
         content = policy["content"]
         rows.append(
             {
-                "slug": slugify(title),
+                "slug": slugify(title, index),
                 # AI 가공(카테고리 분류) 전 임시 값
                 "category": "청년정책",
                 "title": title,
@@ -100,7 +102,10 @@ def save_policies(supabase: Client, policies: list[dict]) -> int:
             }
         )
 
-    response = supabase.table(TABLE_NAME).insert(rows).execute()
+    # slug 가 겹치면 기존 행을 덮어쓰도록 upsert 사용 (unique 제약 위반 방지)
+    response = (
+        supabase.table(TABLE_NAME).upsert(rows, on_conflict="slug").execute()
+    )
     saved = len(response.data or [])
     return saved
 
