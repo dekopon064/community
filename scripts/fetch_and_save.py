@@ -16,8 +16,14 @@ from supabase import Client, create_client
 # 앱과 동일한 테이블을 사용한다 (app/lib/types.ts 의 Curation 스키마 참고)
 TABLE_NAME = "curations"
 
-# 대한민국 정책브리핑 정책 RSS 피드
-POLICY_RSS_URL = "https://www.korea.kr/rss/policy.xml"
+# 구글 뉴스 RSS (검색어: 청년 정책, 최근 1일)
+# 온통청년 API 승인 전까지 임시로 사용
+# 한글 검색어는 GitHub Actions 등 환경별 인코딩 문제를 피하려고 URL 인코딩해 둔다
+# (%EC%B2%AD%EB%85%84 = 청년, %EC%A0%95%EC%B1%85 = 정책)
+POLICY_RSS_URL = (
+    "https://news.google.com/rss/search?"
+    "q=%EC%B2%AD%EB%85%84+%EC%A0%95%EC%B1%85+when:1d&hl=ko&gl=KR&ceid=KR:ko"
+)
 
 # 한 번에 수집할 최신 글 개수
 MAX_ITEMS = 5
@@ -66,17 +72,21 @@ def strip_html(raw: str) -> str:
 
 
 def fetch_real_policies() -> list[dict]:
-    """정책브리핑 RSS 피드를 파싱해 최신 정책 글을 가져온다.
+    """구글 뉴스 RSS 피드를 파싱해 최신 청년 정책 관련 글을 가져온다.
 
-    RSS 의 title(제목)과 description(내용)을 추출하며,
-    description 에 포함된 HTML 태그는 정규식으로 제거해 순수 텍스트만 남긴다.
+    RSS 의 title(제목)과 본문(description/summary)을 추출하며,
+    HTML 태그는 strip_html 로 제거해 순수 텍스트만 남긴다.
     """
     feed = feedparser.parse(POLICY_RSS_URL)
 
     policies: list[dict] = []
     for entry in feed.entries[:MAX_ITEMS]:
         title = strip_html(getattr(entry, "title", "")).strip()
-        content = strip_html(getattr(entry, "description", "")).strip()
+        # 구글 뉴스는 description 에 본문을 담으며, 일부는 summary 로 노출된다
+        raw_content = getattr(entry, "description", "") or getattr(
+            entry, "summary", ""
+        )
+        content = strip_html(raw_content).strip()
 
         # 제목이나 내용이 비어 있으면 저장 가치가 없으므로 건너뛴다
         if not title or not content:
@@ -123,12 +133,12 @@ def main() -> None:
     print("[pipeline] Supabase 클라이언트 초기화 중...")
     supabase = get_supabase_client()
 
-    print("[pipeline] 정책브리핑 RSS 피드 수집 중...")
+    print("[pipeline] 구글 뉴스 RSS 피드 수집 중...")
     policies = fetch_real_policies()
     print(f"[pipeline] {len(policies)}건의 정책 데이터를 수집했습니다.")
 
     if not policies:
-        print("[pipeline] 수집된 데이터가 없어 저장을 건너뜁니다.")
+        print("[pipeline] 수집된 데이터가 0건입니다")
         return
 
     print("[pipeline] Supabase 저장 중...")
