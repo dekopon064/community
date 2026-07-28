@@ -8,7 +8,6 @@ import os
 import re
 import sys
 import uuid
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 import requests
@@ -17,8 +16,8 @@ from supabase import Client, create_client
 # 앱과 동일한 테이블을 사용한다 (app/lib/types.ts 의 Curation 스키마 참고)
 TABLE_NAME = "curations"
 
-# 온통청년 청년정책 오픈 API 엔드포인트 (공식 청년정책 목록 조회)
-YOUTH_API_URL = "https://www.youthcenter.go.kr/opi/youthPlcyList.do"
+# 온통청년 청년정책 오픈 API 엔드포인트 (최신 JSON 스펙)
+YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
 
 # 한 번에 수집할 정책 개수
 MAX_ITEMS = 5
@@ -70,11 +69,11 @@ def strip_html(raw: str) -> str:
 
 
 def fetch_real_policies() -> list[dict]:
-    """온통청년 청년정책 오픈 API 를 호출해 정책 데이터를 가져온다.
+    """온통청년 청년정책 오픈 API(최신 JSON 스펙)를 호출해 정책 데이터를 가져온다.
 
-    응답은 XML 이며, requests 로 받아 xml.etree.ElementTree 로 파싱한다.
-    각 정책의 제목(polyBizSjnm)과 소개(polyItcnCn)를 추출하고,
-    소개에 포함된 HTML 태그는 strip_html 로 제거해 순수 텍스트만 남긴다.
+    응답은 JSON 이며, result.youthPolicyList 배열을 순회한다.
+    각 정책의 제목(plcyNm)과 정책설명(plcyExplnCn) + 지원내용(plcySprtCn)을
+    합쳐 strip_html 로 HTML 태그를 제거한 뒤 저장한다.
     API 키가 없으면 에러 대신 경고를 출력하고 빈 리스트를 반환한다.
     """
     api_key = os.environ.get("YOUTH_API_KEY")
@@ -85,9 +84,11 @@ def fetch_real_policies() -> list[dict]:
         return []
 
     params = {
-        "openApiVlak": api_key,
-        "display": MAX_ITEMS,
-        "pageIndex": 1,
+        "apiKeyNm": api_key,
+        "pageNum": 1,
+        "pageSize": MAX_ITEMS,
+        "pageType": 1,
+        "rtnType": "json",
     }
 
     # 온통청년 방화벽이 python-requests 기본 User-Agent 를 차단하므로
@@ -112,13 +113,17 @@ def fetch_real_policies() -> list[dict]:
     )
     response.raise_for_status()
 
-    root = ET.fromstring(response.content)
+    data = response.json()
+    policy_list = data.get("result", {}).get("youthPolicyList", [])
 
     policies: list[dict] = []
-    # youthPlcyList.do 응답은 <youthPolicyList> 안에 <youthPolicy> 항목이 반복된다
-    for item in root.iter("youthPolicy"):
-        title = (item.findtext("polyBizSjnm") or "").strip()
-        content = strip_html(item.findtext("polyItcnCn") or "").strip()
+    for policy in policy_list:
+        title = policy.get("plcyNm", "").strip()
+        # 정책설명 + 지원내용을 합쳐 본문을 구성한 뒤 HTML 태그를 제거한다
+        raw_content = (
+            f"{policy.get('plcyExplnCn', '')}\n\n{policy.get('plcySprtCn', '')}"
+        )
+        content = strip_html(raw_content).strip()
 
         # 제목이나 내용이 비어 있으면 저장 가치가 없으므로 건너뛴다
         if not title or not content:
