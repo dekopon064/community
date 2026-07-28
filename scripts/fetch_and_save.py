@@ -1,7 +1,7 @@
 """자동 데이터 수집 및 DB 저장 파이프라인.
 
-온통청년 청년정책 오픈 API 에서 정책 데이터를 수집해 Supabase `curations`
-테이블에 저장한다. AI 가공(요약/카테고리 분류 등) 로직은 추후 추가될 예정이다.
+온통청년 청년정책 오픈 API 에서 정책 데이터를 수집하고, Gemini 로 읽기 쉬운
+마크다운 요약으로 가공한 뒤 Supabase `curations` 테이블에 저장한다.
 """
 
 import os
@@ -12,6 +12,15 @@ from datetime import datetime, timezone
 
 import requests
 from supabase import Client, create_client
+
+# google-generativeai 미설치 등 임포트 실패 시에도 파이프라인이 죽지 않도록 방어한다
+try:
+    import google.generativeai as genai
+
+    _GENAI_AVAILABLE = True
+except ImportError:
+    genai = None
+    _GENAI_AVAILABLE = False
 
 # 앱과 동일한 테이블을 사용한다 (app/lib/types.ts 의 Curation 스키마 참고)
 TABLE_NAME = "curations"
@@ -24,6 +33,21 @@ MAX_ITEMS = 5
 
 # API 응답 대기 최대 시간(초)
 REQUEST_TIMEOUT = 15
+
+# Gemini 요약 모델 및 지시사항(시스템 프롬프트)
+GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_SYSTEM_PROMPT = (
+    "너는 청년 정책을 아주 친절하고 알기 쉽게 요약해 주는 전문 에디터야. "
+    "제공된 정책 원문을 분석해서, [🎯 지원 대상], [💰 지원 내용], "
+    "[🗓️ 신청 기간 및 방법] 등의 소제목(Bold 처리)을 포함한 깔끔한 마크다운 "
+    "리스트 형태로 요약해 줘. 불필요한 HTML 태그나 특수문자는 빼고 가독성 좋게 "
+    "만들어 줘."
+)
+
+# Gemini API 키를 읽어 클라이언트를 초기화한다 (키가 없으면 요약을 건너뛴다)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if _GENAI_AVAILABLE and GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 
 def get_supabase_client() -> Client:
@@ -66,6 +90,32 @@ def strip_html(raw: str) -> str:
     text = re.sub(r"<[^>]+>", " ", raw)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def summarize_with_gemini(raw_text: str) -> str:
+    """정책 원문을 Gemini 로 읽기 쉬운 마크다운 요약으로 가공한다.
+
+    키가 없거나(패키지 미설치 포함) 호출 중 에러가 나면, 파이프라인을 멈추지 않고
+    원본 텍스트(raw_text)를 그대로 반환한다.
+    """
+    if not raw_text:
+        return raw_text
+
+    if not _GENAI_AVAILABLE or not GEMINI_API_KEY:
+        print("[pipeline] 경고: Gemini 사용 불가(키/패키지 없음), 원본을 사용합니다.")
+        return raw_text
+
+    try:
+        model = genai.GenerativeModel(
+            GEMINI_MODEL, system_instruction=GEMINI_SYSTEM_PROMPT
+        )
+        response = model.generate_content(raw_text)
+        summary = (getattr(response, "text", "") or "").strip()
+        # 응답이 비어 있으면(안전 필터 등) 원본을 그대로 사용
+        return summary or raw_text
+    except Exception as exc:  # noqa: BLE001 - 요약 실패 시 원본으로 폴백
+        print(f"[pipeline] Gemini 요약 실패, 원본을 사용합니다: {exc}")
+        return raw_text
 
 
 def fetch_real_policies() -> list[dict]:
@@ -129,7 +179,10 @@ def fetch_real_policies() -> list[dict]:
         if not title or not content:
             continue
 
-        policies.append({"title": title, "content": content})
+        # 원문을 Gemini 로 마크다운 요약 가공 (실패 시 원본 그대로 사용)
+        ai_content = summarize_with_gemini(content)
+
+        policies.append({"title": title, "content": ai_content})
 
         if len(policies) >= MAX_ITEMS:
             break
