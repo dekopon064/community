@@ -1,32 +1,30 @@
-"""자동 데이터 수집 및 DB 저장 파이프라인 (1단계 뼈대).
+"""자동 데이터 수집 및 DB 저장 파이프라인.
 
-현재는 샘플 청년 정책 데이터를 생성하여 Supabase `curations` 테이블에 저장한다.
-AI 가공(요약/카테고리 분류 등) 로직은 추후 이 스크립트에 추가될 예정이다.
+온통청년 청년정책 오픈 API 에서 정책 데이터를 수집해 Supabase `curations`
+테이블에 저장한다. AI 가공(요약/카테고리 분류 등) 로직은 추후 추가될 예정이다.
 """
 
 import os
 import re
 import sys
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-import feedparser
+import requests
 from supabase import Client, create_client
 
 # 앱과 동일한 테이블을 사용한다 (app/lib/types.ts 의 Curation 스키마 참고)
 TABLE_NAME = "curations"
 
-# 구글 뉴스 RSS (검색어: 청년 정책, 최근 1일)
-# 온통청년 API 승인 전까지 임시로 사용
-# 한글 검색어는 GitHub Actions 등 환경별 인코딩 문제를 피하려고 URL 인코딩해 둔다
-# (%EC%B2%AD%EB%85%84 = 청년, %EC%A0%95%EC%B1%85 = 정책)
-POLICY_RSS_URL = (
-    "https://news.google.com/rss/search?"
-    "q=%EC%B2%AD%EB%85%84+%EC%A0%95%EC%B1%85+when:1d&hl=ko&gl=KR&ceid=KR:ko"
-)
+# 온통청년 청년정책 오픈 API 엔드포인트
+YOUTH_API_URL = "https://www.youthcenter.go.kr/opi/empList.do"
 
-# 한 번에 수집할 최신 글 개수
+# 한 번에 수집할 정책 개수
 MAX_ITEMS = 5
+
+# API 응답 대기 최대 시간(초)
+REQUEST_TIMEOUT = 15
 
 
 def get_supabase_client() -> Client:
@@ -72,27 +70,46 @@ def strip_html(raw: str) -> str:
 
 
 def fetch_real_policies() -> list[dict]:
-    """구글 뉴스 RSS 피드를 파싱해 최신 청년 정책 관련 글을 가져온다.
+    """온통청년 청년정책 오픈 API 를 호출해 정책 데이터를 가져온다.
 
-    RSS 의 title(제목)과 본문(description/summary)을 추출하며,
-    HTML 태그는 strip_html 로 제거해 순수 텍스트만 남긴다.
+    응답은 XML 이며, requests 로 받아 xml.etree.ElementTree 로 파싱한다.
+    각 정책의 제목(polyBizSjnm)과 소개(polyItcnCn)를 추출하고,
+    소개에 포함된 HTML 태그는 strip_html 로 제거해 순수 텍스트만 남긴다.
+    API 키가 없으면 에러 대신 경고를 출력하고 빈 리스트를 반환한다.
     """
-    feed = feedparser.parse(POLICY_RSS_URL)
+    api_key = os.environ.get("YOUTH_API_KEY")
+    if not api_key:
+        print(
+            "[pipeline] 경고: 환경 변수 YOUTH_API_KEY 가 설정되지 않아 수집을 중단합니다."
+        )
+        return []
+
+    params = {
+        "openApiVocaIemCode": api_key,
+        "display": MAX_ITEMS,
+        "pageIndex": 1,
+    }
+
+    response = requests.get(
+        YOUTH_API_URL, params=params, timeout=REQUEST_TIMEOUT
+    )
+    response.raise_for_status()
+
+    root = ET.fromstring(response.content)
 
     policies: list[dict] = []
-    for entry in feed.entries[:MAX_ITEMS]:
-        title = strip_html(getattr(entry, "title", "")).strip()
-        # 구글 뉴스는 description 에 본문을 담으며, 일부는 summary 로 노출된다
-        raw_content = getattr(entry, "description", "") or getattr(
-            entry, "summary", ""
-        )
-        content = strip_html(raw_content).strip()
+    for item in root.iter("emp"):
+        title = (item.findtext("polyBizSjnm") or "").strip()
+        content = strip_html(item.findtext("polyItcnCn") or "").strip()
 
         # 제목이나 내용이 비어 있으면 저장 가치가 없으므로 건너뛴다
         if not title or not content:
             continue
 
         policies.append({"title": title, "content": content})
+
+        if len(policies) >= MAX_ITEMS:
+            break
 
     return policies
 
@@ -133,7 +150,7 @@ def main() -> None:
     print("[pipeline] Supabase 클라이언트 초기화 중...")
     supabase = get_supabase_client()
 
-    print("[pipeline] 구글 뉴스 RSS 피드 수집 중...")
+    print("[pipeline] 온통청년 API 정책 데이터 수집 중...")
     policies = fetch_real_policies()
     print(f"[pipeline] {len(policies)}건의 정책 데이터를 수집했습니다.")
 
