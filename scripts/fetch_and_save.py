@@ -90,8 +90,22 @@ def fetch_real_policies() -> list[dict]:
         "pageIndex": 1,
     }
 
+    # 온통청년 방화벽이 python-requests 기본 User-Agent 를 차단하므로
+    # 일반 크롬 브라우저처럼 보이도록 헤더를 위장한다
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/xml, text/xml, */*; q=0.01",
+    }
+
     response = requests.get(
-        YOUTH_API_URL, params=params, timeout=REQUEST_TIMEOUT
+        YOUTH_API_URL,
+        params=params,
+        headers=headers,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
 
