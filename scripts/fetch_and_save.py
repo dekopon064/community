@@ -17,8 +17,8 @@ from supabase import Client, create_client
 # 앱과 동일한 테이블을 사용한다 (app/lib/types.ts 의 Curation 스키마 참고)
 TABLE_NAME = "curations"
 
-# 온통청년 청년정책 오픈 API 엔드포인트
-YOUTH_API_URL = "https://www.youthcenter.go.kr/opi/empList.do"
+# 온통청년 청년정책 오픈 API 엔드포인트 (공식 청년정책 목록 조회)
+YOUTH_API_URL = "https://www.youthcenter.go.kr/opi/youthPlcyList.do"
 
 # 한 번에 수집할 정책 개수
 MAX_ITEMS = 5
@@ -85,7 +85,7 @@ def fetch_real_policies() -> list[dict]:
         return []
 
     params = {
-        "openApiVocaIemCode": api_key,
+        "openApiVlak": api_key,
         "display": MAX_ITEMS,
         "pageIndex": 1,
     }
@@ -101,18 +101,22 @@ def fetch_real_policies() -> list[dict]:
         "Accept": "application/xml, text/xml, */*; q=0.01",
     }
 
+    # allow_redirects=False: 잘못된 요청 시 서버가 8080 포트로 리다이렉트하는데
+    # 해당 포트는 외부(GitHub Actions)에서 접근이 막혀 타임아웃되므로 따라가지 않는다
     response = requests.get(
         YOUTH_API_URL,
         params=params,
         headers=headers,
         timeout=REQUEST_TIMEOUT,
+        allow_redirects=False,
     )
     response.raise_for_status()
 
     root = ET.fromstring(response.content)
 
     policies: list[dict] = []
-    for item in root.iter("emp"):
+    # youthPlcyList.do 응답은 <youthPolicyList> 안에 <youthPolicy> 항목이 반복된다
+    for item in root.iter("youthPolicy"):
         title = (item.findtext("polyBizSjnm") or "").strip()
         content = strip_html(item.findtext("polyItcnCn") or "").strip()
 
