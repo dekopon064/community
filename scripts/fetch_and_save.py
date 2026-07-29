@@ -13,13 +13,15 @@ from datetime import datetime, timezone
 import requests
 from supabase import Client, create_client
 
-# google-generativeai 미설치 등 임포트 실패 시에도 파이프라인이 죽지 않도록 방어한다
+# google-genai 미설치 등 임포트 실패 시에도 파이프라인이 죽지 않도록 방어한다
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
     _GENAI_AVAILABLE = True
 except ImportError:
     genai = None
+    types = None
     _GENAI_AVAILABLE = False
 
 # 앱과 동일한 테이블을 사용한다 (app/lib/types.ts 의 Curation 스키마 참고)
@@ -35,7 +37,7 @@ MAX_ITEMS = 5
 REQUEST_TIMEOUT = 15
 
 # Gemini 요약 모델 및 지시사항(시스템 프롬프트)
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_SYSTEM_PROMPT = """너는 다정한 청년 정책 도우미야. 정책 원문과 URL을 받으면, 반드시 아래 양식을 지켜서 마크다운으로 요약해 줘.
 
 💎 **Gemini가 요약한 청년정책입니다!** (이 문구를 맨 위에 고정으로 넣어줘)
@@ -54,8 +56,9 @@ GEMINI_SYSTEM_PROMPT = """너는 다정한 청년 정책 도우미야. 정책 �
 
 # Gemini API 키를 읽어 클라이언트를 초기화한다 (키가 없으면 요약을 건너뛴다)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+client = None
 if _GENAI_AVAILABLE and GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 def get_supabase_client() -> Client:
@@ -109,16 +112,18 @@ def summarize_with_gemini(raw_text: str, url: str) -> str:
     if not raw_text:
         return raw_text
 
-    if not _GENAI_AVAILABLE or not GEMINI_API_KEY:
+    if not _GENAI_AVAILABLE or not client:
         print("[pipeline] 경고: Gemini 사용 불가(키/패키지 없음), 원본을 사용합니다.")
         return raw_text
 
     try:
-        model = genai.GenerativeModel(
-            GEMINI_MODEL, system_instruction=GEMINI_SYSTEM_PROMPT
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=f"[원문]\n{raw_text}\n\n[URL]\n{url}",
+            config=types.GenerateContentConfig(
+                system_instruction=GEMINI_SYSTEM_PROMPT
+            ),
         )
-        prompt = f"[원문]\n{raw_text}\n\n[URL]\n{url}"
-        response = model.generate_content(prompt)
         summary = (getattr(response, "text", "") or "").strip()
         # 응답이 비어 있으면(안전 필터 등) 원본을 그대로 사용
         return summary or raw_text
