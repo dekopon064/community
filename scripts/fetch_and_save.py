@@ -28,8 +28,8 @@ TABLE_NAME = "curations"
 # 온통청년 청년정책 오픈 API 엔드포인트 (최신 JSON 스펙)
 YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
 
-# API 에서 한 번에 조회할 정책 개수 (지역 필터 후 유효 건수 확보를 위해 여유 있게)
-MAX_ITEMS = 20
+# API 에서 한 번에 조회할 정책 개수
+MAX_ITEMS = 5
 
 # API 응답 대기 최대 시간(초)
 REQUEST_TIMEOUT = 15
