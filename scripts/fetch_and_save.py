@@ -28,11 +28,27 @@ TABLE_NAME = "curations"
 # 온통청년 청년정책 오픈 API 엔드포인트 (최신 JSON 스펙)
 YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
 
-# 한 번에 수집할 정책 개수
-MAX_ITEMS = 5
+# API 에서 한 번에 조회할 정책 개수 (지역 필터 후 유효 건수 확보를 위해 여유 있게)
+MAX_ITEMS = 20
 
 # API 응답 대기 최대 시간(초)
 REQUEST_TIMEOUT = 15
+
+# 수도권 청년 타겟: 중앙부처(전국) + 서울/경기/인천만 수집
+TARGET_REGION_KEYWORDS = (
+    "중앙부처",
+    "전국",
+    "서울",
+    "경기",
+    "인천",
+)
+# 온통청년 지역코드(polyBizSecd / zipCd) — 중앙부처·수도권
+TARGET_REGION_CODES = (
+    "003001",  # 중앙부처(전국)
+    "003002001",  # 서울
+    "003002004",  # 인천
+    "003002008",  # 경기
+)
 
 # Gemini 요약 모델 및 지시사항(시스템 프롬프트)
 GEMINI_MODEL = "gemini-3.5-flash"
@@ -86,6 +102,56 @@ def strip_html(raw: str) -> str:
     return text.strip()
 
 
+def extract_category(policy: dict) -> str:
+    """온통청년 API 응답에서 정책 유형/대분류를 카테고리로 추출한다.
+
+    plcyTpNm(정책유형명) → lclsfNm(대분류) → mclsfNm(중분류) 순으로 시도하고,
+    모두 비어 있으면 기본값 '기타'를 반환한다.
+    """
+    for key in ("plcyTpNm", "lclsfNm", "mclsfNm"):
+        value = (policy.get(key) or "").strip()
+        if value:
+            return value
+    return "기타"
+
+
+def is_target_region(policy: dict) -> bool:
+    """중앙부처(전국) 또는 수도권(서울·경기·인천) 정책인지 판별한다.
+
+    지역코드(polyBizSecd, zipCd)와 기관명/기관그룹 필드를 함께 검사한다.
+    타겟에 해당하면 True, 순수 지방 자치단체 정책이면 False.
+    지역 정보가 전혀 없으면(필드 공백) 오탐으로 전부 스킵하지 않도록 True.
+    """
+    # 지역코드 필드 결합 (콤마로 여러 코드가 올 수 있음)
+    region_codes = " ".join(
+        str(policy.get(key) or "")
+        for key in ("polyBizSecd", "zipCd", "rgLcnCd")
+    )
+    if any(code in region_codes for code in TARGET_REGION_CODES):
+        return True
+
+    # 기관명·기관그룹·지역명 텍스트에서 타겟 키워드 탐색
+    region_text = " ".join(
+        str(policy.get(key) or "")
+        for key in (
+            "pvsnInstGroupNm",
+            "cnsgNmor",
+            "mngtMsonNm",
+            "sprvsnInstNm",
+            "operInstNm",
+            "rgtrInstCdNm",
+        )
+    )
+    if any(keyword in region_text for keyword in TARGET_REGION_KEYWORDS):
+        return True
+
+    # 지역 메타가 전혀 없으면 API 필드 누락으로 보고 통과시킨다
+    if not region_codes.strip() and not region_text.strip():
+        return True
+
+    return False
+
+
 def summarize_with_gemini(raw_text: str, url: str) -> str:
     """정책 원문과 URL 을 Gemini 로 읽기 쉬운 마크다운 요약으로 가공한다.
 
@@ -119,9 +185,10 @@ def fetch_real_policies() -> list[dict]:
     """온통청년 청년정책 오픈 API(최신 JSON 스펙)를 호출해 정책 데이터를 가져온다.
 
     응답은 JSON 이며, result.youthPolicyList 배열을 순회한다.
-    각 정책의 고유번호(plcyNo), 제목(plcyNm), 정책설명(plcyExplnCn) +
-    지원내용(plcySprtCn), 신청/참고 URL 을 추출해 원본 형태로 반환한다.
-    (Gemini 요약은 중복 검사 이후 save_policies 단계에서 수행한다.)
+    각 정책의 고유번호(plcyNo), 제목(plcyNm), 카테고리(plcyTpNm/lclsfNm),
+    정책설명(plcyExplnCn) + 지원내용(plcySprtCn), 신청/참고 URL, 지역/기관
+    메타데이터를 추출해 원본 형태로 반환한다.
+    (지역 필터·중복 검사·Gemini 요약은 save_policies 단계에서 수행한다.)
     API 키가 없으면 에러 대신 경고를 출력하고 빈 리스트를 반환한다.
     """
     api_key = os.environ.get("YOUTH_API_KEY")
@@ -186,12 +253,23 @@ def fetch_real_policies() -> list[dict]:
             or "링크 없음"
         )
 
+        # 지역 필터용 원본 필드와 카테고리를 함께 보관한다
         policies.append(
             {
                 "plcy_no": plcy_no,
                 "title": title,
+                "category": extract_category(policy),
                 "content": content,
                 "url": url,
+                "polyBizSecd": policy.get("polyBizSecd") or "",
+                "zipCd": policy.get("zipCd") or "",
+                "rgLcnCd": policy.get("rgLcnCd") or "",
+                "pvsnInstGroupNm": policy.get("pvsnInstGroupNm") or "",
+                "cnsgNmor": policy.get("cnsgNmor") or "",
+                "mngtMsonNm": policy.get("mngtMsonNm") or "",
+                "sprvsnInstNm": policy.get("sprvsnInstNm") or "",
+                "operInstNm": policy.get("operInstNm") or "",
+                "rgtrInstCdNm": policy.get("rgtrInstCdNm") or "",
             }
         )
 
@@ -202,11 +280,11 @@ def fetch_real_policies() -> list[dict]:
 
 
 def save_policies(supabase: Client, policies: list[dict]) -> int:
-    """새로운 정책만 Gemini 로 요약해 curations 테이블에 저장한다.
+    """타겟 지역의 신규 정책만 Gemini 로 요약해 curations 테이블에 저장한다.
 
     각 정책의 고유번호(plcyNo)로 변하지 않는 slug 를 만들고, Gemini 호출 전에
-    Supabase 에 이미 존재하는 slug 인지 검사한다. 이미 있으면 요약/저장을 건너뛰어
-    Gemini API 낭비와 중복 수집을 막는다. 저장에 성공한 행 수를 반환한다.
+    (1) Supabase 중복 검사, (2) 수도권·중앙부처 지역 필터를 거친다.
+    중복이거나 타겟 외 지역이면 요약/저장을 건너뛴다. 저장 성공 행 수를 반환한다.
     """
     rows = []
     for policy in policies:
@@ -225,14 +303,19 @@ def save_policies(supabase: Client, policies: list[dict]) -> int:
             print(f"⏭️ 이미 수집된 정책입니다 (스킵): {title}")
             continue
 
+        # 지역 필터: 중앙부처·서울·경기·인천이 아니면 Gemini 호출 없이 건너뛴다
+        if not is_target_region(policy):
+            print(f"🚫 타겟 지역 아님 (스킵): {title}")
+            continue
+
         # 새로운 정책만 Gemini 로 마크다운 요약 가공 (실패 시 원본 그대로 사용)
         ai_content = summarize_with_gemini(policy["content"], policy["url"])
 
         rows.append(
             {
                 "slug": slug,
-                # AI 가공(카테고리 분류) 전 임시 값
-                "category": "청년정책",
+                # API 정책 유형/대분류 기반 자동 할당 (없으면 '기타')
+                "category": policy["category"],
                 "title": title,
                 # 요약본 앞부분을 목록용 요약으로 사용
                 "summary": ai_content[:60],
