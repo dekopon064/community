@@ -7,8 +7,6 @@
 import os
 import re
 import sys
-import uuid
-from datetime import datetime, timezone
 
 import requests
 from supabase import Client, create_client
@@ -78,21 +76,6 @@ def get_supabase_client() -> Client:
     return create_client(supabase_url, supabase_service_key)
 
 
-def slugify(title: str, index: int) -> str:
-    """제목을 기반으로 URL 친화적인 slug 를 생성한다.
-
-    한글 등 영숫자가 아닌 문자는 제거되므로, 뒤에 타임스탬프 + 루프 인덱스 +
-    짧은 랜덤 텍스트를 강제로 결합해 무조건 고유한 값이 되도록 만든다.
-    이렇게 하면 같은 초에 여러 건이 처리되거나, 서로 다른 실행이 같은 초에
-    겹쳐도 slug 충돌이 발생하지 않는다.
-    """
-    base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    # uuid 앞 6자리로 실행 간 충돌까지 방지
-    unique = uuid.uuid4().hex[:6]
-    return f"{base or 'policy'}-{timestamp}-{index}-{unique}"
-
-
 def strip_html(raw: str) -> str:
     """HTML 태그를 제거하고 공백을 정리해 순수 텍스트만 반환한다."""
     if not raw:
@@ -136,8 +119,9 @@ def fetch_real_policies() -> list[dict]:
     """온통청년 청년정책 오픈 API(최신 JSON 스펙)를 호출해 정책 데이터를 가져온다.
 
     응답은 JSON 이며, result.youthPolicyList 배열을 순회한다.
-    각 정책의 제목(plcyNm)과 정책설명(plcyExplnCn) + 지원내용(plcySprtCn)을
-    합쳐 strip_html 로 HTML 태그를 제거한 뒤 저장한다.
+    각 정책의 고유번호(plcyNo), 제목(plcyNm), 정책설명(plcyExplnCn) +
+    지원내용(plcySprtCn), 신청/참고 URL 을 추출해 원본 형태로 반환한다.
+    (Gemini 요약은 중복 검사 이후 save_policies 단계에서 수행한다.)
     API 키가 없으면 에러 대신 경고를 출력하고 빈 리스트를 반환한다.
     """
     api_key = os.environ.get("YOUTH_API_KEY")
@@ -182,6 +166,7 @@ def fetch_real_policies() -> list[dict]:
 
     policies: list[dict] = []
     for policy in policy_list:
+        plcy_no = policy.get("plcyNo")
         title = policy.get("plcyNm", "").strip()
         # 정책설명 + 지원내용을 합쳐 본문을 구성한 뒤 HTML 태그를 제거한다
         raw_content = (
@@ -189,8 +174,8 @@ def fetch_real_policies() -> list[dict]:
         )
         content = strip_html(raw_content).strip()
 
-        # 제목이나 내용이 비어 있으면 저장 가치가 없으므로 건너뛴다
-        if not title or not content:
+        # 고유번호/제목/내용이 비어 있으면 저장 가치가 없으므로 건너뛴다
+        if not plcy_no or not title or not content:
             continue
 
         # 온통청년 응답에서 신청 URL 또는 참고 URL 을 순서대로 확보한다
@@ -201,10 +186,14 @@ def fetch_real_policies() -> list[dict]:
             or "링크 없음"
         )
 
-        # 원문 + URL 을 Gemini 로 마크다운 요약 가공 (실패 시 원본 그대로 사용)
-        ai_content = summarize_with_gemini(content, url)
-
-        policies.append({"title": title, "content": ai_content})
+        policies.append(
+            {
+                "plcy_no": plcy_no,
+                "title": title,
+                "content": content,
+                "url": url,
+            }
+        )
 
         if len(policies) >= MAX_ITEMS:
             break
@@ -213,28 +202,47 @@ def fetch_real_policies() -> list[dict]:
 
 
 def save_policies(supabase: Client, policies: list[dict]) -> int:
-    """샘플 데이터를 curations 테이블 스키마에 맞춰 저장한다.
+    """새로운 정책만 Gemini 로 요약해 curations 테이블에 저장한다.
 
-    테이블은 slug, category, title, summary, content 컬럼을 요구한다.
-    category / summary 는 AI 가공 전이므로 임시 값으로 채운다.
-    이미 존재하는 slug 라면 에러 대신 덮어쓰기(upsert)한다.
-    저장에 성공한 행 수를 반환한다.
+    각 정책의 고유번호(plcyNo)로 변하지 않는 slug 를 만들고, Gemini 호출 전에
+    Supabase 에 이미 존재하는 slug 인지 검사한다. 이미 있으면 요약/저장을 건너뛰어
+    Gemini API 낭비와 중복 수집을 막는다. 저장에 성공한 행 수를 반환한다.
     """
     rows = []
-    for index, policy in enumerate(policies, start=1):
+    for policy in policies:
         title = policy["title"]
-        content = policy["content"]
+        # plcyNo 기반의 영구 불변 고유 slug (정책마다 항상 동일)
+        slug = f"policy-{policy['plcy_no']}"
+
+        # 중복 검사: 이미 수집된 정책이면 Gemini 호출 없이 건너뛴다
+        existing_data = (
+            supabase.table("curations")
+            .select("slug")
+            .eq("slug", slug)
+            .execute()
+        )
+        if existing_data.data:
+            print(f"⏭️ 이미 수집된 정책입니다 (스킵): {title}")
+            continue
+
+        # 새로운 정책만 Gemini 로 마크다운 요약 가공 (실패 시 원본 그대로 사용)
+        ai_content = summarize_with_gemini(policy["content"], policy["url"])
+
         rows.append(
             {
-                "slug": slugify(title, index),
+                "slug": slug,
                 # AI 가공(카테고리 분류) 전 임시 값
                 "category": "청년정책",
                 "title": title,
-                # AI 가공(요약) 전 임시 값 - 원본 내용 앞부분을 사용
-                "summary": content[:60],
-                "content": content,
+                # 요약본 앞부분을 목록용 요약으로 사용
+                "summary": ai_content[:60],
+                "content": ai_content,
             }
         )
+
+    # 저장할 신규 정책이 없으면 조기 종료
+    if not rows:
+        return 0
 
     # slug 가 겹치면 기존 행을 덮어쓰도록 upsert 사용 (unique 제약 위반 방지)
     response = (
