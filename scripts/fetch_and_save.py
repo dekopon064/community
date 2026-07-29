@@ -36,13 +36,21 @@ REQUEST_TIMEOUT = 15
 
 # Gemini 요약 모델 및 지시사항(시스템 프롬프트)
 GEMINI_MODEL = "gemini-1.5-flash"
-GEMINI_SYSTEM_PROMPT = (
-    "너는 청년 정책을 아주 친절하고 알기 쉽게 요약해 주는 전문 에디터야. "
-    "제공된 정책 원문을 분석해서, [🎯 지원 대상], [💰 지원 내용], "
-    "[🗓️ 신청 기간 및 방법] 등의 소제목(Bold 처리)을 포함한 깔끔한 마크다운 "
-    "리스트 형태로 요약해 줘. 불필요한 HTML 태그나 특수문자는 빼고 가독성 좋게 "
-    "만들어 줘."
-)
+GEMINI_SYSTEM_PROMPT = """너는 다정한 청년 정책 도우미야. 정책 원문과 URL을 받으면, 반드시 아래 양식을 지켜서 마크다운으로 요약해 줘.
+
+💎 **Gemini가 요약한 청년정책입니다!** (이 문구를 맨 위에 고정으로 넣어줘)
+
+### 🧑‍🤝‍🧑 누가 받을 수 있나요?
+(대상 요약)
+
+### 🎁 어떤 혜택이 있나요?
+(지원 내용 요약)
+
+### 🏃‍♂️ 어떻게 신청하나요?
+(신청 방법과 기간 요약)
+
+🔗 **원문 링크:** (제공된 URL 그대로 출력)
+"""
 
 # Gemini API 키를 읽어 클라이언트를 초기화한다 (키가 없으면 요약을 건너뛴다)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -92,8 +100,8 @@ def strip_html(raw: str) -> str:
     return text.strip()
 
 
-def summarize_with_gemini(raw_text: str) -> str:
-    """정책 원문을 Gemini 로 읽기 쉬운 마크다운 요약으로 가공한다.
+def summarize_with_gemini(raw_text: str, url: str) -> str:
+    """정책 원문과 URL 을 Gemini 로 읽기 쉬운 마크다운 요약으로 가공한다.
 
     키가 없거나(패키지 미설치 포함) 호출 중 에러가 나면, 파이프라인을 멈추지 않고
     원본 텍스트(raw_text)를 그대로 반환한다.
@@ -109,12 +117,13 @@ def summarize_with_gemini(raw_text: str) -> str:
         model = genai.GenerativeModel(
             GEMINI_MODEL, system_instruction=GEMINI_SYSTEM_PROMPT
         )
-        response = model.generate_content(raw_text)
+        prompt = f"[원문]\n{raw_text}\n\n[URL]\n{url}"
+        response = model.generate_content(prompt)
         summary = (getattr(response, "text", "") or "").strip()
         # 응답이 비어 있으면(안전 필터 등) 원본을 그대로 사용
         return summary or raw_text
-    except Exception as exc:  # noqa: BLE001 - 요약 실패 시 원본으로 폴백
-        print(f"[pipeline] Gemini 요약 실패, 원본을 사용합니다: {exc}")
+    except Exception as e:  # noqa: BLE001 - 요약 실패 시 원본으로 폴백
+        print(f"Gemini API 에러 발생: {e}")
         return raw_text
 
 
@@ -179,8 +188,16 @@ def fetch_real_policies() -> list[dict]:
         if not title or not content:
             continue
 
-        # 원문을 Gemini 로 마크다운 요약 가공 (실패 시 원본 그대로 사용)
-        ai_content = summarize_with_gemini(content)
+        # 온통청년 응답에서 신청 URL 또는 참고 URL 을 순서대로 확보한다
+        url = (
+            policy.get("aplyUrlAddr")
+            or policy.get("refUrlAddr1")
+            or policy.get("refUrlAddr2")
+            or "링크 없음"
+        )
+
+        # 원문 + URL 을 Gemini 로 마크다운 요약 가공 (실패 시 원본 그대로 사용)
+        ai_content = summarize_with_gemini(content, url)
 
         policies.append({"title": title, "content": ai_content})
 
