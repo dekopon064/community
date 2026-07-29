@@ -37,7 +37,7 @@ MAX_ITEMS = 5
 REQUEST_TIMEOUT = 15
 
 # Gemini 요약 모델 및 지시사항(시스템 프롬프트)
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash"
 GEMINI_SYSTEM_PROMPT = """너는 다정한 청년 정책 도우미야. 정책 원문과 URL을 받으면, 반드시 아래 양식을 지켜서 마크다운으로 요약해 줘.
 
 💎 **Gemini가 요약한 청년정책입니다!** (이 문구를 맨 위에 고정으로 넣어줘)
