@@ -13,9 +13,6 @@ export default function QnaPage() {
   const locale = useLocale();
 
   const [entries, setEntries] = useState<QnaEntry[]>([]);
-  const [nickname, setNickname] = useState("");
-  const [content, setContent] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [isFetching, setIsFetching] = useState(true);
 
   const fetchEntries = useCallback(async () => {
@@ -34,25 +31,6 @@ export default function QnaPage() {
     fetchEntries();
   }, [fetchEntries]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!nickname.trim() || !content.trim() || isLoading) return;
-
-    setIsLoading(true);
-    const { error } = await supabase.from("qna_entries").insert({
-      nickname: nickname.trim(),
-      content: content.trim(),
-    });
-
-    if (!error) {
-      setNickname("");
-      setContent("");
-      // 삽입 직후 최신 목록을 다시 가져와 화면 갱신
-      await fetchEntries();
-    }
-    setIsLoading(false);
-  }
-
   function formatTime(iso: string) {
     return new Intl.DateTimeFormat(locale, {
       dateStyle: "medium",
@@ -65,28 +43,31 @@ export default function QnaPage() {
     <div className="min-h-[60vh] bg-canvas px-5 pt-6 pb-24">
       <h2 className="mb-6 text-lg font-bold text-ink">{t("title")}</h2>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+      <form className="flex flex-col gap-3">
         <input
           type="text"
-          value={nickname}
-          onChange={(e) => setNickname(e.target.value)}
+          disabled
+          aria-describedby="qna-login-notice"
           placeholder={t("nicknamePlaceholder")}
-          className={inputClass}
+          className={`${inputClass} cursor-not-allowed opacity-60`}
         />
         <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
+          disabled
+          aria-describedby="qna-login-notice"
           placeholder={t("contentPlaceholder")}
           rows={3}
-          className={`${inputClass} resize-none`}
+          className={`${inputClass} cursor-not-allowed resize-none opacity-60`}
         />
         <button
           type="submit"
-          disabled={isLoading}
+          disabled
           className="mt-2 w-full rounded-xl bg-ink px-6 py-3 font-bold text-canvas-white transition-opacity disabled:opacity-60"
         >
-          {isLoading ? t("submitting") : t("submit")}
+          {t("submit")}
         </button>
+        <p id="qna-login-notice" className="text-center text-sm text-ink-sub">
+          {t("loginRequired")}
+        </p>
       </form>
 
       {/* 방명록 리스트: 카드가 아닌, 여백이 넓고 밑줄만 있는 플랫 뷰 */}
