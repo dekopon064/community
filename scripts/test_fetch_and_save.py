@@ -67,6 +67,30 @@ def sample_policy(**overrides: object) -> dict:
     return policy
 
 
+def busan_policy(**overrides: object) -> dict:
+    policy = sample_policy(
+        polyBizSecd="003002009",
+        zipCd="",
+        rgLcnCd="",
+        pvsnInstGroupNm="부산광역시",
+        cnsgNmor="부산시",
+        mngtMsonNm="부산시청",
+        sprvsnInstNm="부산광역시",
+        operInstNm="부산광역시",
+        rgtrInstCdNm="부산광역시",
+    )
+    policy.update(overrides)
+    return policy
+
+
+def duplicate_outcome() -> dict:
+    return {
+        "candidate_id": "11111111-1111-1111-1111-111111111111",
+        "outcome": "duplicate",
+        "superseded_candidate_id": None,
+    }
+
+
 class FakeRPC:
     def __init__(self, data=None, error=None):
         self._data = data
@@ -440,16 +464,22 @@ class YouthApiRequestErrorTests(unittest.TestCase):
         self.assertNotIn(YOUTH_API_LEAK_FULL_URL, text)
         self.assertNotIn("getPlcy?", text)
 
-    def _fetch_and_capture(self, side_effect: BaseException) -> tuple[RuntimeError, str]:
+    def _fetch_and_capture(
+        self,
+        side_effect: BaseException,
+        fetch_fn=None,
+    ) -> tuple[RuntimeError, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
+        if fetch_fn is None:
+            fetch_fn = pipeline.fetch_real_policies
         with patch.dict(os.environ, {"YOUTH_API_KEY": YOUTH_API_LEAK_SECRET}):
             with patch.object(pipeline.requests, "get", side_effect=side_effect):
                 with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
                     stderr
                 ):
                     with self.assertRaises(RuntimeError) as ctx:
-                        pipeline.fetch_real_policies()
+                        fetch_fn()
         visible = stdout.getvalue() + stderr.getvalue() + str(ctx.exception)
         visible += "".join(traceback.format_exception(ctx.exception))
         return ctx.exception, visible
@@ -477,6 +507,246 @@ class YouthApiRequestErrorTests(unittest.TestCase):
         self.assertTrue(err.__suppress_context__)
         self._assert_no_youth_api_secret_leak(str(err))
         self._assert_no_youth_api_secret_leak(visible)
+
+    def test_page_two_connection_error_does_not_leak_api_key_or_query_url(self) -> None:
+        leaky = self._leaky_connection_error()
+        self.assertIn(YOUTH_API_LEAK_SECRET, str(leaky))
+        self.assertIn("apiKeyNm", str(leaky))
+
+        mock_get = MagicMock(side_effect=leaky)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {"YOUTH_API_KEY": YOUTH_API_LEAK_SECRET}):
+            with patch.object(pipeline.requests, "get", mock_get):
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                    stderr
+                ):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        pipeline.fetch_youth_api_page(2)
+        err = ctx.exception
+        visible = stdout.getvalue() + stderr.getvalue() + str(err)
+        visible += "".join(traceback.format_exception(err))
+        self.assertEqual(str(err), "Youth API request failed")
+        self.assertIsNone(err.__cause__)
+        self.assertTrue(err.__suppress_context__)
+        self._assert_no_youth_api_secret_leak(str(err))
+        self._assert_no_youth_api_secret_leak(visible)
+        self.assertEqual(mock_get.call_args.kwargs["params"]["pageNum"], 2)
+        self.assertEqual(
+            mock_get.call_args.kwargs["params"]["pageSize"],
+            pipeline.FETCH_PAGE_SIZE,
+        )
+
+
+class PagingCollectionTests(unittest.TestCase):
+    def _collect(self, pages: dict[int, list[dict]]) -> tuple[list[dict], pipeline.PipelineStats, list[int]]:
+        seen_pages: list[int] = []
+
+        def fetch_page(page_num: int) -> list[dict]:
+            seen_pages.append(page_num)
+            if page_num not in pages:
+                self.fail(f"unexpected page fetch: {page_num}")
+            return pages[page_num]
+
+        selected, stats = pipeline.collect_target_policies(fetch_page=fetch_page)
+        return selected, stats, seen_pages
+
+    def test_skips_non_target_first_page_then_selects_from_second(self) -> None:
+        page1 = [busan_policy(plcyNo=f"b{i}") for i in range(5)]
+        target = sample_policy(plcyNo="seoul-1")
+        page2 = [target, busan_policy(plcyNo="b-extra")]
+        selected, stats, seen_pages = self._collect({1: page1, 2: page2})
+        self.assertEqual(seen_pages, [1, 2])
+        self.assertEqual(stats.pages_fetched, 2)
+        self.assertEqual(stats.collected, 7)
+        self.assertEqual(stats.region_excluded, 6)
+        self.assertEqual(stats.selected, 1)
+        self.assertEqual(stats.stop_reason, "short_page")
+        self.assertEqual(selected, [target])
+
+        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        enqueue = MagicMock(return_value=duplicate_outcome())
+        process_stats = pipeline.process_policies(
+            FakeSupabase(),
+            selected,
+            summarize=summarize,
+            enqueue=enqueue,
+            stats=stats,
+        )
+        self.assertEqual(summarize.call_count, 1)
+        self.assertEqual(enqueue.call_count, 1)
+        self.assertEqual(process_stats.processed, 1)
+        self.assertEqual(process_stats.collected, 7)
+
+    def test_stops_fetching_when_candidate_cap_is_reached(self) -> None:
+        page1 = [sample_policy(plcyNo=f"s{i}") for i in range(5)]
+        selected, stats, seen_pages = self._collect({1: page1})
+        self.assertEqual(seen_pages, [1])
+        self.assertEqual(stats.pages_fetched, 1)
+        self.assertEqual(stats.selected, 5)
+        self.assertEqual(stats.stop_reason, "candidate_cap")
+        self.assertEqual(len(selected), 5)
+
+    def test_stops_on_empty_page(self) -> None:
+        page1 = [busan_policy(plcyNo=f"b{i}") for i in range(5)]
+        selected, stats, seen_pages = self._collect({1: page1, 2: []})
+        self.assertEqual(seen_pages, [1, 2])
+        self.assertEqual(stats.stop_reason, "empty_page")
+        self.assertEqual(stats.selected, 0)
+        self.assertEqual(selected, [])
+        self.assertFalse(stats.has_errors)
+
+    def test_stops_on_short_page(self) -> None:
+        page1 = [busan_policy(plcyNo=f"b{i}") for i in range(5)]
+        page2 = [sample_policy(plcyNo="seoul-short")]
+        selected, stats, seen_pages = self._collect({1: page1, 2: page2})
+        self.assertEqual(seen_pages, [1, 2])
+        self.assertEqual(stats.stop_reason, "short_page")
+        self.assertEqual(stats.selected, 1)
+        self.assertEqual(len(page2), 1)
+        self.assertLess(len(page2), pipeline.FETCH_PAGE_SIZE)
+
+    def test_stops_at_max_pages_without_extra_fetch(self) -> None:
+        pages = {
+            page_num: [busan_policy(plcyNo=f"p{page_num}-{i}") for i in range(5)]
+            for page_num in range(1, pipeline.MAX_FETCH_PAGES + 1)
+        }
+        selected, stats, seen_pages = self._collect(pages)
+        self.assertEqual(seen_pages, list(range(1, pipeline.MAX_FETCH_PAGES + 1)))
+        self.assertEqual(stats.pages_fetched, pipeline.MAX_FETCH_PAGES)
+        self.assertEqual(stats.stop_reason, "max_pages")
+        self.assertEqual(stats.selected, 0)
+        self.assertEqual(selected, [])
+
+    def test_in_run_plcy_no_duplicates_are_not_selected_twice(self) -> None:
+        shared = sample_policy(plcyNo="same-policy")
+        page1 = [
+            shared,
+            busan_policy(plcyNo="b1"),
+            busan_policy(plcyNo="b2"),
+            busan_policy(plcyNo="b3"),
+            busan_policy(plcyNo="b4"),
+        ]
+        page2 = [
+            sample_policy(plcyNo="same-policy"),
+            busan_policy(plcyNo="b5"),
+        ]
+        selected, stats, seen_pages = self._collect({1: page1, 2: page2})
+        self.assertEqual(seen_pages, [1, 2])
+        self.assertGreaterEqual(stats.in_run_duplicates, 1)
+        self.assertEqual(stats.selected, 1)
+        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        enqueue = MagicMock(return_value=duplicate_outcome())
+        pipeline.process_policies(
+            FakeSupabase(),
+            selected,
+            summarize=summarize,
+            enqueue=enqueue,
+            stats=stats,
+        )
+        self.assertEqual(summarize.call_count, 1)
+        self.assertEqual(enqueue.call_count, 1)
+
+    def test_process_policies_caps_ai_and_enqueue_at_five(self) -> None:
+        policies = [sample_policy(plcyNo=f"cap-{i}") for i in range(6)]
+        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        enqueue = MagicMock(return_value=duplicate_outcome())
+        stats = pipeline.process_policies(
+            FakeSupabase(),
+            policies,
+            summarize=summarize,
+            enqueue=enqueue,
+        )
+        self.assertEqual(summarize.call_count, 5)
+        self.assertEqual(enqueue.call_count, 5)
+        self.assertEqual(stats.processed, 5)
+        self.assertEqual(stats.rpc_duplicate, 5)
+
+    def test_rpc_duplicates_count_toward_processing_cap(self) -> None:
+        policies = [sample_policy(plcyNo=f"dup-{i}") for i in range(5)]
+        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        enqueue = MagicMock(return_value=duplicate_outcome())
+        stats = pipeline.process_policies(
+            FakeSupabase(),
+            policies,
+            summarize=summarize,
+            enqueue=enqueue,
+        )
+        self.assertEqual(stats.processed, 5)
+        self.assertEqual(stats.rpc_duplicate, 5)
+        self.assertEqual(summarize.call_count, 5)
+        self.assertEqual(enqueue.call_count, 5)
+
+    def test_zero_selected_warns_and_exits_zero(self) -> None:
+        page1 = [busan_policy(plcyNo=f"b{i}") for i in range(5)]
+
+        def fetch_page(page_num: int) -> list[dict]:
+            if page_num == 1:
+                return page1
+            if page_num == 2:
+                return []
+            self.fail(f"unexpected page fetch: {page_num}")
+            return []
+
+        summarize = MagicMock()
+        enqueue = MagicMock()
+        stdout = io.StringIO()
+        with patch.object(pipeline, "get_supabase_client", return_value=FakeSupabase()):
+            with patch.object(pipeline, "fetch_youth_api_page", side_effect=fetch_page):
+                with patch.object(pipeline, "summarize_with_gemini", summarize):
+                    with patch.object(pipeline, "enqueue_curation_candidate", enqueue):
+                        with contextlib.redirect_stdout(stdout):
+                            code = pipeline.main()
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "[pipeline] warning: no region-matching policies selected",
+            stdout.getvalue(),
+        )
+        self.assertIn("stop_reason=empty_page", stdout.getvalue())
+        summarize.assert_not_called()
+        enqueue.assert_not_called()
+
+    def test_collect_api_error_does_not_call_gemini_or_enqueue(self) -> None:
+        page1 = [
+            sample_policy(plcyNo="keep-1"),
+            sample_policy(plcyNo="keep-2"),
+            busan_policy(plcyNo="b1"),
+            busan_policy(plcyNo="b2"),
+            busan_policy(plcyNo="b3"),
+        ]
+        summarize = MagicMock()
+        enqueue = MagicMock()
+
+        def fetch_page(page_num: int) -> list[dict]:
+            if page_num == 1:
+                return page1
+            raise RuntimeError("Youth API request failed")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            pipeline.collect_target_policies(fetch_page=fetch_page)
+        self.assertEqual(str(ctx.exception), "Youth API request failed")
+        summarize.assert_not_called()
+        enqueue.assert_not_called()
+
+    def test_shared_stats_keep_collection_counts_after_process(self) -> None:
+        page1 = [busan_policy(plcyNo=f"b{i}") for i in range(5)]
+        page2 = [sample_policy(plcyNo="seoul-keep")]
+        selected, stats, _seen = self._collect({1: page1, 2: page2})
+        collected_before = stats.collected
+        pages_before = stats.pages_fetched
+        region_before = stats.region_excluded
+        pipeline.process_policies(
+            FakeSupabase(),
+            selected,
+            summarize=lambda content, url: (content, "skipped_no_key", None),
+            enqueue=lambda _supabase, _params: duplicate_outcome(),
+            stats=stats,
+        )
+        self.assertEqual(stats.collected, collected_before)
+        self.assertEqual(stats.pages_fetched, pages_before)
+        self.assertEqual(stats.region_excluded, region_before)
+        self.assertEqual(stats.processed, 1)
+        self.assertEqual(stats.selected, 1)
 
 
 if __name__ == "__main__":

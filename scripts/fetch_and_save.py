@@ -30,7 +30,9 @@ except ImportError:
     _GENAI_AVAILABLE = False
 
 YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
-MAX_ITEMS = 5
+MAX_CANDIDATES_PER_RUN = 5
+FETCH_PAGE_SIZE = 5
+MAX_FETCH_PAGES = 10
 REQUEST_TIMEOUT = 15
 
 YOUTHCENTER_SOURCE = "youthcenter"
@@ -169,8 +171,13 @@ class YouthcenterCandidate:
 
 @dataclass
 class PipelineStats:
+    pages_fetched: int = 0
     collected: int = 0
     region_excluded: int = 0
+    in_run_duplicates: int = 0
+    selected: int = 0
+    processed: int = 0
+    stop_reason: str | None = None
     transform_errors: int = 0
     rpc_inserted: int = 0
     rpc_duplicate: int = 0
@@ -428,16 +435,16 @@ def summarize_with_gemini(raw_text: str, url: str | None) -> tuple[str, str, str
         return raw_text, "error", GEMINI_MODEL
 
 
-def fetch_real_policies() -> list[dict]:
-    """온통청년 청년정책 오픈 API(최신 JSON 스펙)를 호출해 원본 정책 객체를 가져온다."""
+def fetch_youth_api_page(page_num: int) -> list[dict]:
+    """온통청년 API 한 페이지를 조회한다. 키와 query URL은 예외 메시지에 넣지 않는다."""
     api_key = os.environ.get("YOUTH_API_KEY")
     if not api_key:
         raise RuntimeError("환경 변수 YOUTH_API_KEY 가 설정되지 않았습니다.")
 
     params = {
         "apiKeyNm": api_key,
-        "pageNum": 1,
-        "pageSize": MAX_ITEMS,
+        "pageNum": page_num,
+        "pageSize": FETCH_PAGE_SIZE,
         "pageType": 1,
         "rtnType": "json",
     }
@@ -474,15 +481,86 @@ def fetch_real_policies() -> list[dict]:
     return [item for item in policy_list if isinstance(item, dict)]
 
 
+def fetch_real_policies() -> list[dict]:
+    """온통청년 청년정책 오픈 API 1페이지를 조회한다."""
+    return fetch_youth_api_page(1)
+
+
+def collect_target_policies(
+    *,
+    fetch_page: Callable[[int], list[dict]] | None = None,
+    stats: PipelineStats | None = None,
+) -> tuple[list[dict], PipelineStats]:
+    """여러 페이지를 제한적으로 탐색해 지역 대상 정책을 최대 5건 고른다.
+
+    Gemini와 enqueue RPC는 호출하지 않는다.
+    """
+    if fetch_page is None:
+        fetch_page = fetch_youth_api_page
+    if stats is None:
+        stats = PipelineStats()
+
+    selected: list[dict] = []
+    seen: set[str] = set()
+
+    for page_num in range(1, MAX_FETCH_PAGES + 1):
+        page = fetch_page(page_num)
+        stats.pages_fetched += 1
+        stats.collected += len(page)
+        if not page:
+            stats.stop_reason = "empty_page"
+            break
+
+        for policy in page:
+            if len(selected) >= MAX_CANDIDATES_PER_RUN:
+                break
+            source_item_id = str(policy.get("plcyNo") or "").strip()
+            if not source_item_id:
+                stats.transform_errors += 1
+                print(
+                    "[pipeline] transform error: source_item_id(plcyNo) is missing",
+                    file=sys.stderr,
+                )
+                continue
+            if source_item_id in seen:
+                stats.in_run_duplicates += 1
+                continue
+            seen.add(source_item_id)
+            if not is_target_region(policy):
+                stats.region_excluded += 1
+                title = strip_html(str(policy.get("plcyNm") or "")) or source_item_id
+                print(f"[pipeline] region excluded: {title}")
+                continue
+            selected.append(policy)
+
+        if len(selected) >= MAX_CANDIDATES_PER_RUN:
+            stats.stop_reason = "candidate_cap"
+            break
+        if len(page) < FETCH_PAGE_SIZE:
+            stats.stop_reason = "short_page"
+            break
+    else:
+        stats.stop_reason = "max_pages"
+
+    stats.selected = len(selected)
+    return selected, stats
+
+
 def process_policies(
     supabase: Any,
     policies: list[dict],
     *,
     summarize: Callable[[str, str | None], tuple[str, str, str | None]] = summarize_with_gemini,
     enqueue: Callable[[Any, dict[str, Any]], dict[str, Any]] = enqueue_curation_candidate,
+    stats: PipelineStats | None = None,
 ) -> PipelineStats:
-    """지역 필터 → 변환 → AI → enqueue RPC 순으로 정책을 처리한다."""
-    stats = PipelineStats(collected=len(policies))
+    """지역 필터 → 변환 → AI → enqueue RPC 순으로 정책을 처리한다.
+
+    입력 리스트가 길어도 AI 처리 단계 진입은 실행당 최대 5건이다.
+    호출자가 넘긴 수집 통계는 덮어쓰지 않는다.
+    """
+    if stats is None:
+        stats = PipelineStats()
 
     for policy in policies:
         source_item_id = str(policy.get("plcyNo") or "").strip()
@@ -504,6 +582,10 @@ def process_policies(
             print(f"[pipeline] transform error: {exc}", file=sys.stderr)
             continue
 
+        if stats.processed >= MAX_CANDIDATES_PER_RUN:
+            break
+
+        stats.processed += 1
         content, ai_status, ai_model = summarize(candidate.content, candidate.source_url)
         stats.ai_status_counts[ai_status] += 1
 
@@ -542,8 +624,12 @@ def process_policies(
 
 def print_stats(stats: PipelineStats) -> None:
     """수집·필터·RPC·AI 수치를 구분해 출력한다. 키와 payload 전문은 출력하지 않는다."""
+    print(f"[pipeline] pages_fetched={stats.pages_fetched}")
     print(f"[pipeline] collected={stats.collected}")
     print(f"[pipeline] region_excluded={stats.region_excluded}")
+    print(f"[pipeline] in_run_duplicates={stats.in_run_duplicates}")
+    print(f"[pipeline] selected={stats.selected}")
+    print(f"[pipeline] processed={stats.processed}")
     print(f"[pipeline] transform_errors={stats.transform_errors}")
     print(f"[pipeline] rpc_inserted={stats.rpc_inserted}")
     print(f"[pipeline] rpc_duplicate={stats.rpc_duplicate}")
@@ -557,6 +643,7 @@ def print_stats(stats: PipelineStats) -> None:
     else:
         print("[pipeline] ai_status: none")
     print(f"[pipeline] rpc_failures={stats.rpc_failures}")
+    print(f"[pipeline] stop_reason={stats.stop_reason or ''}")
 
 
 def main() -> int:
@@ -564,15 +651,22 @@ def main() -> int:
     supabase = get_supabase_client()
 
     print("[pipeline] Fetching Youth Center policies...")
-    policies = fetch_real_policies()
-    print(f"[pipeline] collected {len(policies)} policies from API")
+    selected, stats = collect_target_policies()
+    print(f"[pipeline] collected {stats.collected} policies from API")
 
-    stats = process_policies(supabase, policies)
+    if selected:
+        process_policies(supabase, selected, stats=stats)
+
     print_stats(stats)
 
     if stats.has_errors:
         print("[pipeline] completed with errors", file=sys.stderr)
         return 1
+
+    if stats.selected == 0:
+        print("[pipeline] warning: no region-matching policies selected")
+        print("[pipeline] completed with warning")
+        return 0
 
     print("[pipeline] completed")
     return 0
