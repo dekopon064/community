@@ -12,6 +12,11 @@
 -- adds columns and will fail if they already exist.
 -- Restore a later forward function migration after the failure cause is
 -- fixed. Keep collection workflows paused until that recovery is verified.
+--
+-- Enqueue signature guards: exactly one public.enqueue_curation_candidate
+-- overload, then to_regprocedure of the expected (type,...) lookup. Do not
+-- compare pg_get_function_identity_arguments to a type-only string; Postgres
+-- 17 includes parameter names. Identity text is for exception messages only.
 
 begin;
 
@@ -19,6 +24,8 @@ do $guard$
 declare
   v_enqueue_count pg_catalog.int4;
   v_enqueue_identity pg_catalog.text;
+  v_enqueue_12 pg_catalog.regprocedure;
+  v_enqueue_16 pg_catalog.regprocedure;
   v_missing_columns pg_catalog.text;
 begin
   -- Supabase CLI 2.116.0 linked db push: session_user=cli_login_postgres,
@@ -53,12 +60,25 @@ begin
       coalesce(v_enqueue_identity, 'none');
   end if;
 
-  if v_enqueue_identity is distinct from
-       'text, text, text, text, text, text, jsonb, text, text, text, text, text, text, text, text, text'
-  then
+  -- Identity text is display-only. Resolve the expected 16-argument lookup
+  -- and confirm the 12-argument lookup is absent.
+  v_enqueue_16 := pg_catalog.to_regprocedure(
+    'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text,text,text,text,text)'
+  );
+  v_enqueue_12 := pg_catalog.to_regprocedure(
+    'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text)'
+  );
+
+  if v_enqueue_16 is null then
     raise exception
       'expected 16-argument enqueue_curation_candidate before P1 down, found (%)',
-      v_enqueue_identity;
+      coalesce(v_enqueue_identity, 'none');
+  end if;
+
+  if v_enqueue_12 is not null then
+    raise exception
+      '12-argument enqueue_curation_candidate still exists before P1 down (%)',
+      coalesce(v_enqueue_identity, 'none');
   end if;
 
   if pg_catalog.to_regprocedure(
@@ -720,6 +740,8 @@ declare
   v_enqueue_count pg_catalog.int4;
   v_enqueue_identity pg_catalog.text;
   v_enqueue_oid pg_catalog.oid;
+  v_enqueue_12 pg_catalog.regprocedure;
+  v_enqueue_16 pg_catalog.regprocedure;
   v_publish_oid pg_catalog.oid;
   v_reject_oid pg_catalog.oid;
   v_remaining_columns pg_catalog.int4;
@@ -739,20 +761,30 @@ begin
   where n.nspname = 'public'
     and p.proname = 'enqueue_curation_candidate';
 
-  if v_enqueue_count is distinct from 1
-     or v_enqueue_identity is distinct from
-       'text, text, text, text, text, text, jsonb, text, text, text, text, text'
-  then
+  if v_enqueue_count is distinct from 1 then
     raise exception
       'expected restored 12-argument enqueue, found % (%)',
       coalesce(v_enqueue_count, 0),
       coalesce(v_enqueue_identity, 'none');
   end if;
 
-  if pg_catalog.to_regprocedure(
-       'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text,text,text,text,text)'
-     ) is not null
-  then
+  -- Identity text is display-only. Resolve the restored 12-argument lookup
+  -- and confirm the 16-argument lookup is gone.
+  v_enqueue_12 := pg_catalog.to_regprocedure(
+    'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text)'
+  );
+  v_enqueue_16 := pg_catalog.to_regprocedure(
+    'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text,text,text,text,text)'
+  );
+
+  if v_enqueue_12 is null then
+    raise exception
+      'expected restored 12-argument enqueue, found % (%)',
+      coalesce(v_enqueue_count, 0),
+      coalesce(v_enqueue_identity, 'none');
+  end if;
+
+  if v_enqueue_16 is not null then
     raise exception '16-argument enqueue still exists after P1 down';
   end if;
 

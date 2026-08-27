@@ -13,6 +13,11 @@
 -- with current_user=postgres. DDL authorization requires current_user=postgres.
 -- session_user is an exact allowlist: postgres or cli_login_postgres.
 --
+-- Enqueue signature guards: exactly one public.enqueue_curation_candidate
+-- overload, then to_regprocedure of the expected (type,...) lookup. Do not
+-- compare pg_get_function_identity_arguments to a type-only string; Postgres
+-- 17 includes parameter names. Identity text is for exception messages only.
+--
 -- Pre-apply audit (read-only; do not record title, summary, content, or
 -- raw_payload). Run as postgres before applying:
 --
@@ -120,6 +125,8 @@ declare
   v_existing_new_columns pg_catalog.text;
   v_enqueue_count pg_catalog.int4;
   v_enqueue_identity pg_catalog.text;
+  v_enqueue_12 pg_catalog.regprocedure;
+  v_enqueue_16 pg_catalog.regprocedure;
   v_enqueue_owner pg_catalog.name;
   v_publish_reg pg_catalog.regprocedure;
   v_reject_reg pg_catalog.regprocedure;
@@ -283,12 +290,25 @@ begin
       coalesce(v_enqueue_identity, 'none');
   end if;
 
-  if v_enqueue_identity is distinct from
-       'text, text, text, text, text, text, jsonb, text, text, text, text, text'
-  then
+  -- Identity text is display-only. Resolve the expected 12-argument lookup
+  -- and confirm the 16-argument lookup is still absent.
+  v_enqueue_12 := pg_catalog.to_regprocedure(
+    'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text)'
+  );
+  v_enqueue_16 := pg_catalog.to_regprocedure(
+    'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text,text,text,text,text)'
+  );
+
+  if v_enqueue_12 is null then
     raise exception
       'expected 12-argument enqueue_curation_candidate, found (%)',
-      v_enqueue_identity;
+      coalesce(v_enqueue_identity, 'none');
+  end if;
+
+  if v_enqueue_16 is not null then
+    raise exception
+      '16-argument enqueue_curation_candidate already exists before P1 (%)',
+      coalesce(v_enqueue_identity, 'none');
   end if;
 
   if v_enqueue_owner <> 'postgres' then
@@ -1436,6 +1456,7 @@ declare
   v_enqueue_oid pg_catalog.oid;
   v_publish_oid pg_catalog.oid;
   v_reject_oid pg_catalog.oid;
+  v_enqueue_16 pg_catalog.regprocedure;
   v_old_enqueue pg_catalog.regprocedure;
 begin
   select
@@ -1465,12 +1486,15 @@ begin
       coalesce(v_enqueue_identity, 'none');
   end if;
 
-  if v_enqueue_identity is distinct from
-       'text, text, text, text, text, text, jsonb, text, text, text, text, text, text, text, text, text'
-  then
+  -- Identity text is display-only. Resolve the expected 16-argument lookup
+  -- and confirm the 12-argument lookup is gone.
+  v_enqueue_16 := pg_catalog.to_regprocedure(
+    'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text,text,text,text,text)'
+  );
+  if v_enqueue_16 is null then
     raise exception
       'expected 16-argument enqueue_curation_candidate, found (%)',
-      v_enqueue_identity;
+      coalesce(v_enqueue_identity, 'none');
   end if;
 
   if v_enqueue_owner <> 'postgres' then

@@ -10,11 +10,18 @@
 -- CASCADE is forbidden. Unexpected dependencies must fail this transaction.
 -- Do not use this script to make the original forward migration runnable
 -- again unless that data loss has been accepted.
+--
+-- Enqueue signature guards: exactly one public.enqueue_curation_candidate
+-- overload, then to_regprocedure of the expected (type,...) lookup. Do not
+-- compare pg_get_function_identity_arguments to a type-only string; Postgres
+-- 17 includes parameter names. Identity text is for exception messages only.
 
 begin;
 
 do $guard$
 declare
+  v_enqueue_count pg_catalog.int4;
+  v_enqueue_identity pg_catalog.text;
   v_enqueue_16 pg_catalog.regprocedure;
   v_enqueue_12 pg_catalog.regprocedure;
   v_missing_columns pg_catalog.text;
@@ -33,6 +40,29 @@ begin
       session_user;
   end if;
 
+  select
+    pg_catalog.count(*)::pg_catalog.int4,
+    pg_catalog.string_agg(
+      pg_catalog.pg_get_function_identity_arguments(p.oid),
+      ' | '
+      order by pg_catalog.pg_get_function_identity_arguments(p.oid)
+    )
+    into v_enqueue_count, v_enqueue_identity
+  from pg_catalog.pg_proc as p
+  join pg_catalog.pg_namespace as n
+    on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.proname = 'enqueue_curation_candidate';
+
+  if v_enqueue_count is distinct from 1 then
+    raise exception
+      'expected exactly one enqueue overload before cleanup, found % (%)',
+      coalesce(v_enqueue_count, 0),
+      coalesce(v_enqueue_identity, 'none');
+  end if;
+
+  -- Identity text is display-only. Confirm down restored the 12-argument
+  -- lookup and that the 16-argument lookup is still absent.
   v_enqueue_16 := pg_catalog.to_regprocedure(
     'public.enqueue_curation_candidate(text,text,text,text,text,text,jsonb,text,text,text,text,text,text,text,text,text)'
   );
