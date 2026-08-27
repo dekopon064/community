@@ -111,9 +111,13 @@
 --   order by revision_seq, id;
 --
 -- Post-apply audit: repeat the privilege, overload, trigger, and fingerprint
--- queries. Confirm enqueue identity is the 16-argument signature, Japanese
--- columns are null on existing rows, and created_at/updated_at fingerprints
--- match the pre-apply capture.
+-- queries. Confirm enqueue identity is the 16-argument signature. Old
+-- title/summary/content columns stay unchanged. New Korean columns are
+-- trim-normalized copies: title_ko / summary_ko / content_ko are
+-- IS NOT DISTINCT FROM btrim of the matching old column. Candidate
+-- ai_status_ko IS NOT DISTINCT FROM ai_status. Japanese columns and
+-- ai_status_ja are null on existing rows. created_at/updated_at
+-- fingerprints match the pre-apply capture.
 
 begin;
 
@@ -618,17 +622,19 @@ alter table machimoa_review.curation_candidates
 alter table machimoa_review.curation_candidates
   disable trigger curation_candidates_set_updated_at;
 
+-- Preserve old title/summary/content. Backfill Korean columns with trim
+-- normalization only. btrim(null) stays null.
 update public.curations
 set
-  title_ko = title,
-  summary_ko = summary,
-  content_ko = content;
+  title_ko = pg_catalog.btrim(title),
+  summary_ko = pg_catalog.btrim(summary),
+  content_ko = pg_catalog.btrim(content);
 
 update machimoa_review.curation_candidates
 set
-  title_ko = title,
-  summary_ko = summary,
-  content_ko = content,
+  title_ko = pg_catalog.btrim(title),
+  summary_ko = pg_catalog.btrim(summary),
+  content_ko = pg_catalog.btrim(content),
   ai_status_ko = ai_status;
 
 alter table machimoa_review.curation_candidates
@@ -661,9 +667,9 @@ begin
   where c.slug is distinct from f.slug
      or c.created_at is distinct from f.created_at
      or c.updated_at is distinct from f.updated_at
-     or c.title_ko is distinct from c.title
-     or c.summary_ko is distinct from c.summary
-     or c.content_ko is distinct from c.content
+     or c.title_ko is distinct from pg_catalog.btrim(c.title)
+     or c.summary_ko is distinct from pg_catalog.btrim(c.summary)
+     or c.content_ko is distinct from pg_catalog.btrim(c.content)
      or c.title_ja is not null
      or c.summary_ja is not null
      or c.content_ja is not null;
@@ -687,9 +693,9 @@ begin
      or c.reviewed_at is distinct from f.reviewed_at
      or c.published_at is distinct from f.published_at
      or c.superseded_at is distinct from f.superseded_at
-     or c.title_ko is distinct from c.title
-     or c.summary_ko is distinct from c.summary
-     or c.content_ko is distinct from c.content
+     or c.title_ko is distinct from pg_catalog.btrim(c.title)
+     or c.summary_ko is distinct from pg_catalog.btrim(c.summary)
+     or c.content_ko is distinct from pg_catalog.btrim(c.content)
      or c.ai_status_ko is distinct from c.ai_status
      or c.title_ja is not null
      or c.summary_ja is not null
