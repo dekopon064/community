@@ -22,7 +22,11 @@ declare
   v_unexpected_constraints pg_catalog.text;
   v_dependent_objects pg_catalog.text;
 begin
-  if current_user <> 'postgres' or session_user <> 'postgres' then
+  -- Supabase CLI 2.116.0 linked db push: session_user=cli_login_postgres,
+  -- current_user=postgres. DDL authorization still requires current_user=postgres.
+  -- session_user is an exact allowlist: postgres or cli_login_postgres.
+  if current_user <> 'postgres'
+     or session_user not in ('postgres', 'cli_login_postgres') then
     raise exception
       'P1 bilingual curations cleanup must run as postgres (current_user=%, session_user=%)',
       current_user,

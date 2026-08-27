@@ -9,6 +9,10 @@
 -- approval that is separate from committing the SQL. This transaction
 -- must not delete curation or candidate rows.
 --
+-- Supabase CLI 2.116.0 linked db push uses session_user=cli_login_postgres
+-- with current_user=postgres. DDL authorization requires current_user=postgres.
+-- session_user is an exact allowlist: postgres or cli_login_postgres.
+--
 -- Pre-apply audit (read-only; do not record title, summary, content, or
 -- raw_payload). Run as postgres before applying:
 --
@@ -129,7 +133,11 @@ declare
   v_curations_count pg_catalog.int8;
   v_candidates_count pg_catalog.int8;
 begin
-  if current_user <> 'postgres' or session_user <> 'postgres' then
+  -- Supabase CLI 2.116.0 linked db push: session_user=cli_login_postgres,
+  -- current_user=postgres. DDL authorization still requires current_user=postgres.
+  -- session_user is an exact allowlist: postgres or cli_login_postgres.
+  if current_user <> 'postgres'
+     or session_user not in ('postgres', 'cli_login_postgres') then
     raise exception
       'P1 bilingual curations migration must run as postgres (current_user=%, session_user=%)',
       current_user,
