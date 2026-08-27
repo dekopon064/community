@@ -1,15 +1,22 @@
-"""자동 데이터 수집 및 DB 저장 파이프라인.
+"""자동 데이터 수집 및 검수 대기 등록 파이프라인.
 
-온통청년 청년정책 오픈 API 에서 정책 데이터를 수집하고, Gemini 로 읽기 쉬운
-마크다운 요약으로 가공한 뒤 Supabase `curations` 테이블에 저장한다.
+온통청년 청년정책 오픈 API에서 정책 데이터를 수집하고, Gemini로 읽기 쉬운
+마크다운 요약으로 가공한 뒤 `public.enqueue_curation_candidate` RPC로
+검수 대기 후보만 등록한다. 공개 `curations` 테이블은 직접 쓰지 않는다.
 """
 
+from __future__ import annotations
+
+import hashlib
+import json
 import os
 import re
 import sys
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 import requests
-from supabase import Client, create_client
 
 # google-genai 미설치 등 임포트 실패 시에도 파이프라인이 죽지 않도록 방어한다
 try:
@@ -22,19 +29,83 @@ except ImportError:
     types = None
     _GENAI_AVAILABLE = False
 
-# 앱과 동일한 테이블을 사용한다 (app/lib/types.ts 의 Curation 스키마 참고)
-TABLE_NAME = "curations"
-
-# 온통청년 청년정책 오픈 API 엔드포인트 (최신 JSON 스펙)
 YOUTH_API_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
-
-# API 에서 한 번에 조회할 정책 개수
 MAX_ITEMS = 5
-
-# API 응답 대기 최대 시간(초)
 REQUEST_TIMEOUT = 15
 
-# 수도권 청년 타겟: 중앙부처(전국) + 서울/경기/인천만 수집
+YOUTHCENTER_SOURCE = "youthcenter"
+ENQUEUE_RPC_NAME = "enqueue_curation_candidate"
+ALLOWED_ENQUEUE_OUTCOMES = frozenset({"inserted", "duplicate"})
+ENQUEUE_PARAM_NAMES = (
+    "p_source",
+    "p_source_item_id",
+    "p_source_revision_hash",
+    "p_slug",
+    "p_title",
+    "p_content",
+    "p_raw_payload",
+    "p_ai_status",
+    "p_category",
+    "p_summary",
+    "p_source_url",
+    "p_ai_model",
+)
+FORBIDDEN_ENQUEUE_FIELDS = frozenset(
+    {
+        "review_status",
+        "reviewed_at",
+        "reviewed_by",
+        "review_notes",
+        "published_at",
+        "published_curation_id",
+        "superseded_at",
+        "superseded_by_candidate_id",
+        "revision_seq",
+        "created_at",
+        "updated_at",
+    }
+)
+
+RAW_PAYLOAD_KEYS = (
+    "plcyNo",
+    "plcyNm",
+    "plcyExplnCn",
+    "plcySprtCn",
+    "aplyUrlAddr",
+    "refUrlAddr1",
+    "refUrlAddr2",
+    "plcyTpNm",
+    "lclsfNm",
+    "mclsfNm",
+    "polyBizSecd",
+    "zipCd",
+    "rgLcnCd",
+    "pvsnInstGroupNm",
+    "cnsgNmor",
+    "mngtMsonNm",
+    "sprvsnInstNm",
+    "operInstNm",
+    "rgtrInstCdNm",
+)
+
+REVISION_HASH_FIELDS = (
+    "plcyNm",
+    "plcyExplnCn",
+    "plcySprtCn",
+    "plcyTpNm",
+    "lclsfNm",
+    "mclsfNm",
+    "source_url",
+    "polyBizSecd",
+    "zipCd",
+    "rgLcnCd",
+    "sprvsnInstNm",
+    "operInstNm",
+)
+
+SOURCE_URL_FIELDS = ("aplyUrlAddr", "refUrlAddr1", "refUrlAddr2")
+HTTP_URL_RE = re.compile(r"^https?://")
+
 TARGET_REGION_KEYWORDS = (
     "중앙부처",
     "전국",
@@ -42,7 +113,6 @@ TARGET_REGION_KEYWORDS = (
     "경기",
     "인천",
 )
-# 온통청년 지역코드(polyBizSecd / zipCd) — 중앙부처·수도권
 TARGET_REGION_CODES = (
     "003001",  # 중앙부처(전국)
     "003002001",  # 서울
@@ -50,7 +120,6 @@ TARGET_REGION_CODES = (
     "003002008",  # 경기
 )
 
-# Gemini 요약 모델 및 지시사항(시스템 프롬프트)
 GEMINI_MODEL = "gemini-3.5-flash"
 GEMINI_SYSTEM_PROMPT = """너는 다정한 청년 정책 도우미야. 정책 원문과 URL을 받으면, 반드시 아래 양식을 지켜서 마크다운으로 요약해 줘.
 
@@ -68,19 +137,60 @@ GEMINI_SYSTEM_PROMPT = """너는 다정한 청년 정책 도우미야. 정책 �
 🔗 **원문 링크:** (제공된 URL 그대로 출력)
 """
 
-# Gemini API 키를 읽어 클라이언트를 초기화한다 (키가 없으면 요약을 건너뛴다)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 client = None
 if _GENAI_AVAILABLE and GEMINI_API_KEY:
     client = genai.Client(api_key=GEMINI_API_KEY)
 
 
-def get_supabase_client() -> Client:
+class PipelineError(Exception):
+    """파이프라인 처리 오류."""
+
+
+class TransformError(PipelineError):
+    """수집원 응답을 enqueue 파라미터로 바꾸지 못함."""
+
+
+class EnqueueError(PipelineError):
+    """검수 대기 RPC 호출 또는 응답이 유효하지 않음."""
+
+
+@dataclass
+class YouthcenterCandidate:
+    source_item_id: str
+    slug: str
+    title: str
+    content: str
+    category: str
+    source_url: str | None
+    raw_payload: dict[str, Any]
+    source_revision_hash: str
+
+
+@dataclass
+class PipelineStats:
+    collected: int = 0
+    region_excluded: int = 0
+    transform_errors: int = 0
+    rpc_inserted: int = 0
+    rpc_duplicate: int = 0
+    superseded: int = 0
+    rpc_failures: int = 0
+    ai_status_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+
+    @property
+    def has_errors(self) -> bool:
+        return self.transform_errors > 0 or self.rpc_failures > 0
+
+
+def get_supabase_client() -> Any:
     """환경 변수를 읽어 Supabase 클라이언트를 초기화한다.
 
-    GitHub Actions 에서는 Secrets 로 주입되며, 로컬에서는 셸 환경 변수로 전달한다.
-    쓰기 작업이 필요하므로 service role 키를 사용한다.
+    GitHub Actions에서는 Secrets로 주입되며, 로컬에서는 셸 환경 변수로 전달한다.
+    enqueue RPC 실행에 service role 키가 필요하다.
     """
+    from supabase import create_client
+
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
 
@@ -96,10 +206,16 @@ def strip_html(raw: str) -> str:
     """HTML 태그를 제거하고 공백을 정리해 순수 텍스트만 반환한다."""
     if not raw:
         return ""
-    # <br>, <p> 등 태그를 제거하고, 연속 공백/개행을 하나로 정리
     text = re.sub(r"<[^>]+>", " ", raw)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def normalize_revision_text(raw: object) -> str:
+    """revision hash 입력값을 HTML 제거·공백 정리한다."""
+    if raw is None:
+        return ""
+    return strip_html(str(raw))
 
 
 def extract_category(policy: dict) -> str:
@@ -122,7 +238,6 @@ def is_target_region(policy: dict) -> bool:
     타겟에 해당하면 True, 순수 지방 자치단체 정책이면 False.
     지역 정보가 전혀 없으면(필드 공백) 오탐으로 전부 스킵하지 않도록 True.
     """
-    # 지역코드 필드 결합 (콤마로 여러 코드가 올 수 있음)
     region_codes = " ".join(
         str(policy.get(key) or "")
         for key in ("polyBizSecd", "zipCd", "rgLcnCd")
@@ -130,7 +245,6 @@ def is_target_region(policy: dict) -> bool:
     if any(code in region_codes for code in TARGET_REGION_CODES):
         return True
 
-    # 기관명·기관그룹·지역명 텍스트에서 타겟 키워드 탐색
     region_text = " ".join(
         str(policy.get(key) or "")
         for key in (
@@ -145,58 +259,180 @@ def is_target_region(policy: dict) -> bool:
     if any(keyword in region_text for keyword in TARGET_REGION_KEYWORDS):
         return True
 
-    # 지역 메타가 전혀 없으면 API 필드 누락으로 보고 통과시킨다
     if not region_codes.strip() and not region_text.strip():
         return True
 
     return False
 
 
-def summarize_with_gemini(raw_text: str, url: str) -> str:
-    """정책 원문과 URL 을 Gemini 로 읽기 쉬운 마크다운 요약으로 가공한다.
+def is_http_url(value: object) -> bool:
+    """운영 enqueue 계약과 같은 HTTP(S) URL인지 판별한다."""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return bool(HTTP_URL_RE.match(text)) and len(text) <= 2048
 
-    키가 없거나(패키지 미설치 포함) 호출 중 에러가 나면, 파이프라인을 멈추지 않고
-    원본 텍스트(raw_text)를 그대로 반환한다.
+
+def select_source_url(policy: dict) -> str | None:
+    """신청 URL → 참고 URL1 → 참고 URL2 순으로 첫 유효 HTTP(S) URL을 고른다."""
+    for key in SOURCE_URL_FIELDS:
+        candidate = policy.get(key)
+        if isinstance(candidate, str) and is_http_url(candidate):
+            return candidate.strip()
+    return None
+
+
+def copy_raw_payload(policy: dict) -> dict[str, Any]:
+    """원본 응답에서 allowlist 19개 키만 새 dict로 복사한다."""
+    return {key: policy.get(key) for key in RAW_PAYLOAD_KEYS}
+
+
+def compute_source_revision_hash(
+    policy: dict, source_url: str | None
+) -> str:
+    """고정 필드만으로 결정론적 SHA-256 소문자 hex를 계산한다."""
+    payload: dict[str, str] = {}
+    for key in REVISION_HASH_FIELDS:
+        if key == "source_url":
+            payload[key] = normalize_revision_text(source_url or "")
+        else:
+            payload[key] = normalize_revision_text(policy.get(key))
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def transform_youthcenter_policy(policy: dict) -> YouthcenterCandidate:
+    """온통청년 응답 객체 하나를 enqueue 후보 데이터로 변환한다."""
+    source_item_id = str(policy.get("plcyNo") or "").strip()
+    if not source_item_id:
+        raise TransformError("source_item_id(plcyNo) is missing")
+
+    title = strip_html(str(policy.get("plcyNm") or ""))
+    raw_content = (
+        f"{policy.get('plcyExplnCn') or ''}\n\n{policy.get('plcySprtCn') or ''}"
+    )
+    content = strip_html(raw_content)
+    if not title or not content:
+        raise TransformError(
+            f"title or content is empty for source_item_id={source_item_id}"
+        )
+
+    source_url = select_source_url(policy)
+    return YouthcenterCandidate(
+        source_item_id=source_item_id,
+        slug=f"policy-{source_item_id}",
+        title=title,
+        content=content,
+        category=extract_category(policy),
+        source_url=source_url,
+        raw_payload=copy_raw_payload(policy),
+        source_revision_hash=compute_source_revision_hash(policy, source_url),
+    )
+
+
+def build_enqueue_params(
+    candidate: YouthcenterCandidate,
+    *,
+    content: str,
+    ai_status: str,
+    ai_model: str | None,
+) -> dict[str, Any]:
+    """검수·공개 필드를 넣지 않은 enqueue RPC 파라미터를 만든다."""
+    params = {
+        "p_source": YOUTHCENTER_SOURCE,
+        "p_source_item_id": candidate.source_item_id,
+        "p_source_revision_hash": candidate.source_revision_hash,
+        "p_slug": candidate.slug,
+        "p_title": candidate.title,
+        "p_content": content,
+        "p_raw_payload": candidate.raw_payload,
+        "p_ai_status": ai_status,
+        "p_category": candidate.category,
+        "p_summary": None,
+        "p_source_url": candidate.source_url,
+        "p_ai_model": ai_model,
+    }
+    unexpected = FORBIDDEN_ENQUEUE_FIELDS.intersection(params)
+    if unexpected:
+        raise TransformError(f"forbidden enqueue fields present: {sorted(unexpected)}")
+    if set(params) != set(ENQUEUE_PARAM_NAMES):
+        raise TransformError("enqueue params do not match the RPC contract")
+    return params
+
+
+def parse_enqueue_result(data: object) -> dict[str, Any]:
+    """RPC 반환값이 허용된 한 행인지 검사한다."""
+    row: object
+    if isinstance(data, list):
+        if len(data) != 1:
+            raise EnqueueError(
+                f"enqueue RPC must return exactly one row, got {len(data)}"
+            )
+        row = data[0]
+    else:
+        row = data
+
+    if not isinstance(row, dict):
+        raise EnqueueError("enqueue RPC row must be an object")
+
+    outcome = row.get("outcome")
+    if outcome not in ALLOWED_ENQUEUE_OUTCOMES:
+        raise EnqueueError(f"unexpected enqueue outcome: {outcome!r}")
+    if "candidate_id" not in row:
+        raise EnqueueError("enqueue RPC row is missing candidate_id")
+    return row
+
+
+def enqueue_curation_candidate(supabase: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """검수 대기 후보 등록 RPC를 한 번 호출한다."""
+    try:
+        response = supabase.rpc(ENQUEUE_RPC_NAME, params).execute()
+    except Exception as exc:  # noqa: BLE001 - RPC 실패를 항목 오류로 집계
+        raise EnqueueError(f"enqueue RPC failed: {exc}") from None
+
+    return parse_enqueue_result(getattr(response, "data", None))
+
+
+def summarize_with_gemini(raw_text: str, url: str | None) -> tuple[str, str, str | None]:
+    """정책 원문과 URL을 Gemini로 가공하고 상태와 함께 반환한다.
+
+    호출에 실패해도 파이프라인을 멈추지 않는다. 공개 테이블로 우회하지 않고,
+    검수용 원문 콘텐츠와 실패 상태를 함께 넘긴다.
     """
     if not raw_text:
-        return raw_text
+        return raw_text, "empty_response", None
 
     if not _GENAI_AVAILABLE or not client:
-        print("[pipeline] 경고: Gemini 사용 불가(키/패키지 없음), 원본을 사용합니다.")
-        return raw_text
+        print("[pipeline] Gemini unavailable (missing key or package); using source text.")
+        return raw_text, "skipped_no_key", None
 
     try:
         response = client.models.generate_content(
             model=GEMINI_MODEL,
-            contents=f"[원문]\n{raw_text}\n\n[URL]\n{url}",
+            contents=f"[원문]\n{raw_text}\n\n[URL]\n{url or ''}",
             config=types.GenerateContentConfig(
                 system_instruction=GEMINI_SYSTEM_PROMPT
             ),
         )
         summary = (getattr(response, "text", "") or "").strip()
-        # 응답이 비어 있으면(안전 필터 등) 원본을 그대로 사용
-        return summary or raw_text
-    except Exception as e:  # noqa: BLE001 - 요약 실패 시 원본으로 폴백
-        print(f"Gemini API 에러 발생: {e}")
-        return raw_text
+        if not summary:
+            return raw_text, "empty_response", GEMINI_MODEL
+        return summary, "success", GEMINI_MODEL
+    except Exception as exc:  # noqa: BLE001 - 요약 실패 시 원문과 error 상태 보존
+        print(f"[pipeline] Gemini API error: {exc}")
+        return raw_text, "error", GEMINI_MODEL
 
 
 def fetch_real_policies() -> list[dict]:
-    """온통청년 청년정책 오픈 API(최신 JSON 스펙)를 호출해 정책 데이터를 가져온다.
-
-    응답은 JSON 이며, result.youthPolicyList 배열을 순회한다.
-    각 정책의 고유번호(plcyNo), 제목(plcyNm), 카테고리(plcyTpNm/lclsfNm),
-    정책설명(plcyExplnCn) + 지원내용(plcySprtCn), 신청/참고 URL, 지역/기관
-    메타데이터를 추출해 원본 형태로 반환한다.
-    (지역 필터·중복 검사·Gemini 요약은 save_policies 단계에서 수행한다.)
-    API 키가 없으면 에러 대신 경고를 출력하고 빈 리스트를 반환한다.
-    """
+    """온통청년 청년정책 오픈 API(최신 JSON 스펙)를 호출해 원본 정책 객체를 가져온다."""
     api_key = os.environ.get("YOUTH_API_KEY")
     if not api_key:
-        print(
-            "[pipeline] 경고: 환경 변수 YOUTH_API_KEY 가 설정되지 않아 수집을 중단합니다."
-        )
-        return []
+        raise RuntimeError("환경 변수 YOUTH_API_KEY 가 설정되지 않았습니다.")
 
     params = {
         "apiKeyNm": api_key,
@@ -205,9 +441,6 @@ def fetch_real_policies() -> list[dict]:
         "pageType": 1,
         "rtnType": "json",
     }
-
-    # 온통청년 방화벽이 python-requests 기본 User-Agent 를 차단하므로
-    # 일반 크롬 브라우저처럼 보이도록 헤더를 위장한다
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -217,144 +450,137 @@ def fetch_real_policies() -> list[dict]:
         "Accept": "application/xml, text/xml, */*; q=0.01",
     }
 
-    # allow_redirects=False: 잘못된 요청 시 서버가 8080 포트로 리다이렉트하는데
-    # 해당 포트는 외부(GitHub Actions)에서 접근이 막혀 타임아웃되므로 따라가지 않는다
-    response = requests.get(
-        YOUTH_API_URL,
-        params=params,
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
-        allow_redirects=False,
-    )
-    response.raise_for_status()
+    try:
+        response = requests.get(
+            YOUTH_API_URL,
+            params=params,
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+            allow_redirects=False,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "unknown"
+        raise RuntimeError(f"Youth API HTTP {status}") from None
+    except ValueError:
+        raise RuntimeError("Youth API returned non-JSON") from None
+    except requests.RequestException:
+        raise RuntimeError("Youth API request failed") from None
 
-    data = response.json()
     policy_list = data.get("result", {}).get("youthPolicyList", [])
-
-    policies: list[dict] = []
-    for policy in policy_list:
-        plcy_no = policy.get("plcyNo")
-        title = policy.get("plcyNm", "").strip()
-        # 정책설명 + 지원내용을 합쳐 본문을 구성한 뒤 HTML 태그를 제거한다
-        raw_content = (
-            f"{policy.get('plcyExplnCn', '')}\n\n{policy.get('plcySprtCn', '')}"
-        )
-        content = strip_html(raw_content).strip()
-
-        # 고유번호/제목/내용이 비어 있으면 저장 가치가 없으므로 건너뛴다
-        if not plcy_no or not title or not content:
-            continue
-
-        # 온통청년 응답에서 신청 URL 또는 참고 URL 을 순서대로 확보한다
-        url = (
-            policy.get("aplyUrlAddr")
-            or policy.get("refUrlAddr1")
-            or policy.get("refUrlAddr2")
-            or "링크 없음"
-        )
-
-        # 지역 필터용 원본 필드와 카테고리를 함께 보관한다
-        policies.append(
-            {
-                "plcy_no": plcy_no,
-                "title": title,
-                "category": extract_category(policy),
-                "content": content,
-                "url": url,
-                "polyBizSecd": policy.get("polyBizSecd") or "",
-                "zipCd": policy.get("zipCd") or "",
-                "rgLcnCd": policy.get("rgLcnCd") or "",
-                "pvsnInstGroupNm": policy.get("pvsnInstGroupNm") or "",
-                "cnsgNmor": policy.get("cnsgNmor") or "",
-                "mngtMsonNm": policy.get("mngtMsonNm") or "",
-                "sprvsnInstNm": policy.get("sprvsnInstNm") or "",
-                "operInstNm": policy.get("operInstNm") or "",
-                "rgtrInstCdNm": policy.get("rgtrInstCdNm") or "",
-            }
-        )
-
-        if len(policies) >= MAX_ITEMS:
-            break
-
-    return policies
+    if not isinstance(policy_list, list):
+        raise RuntimeError("Youth API youthPolicyList is not a list")
+    return [item for item in policy_list if isinstance(item, dict)]
 
 
-def save_policies(supabase: Client, policies: list[dict]) -> int:
-    """타겟 지역의 신규 정책만 Gemini 로 요약해 curations 테이블에 저장한다.
+def process_policies(
+    supabase: Any,
+    policies: list[dict],
+    *,
+    summarize: Callable[[str, str | None], tuple[str, str, str | None]] = summarize_with_gemini,
+    enqueue: Callable[[Any, dict[str, Any]], dict[str, Any]] = enqueue_curation_candidate,
+) -> PipelineStats:
+    """지역 필터 → 변환 → AI → enqueue RPC 순으로 정책을 처리한다."""
+    stats = PipelineStats(collected=len(policies))
 
-    각 정책의 고유번호(plcyNo)로 변하지 않는 slug 를 만들고, Gemini 호출 전에
-    (1) Supabase 중복 검사, (2) 수도권·중앙부처 지역 필터를 거친다.
-    중복이거나 타겟 외 지역이면 요약/저장을 건너뛴다. 저장 성공 행 수를 반환한다.
-    """
-    rows = []
     for policy in policies:
-        title = policy["title"]
-        # plcyNo 기반의 영구 불변 고유 slug (정책마다 항상 동일)
-        slug = f"policy-{policy['plcy_no']}"
-
-        # 중복 검사: 이미 수집된 정책이면 Gemini 호출 없이 건너뛴다
-        existing_data = (
-            supabase.table("curations")
-            .select("slug")
-            .eq("slug", slug)
-            .execute()
-        )
-        if existing_data.data:
-            print(f"⏭️ 이미 수집된 정책입니다 (스킵): {title}")
+        source_item_id = str(policy.get("plcyNo") or "").strip()
+        if not source_item_id:
+            stats.transform_errors += 1
+            print("[pipeline] transform error: source_item_id(plcyNo) is missing", file=sys.stderr)
             continue
 
-        # 지역 필터: 중앙부처·서울·경기·인천이 아니면 Gemini 호출 없이 건너뛴다
         if not is_target_region(policy):
-            print(f"🚫 타겟 지역 아님 (스킵): {title}")
+            stats.region_excluded += 1
+            title = strip_html(str(policy.get("plcyNm") or "")) or source_item_id
+            print(f"[pipeline] region excluded: {title}")
             continue
 
-        # 새로운 정책만 Gemini 로 마크다운 요약 가공 (실패 시 원본 그대로 사용)
-        ai_content = summarize_with_gemini(policy["content"], policy["url"])
+        try:
+            candidate = transform_youthcenter_policy(policy)
+        except TransformError as exc:
+            stats.transform_errors += 1
+            print(f"[pipeline] transform error: {exc}", file=sys.stderr)
+            continue
 
-        rows.append(
-            {
-                "slug": slug,
-                # API 정책 유형/대분류 기반 자동 할당 (없으면 '기타')
-                "category": policy["category"],
-                "title": title,
-                # 요약본 앞부분을 목록용 요약으로 사용
-                "summary": ai_content[:60],
-                "content": ai_content,
-            }
+        content, ai_status, ai_model = summarize(candidate.content, candidate.source_url)
+        stats.ai_status_counts[ai_status] += 1
+
+        try:
+            params = build_enqueue_params(
+                candidate,
+                content=content,
+                ai_status=ai_status,
+                ai_model=ai_model,
+            )
+        except TransformError as exc:
+            stats.transform_errors += 1
+            print(f"[pipeline] transform error: {exc}", file=sys.stderr)
+            continue
+
+        try:
+            result = enqueue(supabase, params)
+        except EnqueueError as exc:
+            stats.rpc_failures += 1
+            print(
+                f"[pipeline] rpc error slug={candidate.slug}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+
+        outcome = result["outcome"]
+        if outcome == "inserted":
+            stats.rpc_inserted += 1
+            if result.get("superseded_candidate_id"):
+                stats.superseded += 1
+        elif outcome == "duplicate":
+            stats.rpc_duplicate += 1
+
+    return stats
+
+
+def print_stats(stats: PipelineStats) -> None:
+    """수집·필터·RPC·AI 수치를 구분해 출력한다. 키와 payload 전문은 출력하지 않는다."""
+    print(f"[pipeline] collected={stats.collected}")
+    print(f"[pipeline] region_excluded={stats.region_excluded}")
+    print(f"[pipeline] transform_errors={stats.transform_errors}")
+    print(f"[pipeline] rpc_inserted={stats.rpc_inserted}")
+    print(f"[pipeline] rpc_duplicate={stats.rpc_duplicate}")
+    print(f"[pipeline] superseded={stats.superseded}")
+    if stats.ai_status_counts:
+        ai_parts = ", ".join(
+            f"{name}={stats.ai_status_counts[name]}"
+            for name in sorted(stats.ai_status_counts)
         )
-
-    # 저장할 신규 정책이 없으면 조기 종료
-    if not rows:
-        return 0
-
-    # slug 가 겹치면 기존 행을 덮어쓰도록 upsert 사용 (unique 제약 위반 방지)
-    response = (
-        supabase.table(TABLE_NAME).upsert(rows, on_conflict="slug").execute()
-    )
-    saved = len(response.data or [])
-    return saved
+        print(f"[pipeline] ai_status: {ai_parts}")
+    else:
+        print("[pipeline] ai_status: none")
+    print(f"[pipeline] rpc_failures={stats.rpc_failures}")
 
 
-def main() -> None:
-    print("[pipeline] Supabase 클라이언트 초기화 중...")
+def main() -> int:
+    print("[pipeline] Supabase client init...")
     supabase = get_supabase_client()
 
-    print("[pipeline] 온통청년 API 정책 데이터 수집 중...")
+    print("[pipeline] Fetching Youth Center policies...")
     policies = fetch_real_policies()
-    print(f"[pipeline] {len(policies)}건의 정책 데이터를 수집했습니다.")
+    print(f"[pipeline] collected {len(policies)} policies from API")
 
-    if not policies:
-        print("[pipeline] 수집된 데이터가 0건입니다")
-        return
+    stats = process_policies(supabase, policies)
+    print_stats(stats)
 
-    print("[pipeline] Supabase 저장 중...")
-    saved = save_policies(supabase, policies)
-    print(f"[pipeline] 저장 완료: {saved}건")
+    if stats.has_errors:
+        print("[pipeline] completed with errors", file=sys.stderr)
+        return 1
+
+    print("[pipeline] completed")
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except Exception as exc:  # noqa: BLE001 - 파이프라인 실패를 명확히 로깅
         print(f"[pipeline] 실행 실패: {exc}", file=sys.stderr)
         sys.exit(1)
