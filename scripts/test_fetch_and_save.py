@@ -91,6 +91,34 @@ def duplicate_outcome() -> dict:
     }
 
 
+def inserted_outcome() -> dict:
+    return {
+        "candidate_id": "11111111-1111-1111-1111-111111111111",
+        "outcome": "inserted",
+        "superseded_candidate_id": None,
+    }
+
+
+def ko_success(content: str, url: str | None) -> tuple[str, str, str]:
+    return (content, "success", pipeline.GEMINI_MODEL)
+
+
+def ja_success(title_ko: str, content_ko: str) -> tuple[str, str, str, str]:
+    return ("日本語タイトル", "日本語本文", "success", pipeline.GEMINI_MODEL)
+
+
+def enqueue_params(candidate: pipeline.YouthcenterCandidate, **kwargs: object) -> dict:
+    return pipeline.build_enqueue_params(
+        candidate,
+        content_ko=kwargs.get("content_ko", candidate.content),
+        ai_status_ko=kwargs.get("ai_status_ko", "skipped_no_key"),
+        title_ja=kwargs.get("title_ja"),
+        content_ja=kwargs.get("content_ja"),
+        ai_status_ja=kwargs.get("ai_status_ja"),
+        ai_model=kwargs.get("ai_model"),
+    )
+
+
 class FakeRPC:
     def __init__(self, data=None, error=None):
         self._data = data
@@ -213,26 +241,54 @@ class EnqueueContractTests(unittest.TestCase):
         candidate = pipeline.transform_youthcenter_policy(sample_policy())
         params = pipeline.build_enqueue_params(
             candidate,
-            content="요약된 본문 " * 10,
-            ai_status="success",
+            content_ko="요약된 본문 " * 10,
+            ai_status_ko="success",
+            title_ja="日本語タイトル",
+            content_ja="日本語本文",
+            ai_status_ja="success",
             ai_model=pipeline.GEMINI_MODEL,
         )
-        self.assertIsNone(params["p_summary"])
+        self.assertIsNone(params["p_summary_ko"])
+        self.assertIsNone(params["p_summary_ja"])
+
+    def test_rpc_params_are_exactly_the_new_sixteen(self) -> None:
+        candidate = pipeline.transform_youthcenter_policy(sample_policy())
+        params = enqueue_params(
+            candidate,
+            content_ko=candidate.content,
+            ai_status_ko="skipped_no_key",
+        )
+        self.assertEqual(len(params), 16)
+        self.assertEqual(set(params), set(pipeline.ENQUEUE_PARAM_NAMES))
+        self.assertEqual(
+            tuple(params),
+            pipeline.ENQUEUE_PARAM_NAMES,
+        )
+        self.assertTrue(pipeline.REMOVED_ENQUEUE_PARAM_NAMES.isdisjoint(params))
+        self.assertNotIn("p_title", params)
+        self.assertNotIn("p_content", params)
+        self.assertNotIn("p_summary", params)
+        self.assertNotIn("p_ai_status", params)
 
     def test_rpc_params_exclude_forbidden_fields(self) -> None:
         candidate = pipeline.transform_youthcenter_policy(sample_policy())
-        params = pipeline.build_enqueue_params(
-            candidate,
-            content=candidate.content,
-            ai_status="skipped_no_key",
-            ai_model=None,
-        )
+        params = enqueue_params(candidate)
         self.assertEqual(set(params), set(pipeline.ENQUEUE_PARAM_NAMES))
         self.assertTrue(pipeline.FORBIDDEN_ENQUEUE_FIELDS.isdisjoint(params))
         self.assertEqual(params["p_source"], "youthcenter")
         self.assertEqual(params["p_source_item_id"], "2026082700001")
         self.assertEqual(params["p_slug"], "policy-2026082700001")
         self.assertIsNone(params["p_ai_model"])
+        self.assertEqual(params["p_title_ko"], candidate.title)
+        self.assertEqual(params["p_content_ko"], candidate.content)
+
+    def test_title_ko_is_cleaned_html_and_whitespace(self) -> None:
+        candidate = pipeline.transform_youthcenter_policy(
+            sample_policy(plcyNm="  <b>청년</b>   월세 지원  ")
+        )
+        params = enqueue_params(candidate)
+        self.assertEqual(params["p_title_ko"], "청년 월세 지원")
+        self.assertNotIn("<b>", params["p_title_ko"])
 
     def test_inserted_and_duplicate_responses_are_accepted(self) -> None:
         inserted = pipeline.parse_enqueue_result(
@@ -290,10 +346,13 @@ class EnqueueContractTests(unittest.TestCase):
             ]
         )
         candidate = pipeline.transform_youthcenter_policy(sample_policy())
-        params = pipeline.build_enqueue_params(
+        params = enqueue_params(
             candidate,
-            content=candidate.content,
-            ai_status="success",
+            content_ko=candidate.content,
+            ai_status_ko="success",
+            title_ja="日本語タイトル",
+            content_ja="日本語本文",
+            ai_status_ja="success",
             ai_model=pipeline.GEMINI_MODEL,
         )
         result = pipeline.enqueue_curation_candidate(client, params)
@@ -307,14 +366,16 @@ class PipelineFlowTests(unittest.TestCase):
         stats = pipeline.process_policies(
             FakeSupabase(),
             [sample_policy(plcyNo="")],
-            summarize=lambda content, url: (content, "skipped_no_key", None),
+            summarize_ko=lambda content, url: (content, "skipped_no_key", None),
+            translate_ja=ja_success,
         )
         self.assertEqual(stats.transform_errors, 1)
         self.assertEqual(stats.rpc_inserted, 0)
         self.assertTrue(stats.has_errors)
 
     def test_region_filter_skips_gemini_and_enqueue(self) -> None:
-        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        summarize_ko = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        translate_ja = MagicMock(return_value=ja_success("t", "c"))
         enqueue = MagicMock()
         policy = sample_policy(
             polyBizSecd="003002009",
@@ -330,11 +391,13 @@ class PipelineFlowTests(unittest.TestCase):
         stats = pipeline.process_policies(
             FakeSupabase(),
             [policy],
-            summarize=summarize,
+            summarize_ko=summarize_ko,
+            translate_ja=translate_ja,
             enqueue=enqueue,
         )
         self.assertEqual(stats.region_excluded, 1)
-        summarize.assert_not_called()
+        summarize_ko.assert_not_called()
+        translate_ja.assert_not_called()
         enqueue.assert_not_called()
 
     def test_process_counts_inserted_duplicate_and_superseded(self) -> None:
@@ -357,7 +420,8 @@ class PipelineFlowTests(unittest.TestCase):
         stats = pipeline.process_policies(
             FakeSupabase(),
             [sample_policy(), sample_policy(plcyNo="2026082700002")],
-            summarize=lambda content, url: (content, "success", pipeline.GEMINI_MODEL),
+            summarize_ko=ko_success,
+            translate_ja=ja_success,
             enqueue=enqueue,
         )
         self.assertEqual(stats.rpc_inserted, 1)
@@ -369,14 +433,18 @@ class PipelineFlowTests(unittest.TestCase):
         def enqueue(_supabase, _params):
             raise pipeline.EnqueueError("unexpected enqueue outcome: 'nope'")
 
+        translate_ja = MagicMock()
         stats = pipeline.process_policies(
             FakeSupabase(),
             [sample_policy()],
-            summarize=lambda content, url: (content, "error", pipeline.GEMINI_MODEL),
+            summarize_ko=lambda content, url: (content, "error", pipeline.GEMINI_MODEL),
+            translate_ja=translate_ja,
             enqueue=enqueue,
         )
         self.assertEqual(stats.rpc_failures, 1)
-        self.assertEqual(stats.ai_status_counts["error"], 1)
+        self.assertEqual(stats.ai_status_ko_counts["error"], 1)
+        self.assertEqual(stats.ai_status_ja_not_called, 1)
+        translate_ja.assert_not_called()
         self.assertTrue(stats.has_errors)
 
 
@@ -438,6 +506,14 @@ class NoDirectWriteTests(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertNotIn(pattern, source)
         self.assertIn("enqueue_curation_candidate", source)
+        self.assertTrue(
+            pipeline.REMOVED_ENQUEUE_PARAM_NAMES.isdisjoint(
+                pipeline.ENQUEUE_PARAM_NAMES
+            )
+        )
+        self.assertEqual(len(pipeline.ENQUEUE_PARAM_NAMES), 16)
+        self.assertNotIn("fallback_raw", source)
+        self.assertNotRegex(source, r"\[pipeline\] ai_status:")
         self.assertNotRegex(source, r"\.upsert\s*\(")
         self.assertNotRegex(source, r"on_conflict\s*=")
 
@@ -564,16 +640,19 @@ class PagingCollectionTests(unittest.TestCase):
         self.assertEqual(stats.stop_reason, "short_page")
         self.assertEqual(selected, [target])
 
-        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        summarize_ko = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        translate_ja = MagicMock(side_effect=ja_success)
         enqueue = MagicMock(return_value=duplicate_outcome())
         process_stats = pipeline.process_policies(
             FakeSupabase(),
             selected,
-            summarize=summarize,
+            summarize_ko=summarize_ko,
+            translate_ja=translate_ja,
             enqueue=enqueue,
             stats=stats,
         )
-        self.assertEqual(summarize.call_count, 1)
+        self.assertEqual(summarize_ko.call_count, 1)
+        self.assertEqual(translate_ja.call_count, 1)
         self.assertEqual(enqueue.call_count, 1)
         self.assertEqual(process_stats.processed, 1)
         self.assertEqual(process_stats.collected, 7)
@@ -635,46 +714,55 @@ class PagingCollectionTests(unittest.TestCase):
         self.assertEqual(seen_pages, [1, 2])
         self.assertGreaterEqual(stats.in_run_duplicates, 1)
         self.assertEqual(stats.selected, 1)
-        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        summarize_ko = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        translate_ja = MagicMock(side_effect=ja_success)
         enqueue = MagicMock(return_value=duplicate_outcome())
         pipeline.process_policies(
             FakeSupabase(),
             selected,
-            summarize=summarize,
+            summarize_ko=summarize_ko,
+            translate_ja=translate_ja,
             enqueue=enqueue,
             stats=stats,
         )
-        self.assertEqual(summarize.call_count, 1)
+        self.assertEqual(summarize_ko.call_count, 1)
+        self.assertEqual(translate_ja.call_count, 1)
         self.assertEqual(enqueue.call_count, 1)
 
     def test_process_policies_caps_ai_and_enqueue_at_five(self) -> None:
         policies = [sample_policy(plcyNo=f"cap-{i}") for i in range(6)]
-        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        summarize_ko = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        translate_ja = MagicMock(side_effect=ja_success)
         enqueue = MagicMock(return_value=duplicate_outcome())
         stats = pipeline.process_policies(
             FakeSupabase(),
             policies,
-            summarize=summarize,
+            summarize_ko=summarize_ko,
+            translate_ja=translate_ja,
             enqueue=enqueue,
         )
-        self.assertEqual(summarize.call_count, 5)
+        self.assertEqual(summarize_ko.call_count, 5)
+        self.assertEqual(translate_ja.call_count, 5)
         self.assertEqual(enqueue.call_count, 5)
         self.assertEqual(stats.processed, 5)
         self.assertEqual(stats.rpc_duplicate, 5)
 
     def test_rpc_duplicates_count_toward_processing_cap(self) -> None:
         policies = [sample_policy(plcyNo=f"dup-{i}") for i in range(5)]
-        summarize = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        summarize_ko = MagicMock(return_value=("x", "success", pipeline.GEMINI_MODEL))
+        translate_ja = MagicMock(side_effect=ja_success)
         enqueue = MagicMock(return_value=duplicate_outcome())
         stats = pipeline.process_policies(
             FakeSupabase(),
             policies,
-            summarize=summarize,
+            summarize_ko=summarize_ko,
+            translate_ja=translate_ja,
             enqueue=enqueue,
         )
         self.assertEqual(stats.processed, 5)
         self.assertEqual(stats.rpc_duplicate, 5)
-        self.assertEqual(summarize.call_count, 5)
+        self.assertEqual(summarize_ko.call_count, 5)
+        self.assertEqual(translate_ja.call_count, 5)
         self.assertEqual(enqueue.call_count, 5)
 
     def test_zero_selected_warns_and_exits_zero(self) -> None:
@@ -689,14 +777,16 @@ class PagingCollectionTests(unittest.TestCase):
             return []
 
         summarize = MagicMock()
+        translate_ja = MagicMock()
         enqueue = MagicMock()
         stdout = io.StringIO()
         with patch.object(pipeline, "get_supabase_client", return_value=FakeSupabase()):
             with patch.object(pipeline, "fetch_youth_api_page", side_effect=fetch_page):
                 with patch.object(pipeline, "summarize_with_gemini", summarize):
-                    with patch.object(pipeline, "enqueue_curation_candidate", enqueue):
-                        with contextlib.redirect_stdout(stdout):
-                            code = pipeline.main()
+                    with patch.object(pipeline, "translate_with_gemini_ja", translate_ja):
+                        with patch.object(pipeline, "enqueue_curation_candidate", enqueue):
+                            with contextlib.redirect_stdout(stdout):
+                                code = pipeline.main()
         self.assertEqual(code, 0)
         self.assertIn(
             "[pipeline] warning: no region-matching policies selected",
@@ -704,6 +794,7 @@ class PagingCollectionTests(unittest.TestCase):
         )
         self.assertIn("stop_reason=empty_page", stdout.getvalue())
         summarize.assert_not_called()
+        translate_ja.assert_not_called()
         enqueue.assert_not_called()
 
     def test_collect_api_error_does_not_call_gemini_or_enqueue(self) -> None:
@@ -715,6 +806,7 @@ class PagingCollectionTests(unittest.TestCase):
             busan_policy(plcyNo="b3"),
         ]
         summarize = MagicMock()
+        translate_ja = MagicMock()
         enqueue = MagicMock()
 
         def fetch_page(page_num: int) -> list[dict]:
@@ -726,6 +818,7 @@ class PagingCollectionTests(unittest.TestCase):
             pipeline.collect_target_policies(fetch_page=fetch_page)
         self.assertEqual(str(ctx.exception), "Youth API request failed")
         summarize.assert_not_called()
+        translate_ja.assert_not_called()
         enqueue.assert_not_called()
 
     def test_shared_stats_keep_collection_counts_after_process(self) -> None:
@@ -738,7 +831,8 @@ class PagingCollectionTests(unittest.TestCase):
         pipeline.process_policies(
             FakeSupabase(),
             selected,
-            summarize=lambda content, url: (content, "skipped_no_key", None),
+            summarize_ko=lambda content, url: (content, "skipped_no_key", None),
+            translate_ja=ja_success,
             enqueue=lambda _supabase, _params: duplicate_outcome(),
             stats=stats,
         )
@@ -747,6 +841,258 @@ class PagingCollectionTests(unittest.TestCase):
         self.assertEqual(stats.region_excluded, region_before)
         self.assertEqual(stats.processed, 1)
         self.assertEqual(stats.selected, 1)
+        self.assertEqual(stats.ai_status_ko_counts["skipped_no_key"], 1)
+        self.assertEqual(stats.ai_status_ja_not_called, 1)
+
+
+class JapaneseParseTests(unittest.TestCase):
+    def test_valid_object_returns_trimmed_fields(self) -> None:
+        parsed = pipeline.parse_japanese_translation(
+            '  {"title_ja": " タイトル ", "content_ja": " 本文 "}  '
+        )
+        self.assertEqual(parsed, ("タイトル", "本文"))
+
+    def test_one_json_fence_is_unwrapped(self) -> None:
+        raw = '```json\n{"title_ja": "タイトル", "content_ja": "本文"}\n```'
+        self.assertEqual(
+            pipeline.parse_japanese_translation(raw),
+            ("タイトル", "本文"),
+        )
+
+    def test_extra_keys_are_ignored(self) -> None:
+        raw = json.dumps(
+            {
+                "title_ja": "タイトル",
+                "content_ja": "本文",
+                "extra": "drop-me",
+                "prompt": "secret",
+            }
+        )
+        self.assertEqual(
+            pipeline.parse_japanese_translation(raw),
+            ("タイトル", "本文"),
+        )
+
+    def test_invalid_payloads_are_parse_errors(self) -> None:
+        cases = [
+            '["title_ja", "content_ja"]',
+            '"just a string"',
+            "null",
+            '{"title_ja": "タイトル"}',
+            '{"title_ja": 1, "content_ja": "本文"}',
+            '{"title_ja": "タイトル", "content_ja": "  "}',
+            "not-json",
+        ]
+        for raw in cases:
+            with self.subTest(raw=raw):
+                self.assertIsNone(pipeline.parse_japanese_translation(raw))
+
+
+class BilingualFlowTests(unittest.TestCase):
+    def test_korean_success_calls_japanese_and_enqueues_sixteen_params(self) -> None:
+        enqueue = MagicMock(return_value=inserted_outcome())
+        translate_ja = MagicMock(side_effect=ja_success)
+        stats = pipeline.process_policies(
+            FakeSupabase(),
+            [sample_policy()],
+            summarize_ko=lambda content, url: ("한국어본문", "success", pipeline.GEMINI_MODEL),
+            translate_ja=translate_ja,
+            enqueue=enqueue,
+        )
+        self.assertEqual(stats.rpc_inserted, 1)
+        translate_ja.assert_called_once()
+        self.assertEqual(translate_ja.call_args.args[0], "청년 월세 지원")
+        self.assertEqual(translate_ja.call_args.args[1], "한국어본문")
+        params = enqueue.call_args.args[1]
+        self.assertEqual(set(params), set(pipeline.ENQUEUE_PARAM_NAMES))
+        self.assertEqual(params["p_content_ko"], "한국어본문")
+        self.assertEqual(params["p_title_ja"], "日本語タイトル")
+        self.assertEqual(params["p_content_ja"], "日本語本文")
+        self.assertEqual(params["p_ai_status_ko"], "success")
+        self.assertEqual(params["p_ai_status_ja"], "success")
+        self.assertIsNone(params["p_summary_ko"])
+        self.assertIsNone(params["p_summary_ja"])
+        self.assertTrue(pipeline.REMOVED_ENQUEUE_PARAM_NAMES.isdisjoint(params))
+        self.assertTrue(pipeline.FORBIDDEN_ENQUEUE_FIELDS.isdisjoint(params))
+
+    def test_korean_failure_skips_japanese_and_still_enqueues(self) -> None:
+        enqueue = MagicMock(return_value=inserted_outcome())
+        translate_ja = MagicMock()
+        original = "설명입니다. 월 20만 원을 지원합니다."
+        stats = pipeline.process_policies(
+            FakeSupabase(),
+            [sample_policy()],
+            summarize_ko=lambda content, url: (content, "error", pipeline.GEMINI_MODEL),
+            translate_ja=translate_ja,
+            enqueue=enqueue,
+        )
+        translate_ja.assert_not_called()
+        self.assertEqual(stats.rpc_inserted, 1)
+        self.assertEqual(stats.ai_status_ko_counts["error"], 1)
+        self.assertEqual(stats.ai_status_ja_not_called, 1)
+        params = enqueue.call_args.args[1]
+        self.assertEqual(params["p_ai_status_ko"], "error")
+        self.assertEqual(pipeline.strip_html(original), params["p_content_ko"])
+        self.assertIsNone(params["p_title_ja"])
+        self.assertIsNone(params["p_content_ja"])
+        self.assertIsNone(params["p_ai_status_ja"])
+        self.assertNotEqual(params["p_title_ko"], params["p_title_ja"])
+
+    def test_japanese_empty_and_error_leave_fields_null(self) -> None:
+        enqueue = MagicMock(return_value=inserted_outcome())
+        for ja_status in ("empty_response", "error"):
+            enqueue.reset_mock()
+            stats = pipeline.process_policies(
+                FakeSupabase(),
+                [sample_policy()],
+                summarize_ko=ko_success,
+                translate_ja=lambda title, content: (None, None, ja_status, pipeline.GEMINI_MODEL),
+                enqueue=enqueue,
+            )
+            params = enqueue.call_args.args[1]
+            self.assertIsNone(params["p_title_ja"])
+            self.assertIsNone(params["p_content_ja"])
+            self.assertEqual(params["p_ai_status_ja"], ja_status)
+            self.assertNotEqual(params["p_title_ko"], params["p_title_ja"])
+            self.assertNotEqual(params["p_content_ko"], params["p_content_ja"])
+            self.assertEqual(stats.ai_status_ja_counts[ja_status], 1)
+
+    def test_parse_error_does_not_copy_korean_into_japanese(self) -> None:
+        fake_client = MagicMock()
+        fake_client.models.generate_content.return_value = SimpleNamespace(
+            text='{"title_ja": "", "content_ja": "x"}'
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(pipeline, "_GENAI_AVAILABLE", True), patch.object(
+            pipeline, "client", fake_client
+        ), patch.object(pipeline, "types", MagicMock()):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                title_ja, content_ja, status, model = pipeline.translate_with_gemini_ja(
+                    "청년 월세 지원",
+                    "한국어본문",
+                )
+        self.assertIsNone(title_ja)
+        self.assertIsNone(content_ja)
+        self.assertEqual(status, "parse_error")
+        self.assertEqual(model, pipeline.GEMINI_MODEL)
+        visible = stdout.getvalue() + stderr.getvalue()
+        self.assertIn("parse_error", visible)
+        self.assertNotIn("한국어본문", visible)
+        self.assertNotIn("청년 월세 지원", visible)
+        self.assertNotIn("title_ja", visible)
+
+    def test_region_excluded_policies_call_neither_gemini_nor_rpc(self) -> None:
+        summarize_ko = MagicMock()
+        translate_ja = MagicMock()
+        enqueue = MagicMock()
+        stats = pipeline.process_policies(
+            FakeSupabase(),
+            [busan_policy()],
+            summarize_ko=summarize_ko,
+            translate_ja=translate_ja,
+            enqueue=enqueue,
+        )
+        self.assertEqual(stats.region_excluded, 1)
+        self.assertEqual(stats.processed, 0)
+        summarize_ko.assert_not_called()
+        translate_ja.assert_not_called()
+        enqueue.assert_not_called()
+
+
+class GeminiLogSafetyTests(unittest.TestCase):
+    LEAK = "super-secret-api-key-do-not-log"
+
+    def _assert_safe(self, visible: str) -> None:
+        self.assertNotIn(self.LEAK, visible)
+        self.assertNotIn("전체 prompt", visible)
+        self.assertNotIn("[원문]", visible)
+        self.assertNotIn("[title_ko]", visible)
+        self.assertNotIn("[content_ko]", visible)
+        self.assertNotIn("GEMINI_API_KEY", visible)
+
+    def test_korean_gemini_error_logs_stage_not_payload(self) -> None:
+        fake_client = MagicMock()
+        fake_client.models.generate_content.side_effect = RuntimeError(
+            f"quota prompt=[원문] secret={self.LEAK}"
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(pipeline, "_GENAI_AVAILABLE", True), patch.object(
+            pipeline, "client", fake_client
+        ), patch.object(pipeline, "types", MagicMock()):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                content, status, _model = pipeline.summarize_with_gemini(
+                    "원문본문",
+                    "https://example.go.kr",
+                )
+        self.assertEqual(status, "error")
+        self.assertEqual(content, "원문본문")
+        visible = stdout.getvalue() + stderr.getvalue()
+        self.assertIn("Gemini KO error: generate_content", visible)
+        self.assertNotIn("원문본문", visible)
+        self._assert_safe(visible)
+        self.assertNotIn("quota", visible)
+
+    def test_japanese_gemini_error_logs_stage_not_payload(self) -> None:
+        fake_client = MagicMock()
+        fake_client.models.generate_content.side_effect = RuntimeError(
+            f"bad request body=[content_ko] {self.LEAK}"
+        )
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(pipeline, "_GENAI_AVAILABLE", True), patch.object(
+            pipeline, "client", fake_client
+        ), patch.object(pipeline, "types", MagicMock()):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                title_ja, content_ja, status, _model = pipeline.translate_with_gemini_ja(
+                    "청년 월세 지원",
+                    "한국어본문전체",
+                )
+        self.assertEqual(status, "error")
+        self.assertIsNone(title_ja)
+        self.assertIsNone(content_ja)
+        visible = stdout.getvalue() + stderr.getvalue()
+        self.assertIn("Gemini JA error: generate_content", visible)
+        self.assertNotIn("한국어본문전체", visible)
+        self.assertNotIn("청년 월세 지원", visible)
+        self._assert_safe(visible)
+
+    def test_japanese_parse_error_does_not_log_raw_response(self) -> None:
+        raw = '{"title_ja": "leak-title", "content_ja":'
+        fake_client = MagicMock()
+        fake_client.models.generate_content.return_value = SimpleNamespace(text=raw)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.object(pipeline, "_GENAI_AVAILABLE", True), patch.object(
+            pipeline, "client", fake_client
+        ), patch.object(pipeline, "types", MagicMock()):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                _title, _content, status, _model = pipeline.translate_with_gemini_ja(
+                    "청년 월세 지원",
+                    "한국어본문",
+                )
+        self.assertEqual(status, "parse_error")
+        visible = stdout.getvalue() + stderr.getvalue()
+        self.assertIn("[pipeline] Gemini JA parse_error", visible)
+        self.assertNotIn("leak-title", visible)
+        self.assertNotIn(raw, visible)
+        self.assertNotIn("한국어본문", visible)
+
+    def test_print_stats_splits_ai_status_and_not_called(self) -> None:
+        stats = pipeline.PipelineStats()
+        stats.ai_status_ko_counts["success"] = 1
+        stats.ai_status_ko_counts["error"] = 1
+        stats.ai_status_ja_counts["success"] = 1
+        stats.ai_status_ja_not_called = 1
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            pipeline.print_stats(stats)
+        text = stdout.getvalue()
+        self.assertIn("ai_status_ko:", text)
+        self.assertIn("ai_status_ja:", text)
+        self.assertIn("not_called=1", text)
+        self.assertNotRegex(text, r"\[pipeline\] ai_status:")
 
 
 if __name__ == "__main__":

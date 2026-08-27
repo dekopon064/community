@@ -1,8 +1,9 @@
 """자동 데이터 수집 및 검수 대기 등록 파이프라인.
 
-온통청년 청년정책 오픈 API에서 정책 데이터를 수집하고, Gemini로 읽기 쉬운
-마크다운 요약으로 가공한 뒤 `public.enqueue_curation_candidate` RPC로
+온통청년 청년정책 오픈 API에서 정책 데이터를 수집하고, 한국어 Gemini 가공과
+조건부 일본어 번역 뒤 `public.enqueue_curation_candidate` RPC(16인자)로
 검수 대기 후보만 등록한다. 공개 `curations` 테이블은 직접 쓰지 않는다.
+요약은 검수자가 작성하므로 파이프라인이 채우지 않는다.
 """
 
 from __future__ import annotations
@@ -43,14 +44,26 @@ ENQUEUE_PARAM_NAMES = (
     "p_source_item_id",
     "p_source_revision_hash",
     "p_slug",
-    "p_title",
-    "p_content",
+    "p_title_ko",
+    "p_content_ko",
     "p_raw_payload",
-    "p_ai_status",
+    "p_ai_status_ko",
     "p_category",
-    "p_summary",
+    "p_summary_ko",
     "p_source_url",
     "p_ai_model",
+    "p_title_ja",
+    "p_content_ja",
+    "p_summary_ja",
+    "p_ai_status_ja",
+)
+REMOVED_ENQUEUE_PARAM_NAMES = frozenset(
+    {
+        "p_title",
+        "p_content",
+        "p_summary",
+        "p_ai_status",
+    }
 )
 FORBIDDEN_ENQUEUE_FIELDS = frozenset(
     {
@@ -139,6 +152,23 @@ GEMINI_SYSTEM_PROMPT = """너는 다정한 청년 정책 도우미야. 정책 �
 🔗 **원문 링크:** (제공된 URL 그대로 출력)
 """
 
+GEMINI_JA_SYSTEM_PROMPT = """You translate a Korean youth-policy title and markdown body into Japanese.
+
+Return only a JSON object with these string keys:
+{"title_ja": "...", "content_ja": "..."}
+
+Rules:
+- title_ja is the Japanese title
+- content_ja is the Japanese markdown body
+- Do not add surrounding prose
+- Do not copy Korean text into the Japanese fields
+"""
+
+_JSON_FENCE_RE = re.compile(
+    r"^```(?:json)?\s*\r?\n?(.*?)\r?\n?```\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 client = None
 if _GENAI_AVAILABLE and GEMINI_API_KEY:
@@ -161,8 +191,8 @@ class EnqueueError(PipelineError):
 class YouthcenterCandidate:
     source_item_id: str
     slug: str
-    title: str
-    content: str
+    title: str  # cleaned plcyNm; enqueue p_title_ko
+    content: str  # cleaned original body; Korean Gemini input / fallback
     category: str
     source_url: str | None
     raw_payload: dict[str, Any]
@@ -183,7 +213,13 @@ class PipelineStats:
     rpc_duplicate: int = 0
     superseded: int = 0
     rpc_failures: int = 0
-    ai_status_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    ai_status_ko_counts: dict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    ai_status_ja_counts: dict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    ai_status_ja_not_called: int = 0
 
     @property
     def has_errors(self) -> bool:
@@ -345,28 +381,37 @@ def transform_youthcenter_policy(policy: dict) -> YouthcenterCandidate:
 def build_enqueue_params(
     candidate: YouthcenterCandidate,
     *,
-    content: str,
-    ai_status: str,
+    content_ko: str,
+    ai_status_ko: str,
+    title_ja: str | None,
+    content_ja: str | None,
+    ai_status_ja: str | None,
     ai_model: str | None,
 ) -> dict[str, Any]:
-    """검수·공개 필드를 넣지 않은 enqueue RPC 파라미터를 만든다."""
+    """검수·공개 필드와 구 RPC 파라미터를 넣지 않은 enqueue 인자를 만든다."""
     params = {
         "p_source": YOUTHCENTER_SOURCE,
         "p_source_item_id": candidate.source_item_id,
         "p_source_revision_hash": candidate.source_revision_hash,
         "p_slug": candidate.slug,
-        "p_title": candidate.title,
-        "p_content": content,
+        "p_title_ko": candidate.title,
+        "p_content_ko": content_ko,
         "p_raw_payload": candidate.raw_payload,
-        "p_ai_status": ai_status,
+        "p_ai_status_ko": ai_status_ko,
         "p_category": candidate.category,
-        "p_summary": None,
+        "p_summary_ko": None,
         "p_source_url": candidate.source_url,
         "p_ai_model": ai_model,
+        "p_title_ja": title_ja,
+        "p_content_ja": content_ja,
+        "p_summary_ja": None,
+        "p_ai_status_ja": ai_status_ja,
     }
     unexpected = FORBIDDEN_ENQUEUE_FIELDS.intersection(params)
     if unexpected:
         raise TransformError(f"forbidden enqueue fields present: {sorted(unexpected)}")
+    if REMOVED_ENQUEUE_PARAM_NAMES.intersection(params):
+        raise TransformError("removed enqueue params must not be sent")
     if set(params) != set(ENQUEUE_PARAM_NAMES):
         raise TransformError("enqueue params do not match the RPC contract")
     return params
@@ -406,10 +451,10 @@ def enqueue_curation_candidate(supabase: Any, params: dict[str, Any]) -> dict[st
 
 
 def summarize_with_gemini(raw_text: str, url: str | None) -> tuple[str, str, str | None]:
-    """정책 원문과 URL을 Gemini로 가공하고 상태와 함께 반환한다.
+    """정책 원문과 URL을 Gemini로 가공하고 한국어 상태와 함께 반환한다.
 
     호출에 실패해도 파이프라인을 멈추지 않는다. 공개 테이블로 우회하지 않고,
-    검수용 원문 콘텐츠와 실패 상태를 함께 넘긴다.
+    검수용 원문 콘텐츠와 실패 상태를 함께 넘긴다. 원문 대체 성공 상태는 쓰지 않는다.
     """
     if not raw_text:
         return raw_text, "empty_response", None
@@ -430,9 +475,70 @@ def summarize_with_gemini(raw_text: str, url: str | None) -> tuple[str, str, str
         if not summary:
             return raw_text, "empty_response", GEMINI_MODEL
         return summary, "success", GEMINI_MODEL
-    except Exception as exc:  # noqa: BLE001 - 요약 실패 시 원문과 error 상태 보존
-        print(f"[pipeline] Gemini API error: {exc}")
+    except Exception:
+        print("[pipeline] Gemini KO error: generate_content")
         return raw_text, "error", GEMINI_MODEL
+
+
+def unwrap_optional_json_fence(text: str) -> str:
+    """앞뒤 공백을 제거하고, 있으면 한 겹의 markdown json 펜스만 벗긴다."""
+    stripped = text.strip()
+    match = _JSON_FENCE_RE.fullmatch(stripped)
+    if match:
+        return match.group(1).strip()
+    return stripped
+
+
+def parse_japanese_translation(raw: str) -> tuple[str, str] | None:
+    """일본어 JSON object에서 title_ja/content_ja를 꺼낸다. 실패하면 None."""
+    try:
+        payload = json.loads(unwrap_optional_json_fence(raw))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    title_ja = payload.get("title_ja")
+    content_ja = payload.get("content_ja")
+    if not isinstance(title_ja, str) or not isinstance(content_ja, str):
+        return None
+    title_ja = title_ja.strip()
+    content_ja = content_ja.strip()
+    if not title_ja or not content_ja:
+        return None
+    return title_ja, content_ja
+
+
+def translate_with_gemini_ja(
+    title_ko: str, content_ko: str
+) -> tuple[str | None, str | None, str, str | None]:
+    """한국어 제목·본문만 일본어 JSON으로 번역한다. 원본 API payload는 넣지 않는다."""
+    if not title_ko or not content_ko:
+        return None, None, "empty_response", None
+
+    if not _GENAI_AVAILABLE or not client:
+        print("[pipeline] Gemini JA unavailable (missing key or package); skipping Japanese.")
+        return None, None, "skipped_no_key", None
+
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=f"[title_ko]\n{title_ko}\n\n[content_ko]\n{content_ko}",
+            config=types.GenerateContentConfig(
+                system_instruction=GEMINI_JA_SYSTEM_PROMPT
+            ),
+        )
+        text = (getattr(response, "text", "") or "").strip()
+        if not text:
+            return None, None, "empty_response", GEMINI_MODEL
+        parsed = parse_japanese_translation(text)
+        if parsed is None:
+            print("[pipeline] Gemini JA parse_error")
+            return None, None, "parse_error", GEMINI_MODEL
+        title_ja, content_ja = parsed
+        return title_ja, content_ja, "success", GEMINI_MODEL
+    except Exception:
+        print("[pipeline] Gemini JA error: generate_content")
+        return None, None, "error", GEMINI_MODEL
 
 
 def fetch_youth_api_page(page_num: int) -> list[dict]:
@@ -550,14 +656,19 @@ def process_policies(
     supabase: Any,
     policies: list[dict],
     *,
-    summarize: Callable[[str, str | None], tuple[str, str, str | None]] = summarize_with_gemini,
+    summarize_ko: Callable[
+        [str, str | None], tuple[str, str, str | None]
+    ] = summarize_with_gemini,
+    translate_ja: Callable[
+        [str, str], tuple[str | None, str | None, str, str | None]
+    ] = translate_with_gemini_ja,
     enqueue: Callable[[Any, dict[str, Any]], dict[str, Any]] = enqueue_curation_candidate,
     stats: PipelineStats | None = None,
 ) -> PipelineStats:
-    """지역 필터 → 변환 → AI → enqueue RPC 순으로 정책을 처리한다.
+    """지역 필터 → 변환 → 한국어 AI → 조건부 일본어 AI → enqueue RPC.
 
     입력 리스트가 길어도 AI 처리 단계 진입은 실행당 최대 5건이다.
-    호출자가 넘긴 수집 통계는 덮어쓰지 않는다.
+    한국어·일본어 Gemini는 각각 최대 5회다. 호출자가 넘긴 수집 통계는 덮어쓰지 않는다.
     """
     if stats is None:
         stats = PipelineStats()
@@ -586,14 +697,30 @@ def process_policies(
             break
 
         stats.processed += 1
-        content, ai_status, ai_model = summarize(candidate.content, candidate.source_url)
-        stats.ai_status_counts[ai_status] += 1
+        content_ko, ai_status_ko, ai_model = summarize_ko(
+            candidate.content, candidate.source_url
+        )
+        stats.ai_status_ko_counts[ai_status_ko] += 1
+
+        if ai_status_ko == "success" and content_ko:
+            title_ja, content_ja, ai_status_ja, _ja_model = translate_ja(
+                candidate.title, content_ko
+            )
+            stats.ai_status_ja_counts[ai_status_ja] += 1
+        else:
+            title_ja = None
+            content_ja = None
+            ai_status_ja = None
+            stats.ai_status_ja_not_called += 1
 
         try:
             params = build_enqueue_params(
                 candidate,
-                content=content,
-                ai_status=ai_status,
+                content_ko=content_ko,
+                ai_status_ko=ai_status_ko,
+                title_ja=title_ja,
+                content_ja=content_ja,
+                ai_status_ja=ai_status_ja,
                 ai_model=ai_model,
             )
         except TransformError as exc:
@@ -622,8 +749,16 @@ def process_policies(
     return stats
 
 
+def _format_status_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return "none"
+    return ", ".join(
+        f"{name}={counts[name]}" for name in sorted(counts)
+    )
+
+
 def print_stats(stats: PipelineStats) -> None:
-    """수집·필터·RPC·AI 수치를 구분해 출력한다. 키와 payload 전문은 출력하지 않는다."""
+    """수집·필터·RPC·분리된 AI 수치를 출력한다. 키와 payload 전문은 출력하지 않는다."""
     print(f"[pipeline] pages_fetched={stats.pages_fetched}")
     print(f"[pipeline] collected={stats.collected}")
     print(f"[pipeline] region_excluded={stats.region_excluded}")
@@ -634,14 +769,12 @@ def print_stats(stats: PipelineStats) -> None:
     print(f"[pipeline] rpc_inserted={stats.rpc_inserted}")
     print(f"[pipeline] rpc_duplicate={stats.rpc_duplicate}")
     print(f"[pipeline] superseded={stats.superseded}")
-    if stats.ai_status_counts:
-        ai_parts = ", ".join(
-            f"{name}={stats.ai_status_counts[name]}"
-            for name in sorted(stats.ai_status_counts)
-        )
-        print(f"[pipeline] ai_status: {ai_parts}")
-    else:
-        print("[pipeline] ai_status: none")
+    print(f"[pipeline] ai_status_ko: {_format_status_counts(stats.ai_status_ko_counts)}")
+    print(
+        "[pipeline] ai_status_ja: "
+        f"{_format_status_counts(stats.ai_status_ja_counts)}; "
+        f"not_called={stats.ai_status_ja_not_called}"
+    )
     print(f"[pipeline] rpc_failures={stats.rpc_failures}")
     print(f"[pipeline] stop_reason={stats.stop_reason or ''}")
 
