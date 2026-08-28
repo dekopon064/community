@@ -584,7 +584,7 @@ create function public.is_latest_source_revision(
   p_source_item_id pg_catalog.text,
   p_source_revision_hash pg_catalog.text
 )
-returns pg_catalog.boolean
+returns pg_catalog.bool
 language plpgsql
 security definer
 set search_path = ''
