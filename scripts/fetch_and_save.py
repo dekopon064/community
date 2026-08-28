@@ -1,8 +1,10 @@
 """자동 데이터 수집 및 검수 대기 등록 파이프라인.
 
-온통청년 청년정책 오픈 API에서 정책 데이터를 수집하고, 한국어 Gemini 가공과
-조건부 일본어 번역 뒤 `public.enqueue_curation_candidate` RPC(16인자)로
-검수 대기 후보만 등록한다. 공개 `curations` 테이블은 직접 쓰지 않는다.
+온통청년 청년정책 오픈 API에서 정책 데이터를 수집하고, 변환한 뒤
+`public.is_latest_source_revision`로 실행 전체를 먼저 검사한다.
+precheck가 모두 bool로 끝난 뒤에만 한국어 Gemini와 조건부 일본어 번역,
+`public.enqueue_curation_candidate` RPC(16인자)로 검수 대기 후보를 등록한다.
+공개 `curations` 테이블은 직접 쓰지 않는다.
 요약은 검수자가 작성하므로 파이프라인이 채우지 않는다.
 """
 
@@ -37,6 +39,13 @@ MAX_FETCH_PAGES = 10
 REQUEST_TIMEOUT = 15
 
 YOUTHCENTER_SOURCE = "youthcenter"
+PRECHECK_RPC_NAME = "is_latest_source_revision"
+PRECHECK_PARAM_NAMES = (
+    "p_source",
+    "p_source_item_id",
+    "p_source_revision_hash",
+)
+PRECHECK_FAILURE_LOG = "[pipeline] precheck_failure"
 ENQUEUE_RPC_NAME = "enqueue_curation_candidate"
 ALLOWED_ENQUEUE_OUTCOMES = frozenset({"inserted", "duplicate"})
 ENQUEUE_PARAM_NAMES = (
@@ -187,6 +196,10 @@ class EnqueueError(PipelineError):
     """검수 대기 RPC 호출 또는 응답이 유효하지 않음."""
 
 
+class PrecheckError(PipelineError):
+    """최신 revision precheck RPC 호출 또는 응답이 유효하지 않음."""
+
+
 @dataclass
 class YouthcenterCandidate:
     source_item_id: str
@@ -207,6 +220,8 @@ class PipelineStats:
     in_run_duplicates: int = 0
     selected: int = 0
     processed: int = 0
+    precheck_duplicate: int = 0
+    precheck_failure: int = 0
     stop_reason: str | None = None
     transform_errors: int = 0
     rpc_inserted: int = 0
@@ -223,7 +238,11 @@ class PipelineStats:
 
     @property
     def has_errors(self) -> bool:
-        return self.transform_errors > 0 or self.rpc_failures > 0
+        return (
+            self.transform_errors > 0
+            or self.rpc_failures > 0
+            or self.precheck_failure > 0
+        )
 
 
 def get_supabase_client() -> Any:
@@ -450,6 +469,45 @@ def enqueue_curation_candidate(supabase: Any, params: dict[str, Any]) -> dict[st
     return parse_enqueue_result(getattr(response, "data", None))
 
 
+def parse_precheck_result(data: object) -> bool:
+    """scalar RPC 반환값이 Python bool인지 검사한다. False도 정상값이다."""
+    if type(data) is bool:
+        return data
+    raise PrecheckError("precheck RPC returned a non-boolean result") from None
+
+
+def build_precheck_params(
+    source: str,
+    source_item_id: str,
+    source_revision_hash: str,
+) -> dict[str, str]:
+    """precheck RPC 인자 3개만 만든다."""
+    params = {
+        "p_source": source,
+        "p_source_item_id": source_item_id,
+        "p_source_revision_hash": source_revision_hash,
+    }
+    if tuple(params) != PRECHECK_PARAM_NAMES:
+        raise PrecheckError("precheck RPC params do not match the contract") from None
+    return params
+
+
+def is_latest_source_revision(
+    supabase: Any,
+    source: str,
+    source_item_id: str,
+    source_revision_hash: str,
+) -> bool:
+    """최신 source revision 여부만 묻는다. True/False 외는 오류다."""
+    params = build_precheck_params(source, source_item_id, source_revision_hash)
+    try:
+        response = supabase.rpc(PRECHECK_RPC_NAME, params).execute()
+    except Exception:
+        raise PrecheckError("precheck RPC failed") from None
+
+    return parse_precheck_result(getattr(response, "data", None))
+
+
 def summarize_with_gemini(raw_text: str, url: str | None) -> tuple[str, str, str | None]:
     """정책 원문과 URL을 Gemini로 가공하고 한국어 상태와 함께 반환한다.
 
@@ -663,16 +721,22 @@ def process_policies(
         [str, str], tuple[str | None, str | None, str, str | None]
     ] = translate_with_gemini_ja,
     enqueue: Callable[[Any, dict[str, Any]], dict[str, Any]] = enqueue_curation_candidate,
+    revision_precheck: Callable[
+        [Any, str, str, str], bool
+    ] = is_latest_source_revision,
     stats: PipelineStats | None = None,
 ) -> PipelineStats:
-    """지역 필터 → 변환 → 한국어 AI → 조건부 일본어 AI → enqueue RPC.
+    """지역 재필터 → 변환(Phase A) → 전체 precheck(Phase B) → AI/enqueue(Phase C).
 
-    입력 리스트가 길어도 AI 처리 단계 진입은 실행당 최대 5건이다.
-    한국어·일본어 Gemini는 각각 최대 5회다. 호출자가 넘긴 수집 통계는 덮어쓰지 않는다.
+    Phase B에서 한 건이라도 예외 또는 비-bool이면 즉시 중단하고 그 실행의
+    KO/JA Gemini와 enqueue는 호출하지 않는다. 입력 리스트가 길어도 Phase A
+    준비·Phase B/C 대상은 실행당 최대 5건이다. 호출자가 넘긴 수집 통계는
+    덮어쓰지 않는다.
     """
     if stats is None:
         stats = PipelineStats()
 
+    prepared: list[YouthcenterCandidate] = []
     for policy in policies:
         source_item_id = str(policy.get("plcyNo") or "").strip()
         if not source_item_id:
@@ -693,8 +757,34 @@ def process_policies(
             print(f"[pipeline] transform error: {exc}", file=sys.stderr)
             continue
 
-        if stats.processed >= MAX_CANDIDATES_PER_RUN:
+        if len(prepared) >= MAX_CANDIDATES_PER_RUN:
             break
+        prepared.append(candidate)
+
+    checked: list[tuple[YouthcenterCandidate, bool]] = []
+    for candidate in prepared:
+        try:
+            is_latest = revision_precheck(
+                supabase,
+                YOUTHCENTER_SOURCE,
+                candidate.source_item_id,
+                candidate.source_revision_hash,
+            )
+        except Exception:
+            stats.precheck_failure += 1
+            print(PRECHECK_FAILURE_LOG, file=sys.stderr)
+            return stats
+        if type(is_latest) is not bool:
+            stats.precheck_failure += 1
+            print(PRECHECK_FAILURE_LOG, file=sys.stderr)
+            return stats
+        checked.append((candidate, is_latest))
+
+    for candidate, is_latest in checked:
+        if is_latest:
+            stats.precheck_duplicate += 1
+            print(f"[pipeline] precheck_duplicate slug={candidate.slug}")
+            continue
 
         stats.processed += 1
         content_ko, ai_status_ko, ai_model = summarize_ko(
@@ -765,6 +855,8 @@ def print_stats(stats: PipelineStats) -> None:
     print(f"[pipeline] in_run_duplicates={stats.in_run_duplicates}")
     print(f"[pipeline] selected={stats.selected}")
     print(f"[pipeline] processed={stats.processed}")
+    print(f"[pipeline] precheck_duplicate={stats.precheck_duplicate}")
+    print(f"[pipeline] precheck_failure={stats.precheck_failure}")
     print(f"[pipeline] transform_errors={stats.transform_errors}")
     print(f"[pipeline] rpc_inserted={stats.rpc_inserted}")
     print(f"[pipeline] rpc_duplicate={stats.rpc_duplicate}")
