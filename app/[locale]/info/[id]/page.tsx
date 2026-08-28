@@ -3,16 +3,17 @@ import { ChevronLeft } from "lucide-react";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
 import Markdown from "@/app/components/Markdown";
-import { supabase } from "@/app/lib/supabase";
-import type { Curation } from "@/app/lib/types";
+import {
+  fetchCompleteCurationSlugs,
+  fetchLocalizedCurationBySlug,
+} from "@/app/lib/curations";
 
 // 콘텐츠 수정 시 최대 60초 안에 상세 페이지를 최신화 (ISR)
 export const revalidate = 60;
 
 export async function generateStaticParams() {
-  const { data } = await supabase.from("curations").select("slug");
-  const rows = (data ?? []) as Pick<Curation, "slug">[];
-  return rows.map((row) => ({ id: row.slug }));
+  const slugs = await fetchCompleteCurationSlugs();
+  return slugs.map((slug) => ({ id: slug }));
 }
 
 export default async function InfoDetailPage({
@@ -23,17 +24,12 @@ export default async function InfoDetailPage({
   const { locale, id } = await params;
   setRequestLocale(locale);
 
-  const { data } = await supabase
-    .from("curations")
-    .select("*")
-    .eq("slug", id)
-    .maybeSingle();
+  const item = await fetchLocalizedCurationBySlug(id, locale);
 
-  if (!data) {
+  if (!item) {
     notFound();
   }
 
-  const item = data as Curation;
   const t = await getTranslations("InfoDetail");
   const publishedDate = new Intl.DateTimeFormat(locale, {
     dateStyle: "long",

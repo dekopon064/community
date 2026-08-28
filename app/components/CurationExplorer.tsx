@@ -2,14 +2,14 @@
 
 import { useMemo, useState } from "react";
 import CurationCard from "@/app/components/CurationCard";
-import type { Curation } from "@/app/lib/types";
+import type { LocalizedCuration } from "@/app/lib/types";
 
 const ALL = "전체";
 
 export default function CurationExplorer({
   curations,
 }: {
-  curations: Curation[];
+  curations: LocalizedCuration[];
 }) {
   // 카테고리 칩 목록을 실제 DB 데이터에서 동적으로 도출
   const categories = useMemo(

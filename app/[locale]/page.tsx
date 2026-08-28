@@ -1,7 +1,6 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import CurationCard from "@/app/components/CurationCard";
-import { supabase } from "@/app/lib/supabase";
-import type { Curation } from "@/app/lib/types";
+import { fetchLocalizedCurations } from "@/app/lib/curations";
 
 // 새 글 등록 시 최대 60초 안에 대표 카드를 최신화 (ISR)
 export const revalidate = 60;
@@ -15,13 +14,7 @@ export default async function Home({
   setRequestLocale(locale);
   const t = await getTranslations("Home");
 
-  const { data } = await supabase
-    .from("curations")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  const featured = (data?.[0] ?? null) as Curation | null;
+  const [featured] = await fetchLocalizedCurations(locale);
 
   return (
     // pt-6: 헤더(sticky) 여유 여백, pb-24: 고정 바텀 네비(h-16) 가림 방지
