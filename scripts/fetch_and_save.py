@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -37,6 +38,9 @@ MAX_CANDIDATES_PER_RUN = 5
 FETCH_PAGE_SIZE = 5
 MAX_FETCH_PAGES = 10
 REQUEST_TIMEOUT = 15
+YOUTH_API_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+YOUTH_API_MAX_ATTEMPTS = 3
+YOUTH_API_RETRY_BACKOFF_SECONDS = (1, 2)
 
 YOUTHCENTER_SOURCE = "youthcenter"
 PRECHECK_RPC_NAME = "is_latest_source_revision"
@@ -621,28 +625,43 @@ def fetch_youth_api_page(page_num: int) -> list[dict]:
         "Accept": "application/xml, text/xml, */*; q=0.01",
     }
 
-    try:
-        response = requests.get(
-            YOUTH_API_URL,
-            params=params,
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
-            allow_redirects=False,
-        )
-        response.raise_for_status()
-        data = response.json()
-    except requests.HTTPError as exc:
-        status = exc.response.status_code if exc.response is not None else "unknown"
-        raise RuntimeError(f"Youth API HTTP {status}") from None
-    except ValueError:
-        raise RuntimeError("Youth API returned non-JSON") from None
-    except requests.RequestException:
-        raise RuntimeError("Youth API request failed") from None
+    last_status: int | str = "unknown"
+    for attempt in range(1, YOUTH_API_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.get(
+                YOUTH_API_URL,
+                params=params,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+                allow_redirects=False,
+            )
+            status = response.status_code
+            if status in YOUTH_API_RETRY_STATUSES:
+                print(
+                    "[pipeline] youth_api_retry "
+                    f"status={status} page_num={page_num} attempt={attempt}"
+                )
+                last_status = status
+                if attempt >= YOUTH_API_MAX_ATTEMPTS:
+                    raise RuntimeError(f"Youth API HTTP {status}") from None
+                time.sleep(YOUTH_API_RETRY_BACKOFF_SECONDS[attempt - 1])
+                continue
+            response.raise_for_status()
+            data = response.json()
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else "unknown"
+            raise RuntimeError(f"Youth API HTTP {status}") from None
+        except ValueError:
+            raise RuntimeError("Youth API returned non-JSON") from None
+        except requests.RequestException:
+            raise RuntimeError("Youth API request failed") from None
 
-    policy_list = data.get("result", {}).get("youthPolicyList", [])
-    if not isinstance(policy_list, list):
-        raise RuntimeError("Youth API youthPolicyList is not a list")
-    return [item for item in policy_list if isinstance(item, dict)]
+        policy_list = data.get("result", {}).get("youthPolicyList", [])
+        if not isinstance(policy_list, list):
+            raise RuntimeError("Youth API youthPolicyList is not a list")
+        return [item for item in policy_list if isinstance(item, dict)]
+
+    raise RuntimeError(f"Youth API HTTP {last_status}") from None
 
 
 def fetch_real_policies() -> list[dict]:

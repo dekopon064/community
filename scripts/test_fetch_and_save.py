@@ -8,6 +8,7 @@ import io
 import json
 import os
 import pathlib
+import sys
 import traceback
 import unittest
 from types import SimpleNamespace
@@ -1608,6 +1609,364 @@ class PrecheckFlowTests(unittest.TestCase):
         self.assertEqual(len(pipeline.PRECHECK_PARAM_NAMES), 3)
         self.assertEqual(len(pipeline.ENQUEUE_PARAM_NAMES), 16)
         self.assertNotRegex(source, r"\.upsert\s*\(")
+
+
+class YouthApiRetryTests(unittest.TestCase):
+    NO_RETRY_STATUSES = (400, 401, 403, 404)
+
+    def _http_response(
+        self,
+        status_code: int,
+        payload: object | None = None,
+        *,
+        json_error: BaseException | None = None,
+    ) -> MagicMock:
+        response = MagicMock()
+        response.status_code = status_code
+        response.url = YOUTH_API_LEAK_FULL_URL
+        response.headers = {
+            "Content-Type": "application/json",
+            "X-Api-Key": YOUTH_API_LEAK_SECRET,
+        }
+        leaky_body = json.dumps(
+            {
+                "apiKeyNm": YOUTH_API_LEAK_SECRET,
+                "url": YOUTH_API_LEAK_FULL_URL,
+                "error": "leaky-body",
+            }
+        )
+        response.text = leaky_body
+        response.content = leaky_body.encode("utf-8")
+        if json_error is not None:
+            response.json.side_effect = json_error
+        elif payload is None:
+            response.json.return_value = {"result": {"youthPolicyList": []}}
+        else:
+            response.json.return_value = payload
+
+        def raise_for_status() -> None:
+            if status_code >= 400:
+                error = requests.HTTPError(
+                    f"{status_code} Error leak {YOUTH_API_LEAK_SECRET} "
+                    f"for url: {YOUTH_API_LEAK_FULL_URL}"
+                )
+                error.response = response
+                raise error
+
+        response.raise_for_status.side_effect = raise_for_status
+        return response
+
+    def _ok_payload(self, policies: list[dict] | None = None) -> dict:
+        if policies is None:
+            policies = [sample_policy(plcyNo="retry-ok")]
+        return {"result": {"youthPolicyList": policies}}
+
+    def _assert_retry_log_safe(self, text: str) -> None:
+        self.assertNotIn(YOUTH_API_LEAK_SECRET, text)
+        self.assertNotIn("apiKeyNm", text)
+        self.assertNotIn(YOUTH_API_LEAK_PATH_URL, text)
+        self.assertNotIn(YOUTH_API_LEAK_FULL_URL, text)
+        self.assertNotIn("getPlcy?", text)
+        self.assertNotIn("leaky-body", text)
+        self.assertNotIn("X-Api-Key", text)
+        self.assertNotRegex(text, r"page_num=\d+\.\d+")
+        self.assertNotRegex(text, r"attempt=\d+\.\d+")
+
+    def _assert_get_keeps_contract(self, mock_get: MagicMock, page_num: int) -> None:
+        self.assertGreaterEqual(mock_get.call_count, 1)
+        for call in mock_get.call_args_list:
+            self.assertEqual(call.args[0], pipeline.YOUTH_API_URL)
+            self.assertEqual(call.kwargs["timeout"], pipeline.REQUEST_TIMEOUT)
+            self.assertEqual(call.kwargs["allow_redirects"], False)
+            self.assertEqual(call.kwargs["params"]["pageNum"], page_num)
+            self.assertEqual(call.kwargs["params"]["pageSize"], pipeline.FETCH_PAGE_SIZE)
+            self.assertEqual(call.kwargs["params"]["pageType"], 1)
+            self.assertEqual(call.kwargs["params"]["rtnType"], "json")
+            self.assertEqual(
+                call.kwargs["params"]["apiKeyNm"],
+                YOUTH_API_LEAK_SECRET,
+            )
+
+    def _run_fetch(
+        self,
+        side_effect,
+        *,
+        page_num: int = 1,
+        expect_error: str | None = None,
+    ) -> tuple[list[dict] | None, RuntimeError | None, MagicMock, MagicMock, str]:
+        mock_get = MagicMock(side_effect=side_effect)
+        mock_sleep = MagicMock()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        result: list[dict] | None = None
+        error: RuntimeError | None = None
+        with patch.dict(os.environ, {"YOUTH_API_KEY": YOUTH_API_LEAK_SECRET}):
+            with patch.object(pipeline.requests, "get", mock_get):
+                with patch.object(pipeline.time, "sleep", mock_sleep):
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                        stderr
+                    ):
+                        if expect_error is None:
+                            result = pipeline.fetch_youth_api_page(page_num)
+                        else:
+                            with self.assertRaises(RuntimeError) as ctx:
+                                pipeline.fetch_youth_api_page(page_num)
+                            error = ctx.exception
+                            self.assertEqual(str(error), expect_error)
+        visible = stdout.getvalue() + stderr.getvalue()
+        if error is not None:
+            visible += str(error)
+            visible += "".join(traceback.format_exception(error))
+        return result, error, mock_get, mock_sleep, visible
+
+    def test_retries_two_500s_then_returns_200(self) -> None:
+        ok_item = sample_policy(plcyNo="retry-ok")
+        result, error, mock_get, mock_sleep, visible = self._run_fetch(
+            [
+                self._http_response(500),
+                self._http_response(500),
+                self._http_response(200, self._ok_payload([ok_item])),
+            ],
+            page_num=5,
+        )
+        self.assertIsNone(error)
+        self.assertEqual(result, [ok_item])
+        self.assertEqual(mock_get.call_count, 3)
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
+        self._assert_get_keeps_contract(mock_get, 5)
+        self.assertIn(
+            "[pipeline] youth_api_retry status=500 page_num=5 attempt=1",
+            visible,
+        )
+        self.assertIn(
+            "[pipeline] youth_api_retry status=500 page_num=5 attempt=2",
+            visible,
+        )
+        self.assertNotIn("attempt=3", visible)
+        self._assert_retry_log_safe(visible)
+
+    def test_three_500s_raise_fixed_http_error_and_log_all_attempts(self) -> None:
+        result, error, mock_get, mock_sleep, visible = self._run_fetch(
+            [self._http_response(500)] * 3,
+            page_num=5,
+            expect_error="Youth API HTTP 500",
+        )
+        self.assertIsNone(result)
+        self.assertIsNotNone(error)
+        self.assertIsNone(error.__cause__)
+        self.assertTrue(error.__suppress_context__)
+        self.assertEqual(mock_get.call_count, 3)
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
+        self._assert_get_keeps_contract(mock_get, 5)
+        for attempt in (1, 2, 3):
+            self.assertIn(
+                f"[pipeline] youth_api_retry status=500 page_num=5 attempt={attempt}",
+                visible,
+            )
+        self._assert_retry_log_safe(visible)
+
+    def test_retryable_statuses_are_retried(self) -> None:
+        ok_item = sample_policy(plcyNo="retry-status")
+        for status in sorted(pipeline.YOUTH_API_RETRY_STATUSES):
+            with self.subTest(status=status):
+                result, error, mock_get, mock_sleep, visible = self._run_fetch(
+                    [
+                        self._http_response(status),
+                        self._http_response(200, self._ok_payload([ok_item])),
+                    ],
+                    page_num=3,
+                )
+                self.assertIsNone(error)
+                self.assertEqual(result, [ok_item])
+                self.assertEqual(mock_get.call_count, 2)
+                self.assertEqual(
+                    [call.args[0] for call in mock_sleep.call_args_list],
+                    [1],
+                )
+                self.assertIn(
+                    f"[pipeline] youth_api_retry status={status} page_num=3 attempt=1",
+                    visible,
+                )
+                self._assert_retry_log_safe(visible)
+
+    def test_client_errors_fail_immediately_without_retry(self) -> None:
+        for status in self.NO_RETRY_STATUSES:
+            with self.subTest(status=status):
+                result, error, mock_get, mock_sleep, visible = self._run_fetch(
+                    [self._http_response(status)],
+                    page_num=2,
+                    expect_error=f"Youth API HTTP {status}",
+                )
+                self.assertIsNone(result)
+                self.assertIsNotNone(error)
+                self.assertIsNone(error.__cause__)
+                self.assertTrue(error.__suppress_context__)
+                self.assertEqual(mock_get.call_count, 1)
+                mock_sleep.assert_not_called()
+                self.assertNotIn("youth_api_retry", visible)
+                self._assert_retry_log_safe(visible)
+
+    def test_json_parse_error_is_not_retried(self) -> None:
+        result, error, mock_get, mock_sleep, visible = self._run_fetch(
+            [
+                self._http_response(
+                    200,
+                    json_error=ValueError(
+                        f"leaky json {YOUTH_API_LEAK_SECRET} {YOUTH_API_LEAK_FULL_URL}"
+                    ),
+                )
+            ],
+            expect_error="Youth API returned non-JSON",
+        )
+        self.assertIsNone(result)
+        self.assertIsNotNone(error)
+        self.assertIsNone(error.__cause__)
+        self.assertEqual(mock_get.call_count, 1)
+        mock_sleep.assert_not_called()
+        self._assert_retry_log_safe(visible)
+
+    def test_persistent_500_is_not_empty_or_short_page(self) -> None:
+        stats = pipeline.PipelineStats()
+        mock_get = MagicMock(side_effect=[self._http_response(500)] * 3)
+        mock_sleep = MagicMock()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {"YOUTH_API_KEY": YOUTH_API_LEAK_SECRET}):
+            with patch.object(pipeline.requests, "get", mock_get):
+                with patch.object(pipeline.time, "sleep", mock_sleep):
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                        stderr
+                    ):
+                        with self.assertRaises(RuntimeError) as ctx:
+                            pipeline.collect_target_policies(stats=stats)
+        self.assertEqual(str(ctx.exception), "Youth API HTTP 500")
+        self.assertIsNone(stats.stop_reason)
+        self.assertNotEqual(stats.stop_reason, "empty_page")
+        self.assertNotEqual(stats.stop_reason, "short_page")
+        self.assertEqual(stats.pages_fetched, 0)
+        self.assertEqual(stats.selected, 0)
+        self.assertEqual(mock_get.call_count, 3)
+        visible = stdout.getvalue() + stderr.getvalue() + str(ctx.exception)
+        self.assertNotIn("empty_page", visible)
+        self.assertNotIn("short_page", visible)
+        self._assert_retry_log_safe(visible)
+
+    def test_persistent_500_in_main_fail_closes_before_precheck_and_ai(self) -> None:
+        summarize = MagicMock()
+        translate_ja = MagicMock()
+        enqueue = MagicMock()
+        precheck = MagicMock(return_value=False)
+        client = FakeSupabase()
+        mock_get = MagicMock(side_effect=[self._http_response(500)] * 3)
+        mock_sleep = MagicMock()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        exit_code = 0
+        with patch.dict(os.environ, {"YOUTH_API_KEY": YOUTH_API_LEAK_SECRET}):
+            with patch.object(pipeline.requests, "get", mock_get):
+                with patch.object(pipeline.time, "sleep", mock_sleep):
+                    with patch.object(
+                        pipeline, "get_supabase_client", return_value=client
+                    ):
+                        with patch.object(
+                            pipeline, "summarize_with_gemini", summarize
+                        ):
+                            with patch.object(
+                                pipeline, "translate_with_gemini_ja", translate_ja
+                            ):
+                                with patch.object(
+                                    pipeline, "enqueue_curation_candidate", enqueue
+                                ):
+                                    with patch.object(
+                                        pipeline,
+                                        "is_latest_source_revision",
+                                        precheck,
+                                    ):
+                                        with contextlib.redirect_stdout(
+                                            stdout
+                                        ), contextlib.redirect_stderr(stderr):
+                                            try:
+                                                exit_code = pipeline.main()
+                                            except Exception as exc:  # noqa: BLE001
+                                                print(
+                                                    f"[pipeline] 실행 실패: {exc}",
+                                                    file=sys.stderr,
+                                                )
+                                                exit_code = 1
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(client.calls, [])
+        precheck.assert_not_called()
+        summarize.assert_not_called()
+        translate_ja.assert_not_called()
+        enqueue.assert_not_called()
+        visible = stdout.getvalue() + stderr.getvalue()
+        self.assertIn("실행 실패: Youth API HTTP 500", visible)
+        self.assertNotIn("precheck_duplicate=", visible)
+        self.assertNotIn("empty_page", visible)
+        self._assert_retry_log_safe(visible)
+
+    def test_retry_success_keeps_the_same_page_num(self) -> None:
+        ok_item = sample_policy(plcyNo="same-page")
+        result, error, mock_get, mock_sleep, visible = self._run_fetch(
+            [
+                self._http_response(500),
+                self._http_response(502),
+                self._http_response(200, self._ok_payload([ok_item])),
+            ],
+            page_num=5,
+        )
+        self.assertIsNone(error)
+        self.assertEqual(result, [ok_item])
+        page_nums = [
+            call.kwargs["params"]["pageNum"] for call in mock_get.call_args_list
+        ]
+        self.assertEqual(page_nums, [5, 5, 5])
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
+        self.assertIn("page_num=5 attempt=1", visible)
+        self.assertIn("page_num=5 attempt=2", visible)
+        self.assertNotIn("page_num=6", visible)
+
+    def test_next_page_resets_attempt_to_one(self) -> None:
+        page1 = [busan_policy(plcyNo=f"b{i}") for i in range(5)]
+        page2 = [sample_policy(plcyNo="seoul-after-retry")]
+        mock_get = MagicMock(
+            side_effect=[
+                self._http_response(500),
+                self._http_response(200, self._ok_payload(page1)),
+                self._http_response(503),
+                self._http_response(200, self._ok_payload(page2)),
+            ]
+        )
+        mock_sleep = MagicMock()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch.dict(os.environ, {"YOUTH_API_KEY": YOUTH_API_LEAK_SECRET}):
+            with patch.object(pipeline.requests, "get", mock_get):
+                with patch.object(pipeline.time, "sleep", mock_sleep):
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                        stderr
+                    ):
+                        selected, stats = pipeline.collect_target_policies()
+        self.assertEqual(selected, page2)
+        self.assertEqual(stats.pages_fetched, 2)
+        self.assertEqual(stats.stop_reason, "short_page")
+        self.assertEqual(mock_get.call_count, 4)
+        page_nums = [
+            call.kwargs["params"]["pageNum"] for call in mock_get.call_args_list
+        ]
+        self.assertEqual(page_nums, [1, 1, 2, 2])
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 1])
+        visible = stdout.getvalue() + stderr.getvalue()
+        self.assertIn(
+            "[pipeline] youth_api_retry status=500 page_num=1 attempt=1",
+            visible,
+        )
+        self.assertIn(
+            "[pipeline] youth_api_retry status=503 page_num=2 attempt=1",
+            visible,
+        )
+        self.assertNotIn("page_num=2 attempt=2", visible)
+        self._assert_retry_log_safe(visible)
 
 
 if __name__ == "__main__":
