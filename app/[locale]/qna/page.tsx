@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { supabase } from "@/app/lib/supabase";
 import type { QnaEntry } from "@/app/lib/types";
@@ -15,21 +15,21 @@ export default function QnaPage() {
   const [entries, setEntries] = useState<QnaEntry[]>([]);
   const [isFetching, setIsFetching] = useState(true);
 
-  const fetchEntries = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("qna_entries")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (!error && data) {
-      setEntries(data as QnaEntry[]);
-    }
-    setIsFetching(false);
-  }, []);
-
   useEffect(() => {
-    fetchEntries();
-  }, [fetchEntries]);
+    async function fetchEntries() {
+      const { data, error } = await supabase
+        .from("qna_entries")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (!error && data) {
+        setEntries(data as QnaEntry[]);
+      }
+      setIsFetching(false);
+    }
+
+    void fetchEntries();
+  }, []);
 
   function formatTime(iso: string) {
     return new Intl.DateTimeFormat(locale, {
