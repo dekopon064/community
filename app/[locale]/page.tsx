@@ -38,7 +38,7 @@ export default async function Home({
 
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-canvas">
-      <div className="mx-auto grid max-w-7xl gap-10 px-5 py-10 md:gap-12 md:px-8 md:pt-16 lg:min-h-[calc(100vh-4.5rem)] lg:grid-cols-[minmax(16rem,0.9fr)_minmax(24rem,1.25fr)_minmax(10rem,0.48fr)] lg:items-start lg:pt-36 lg:px-10">
+      <div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)] gap-10 px-5 py-10 md:gap-12 md:px-8 md:pt-16 lg:min-h-[calc(100vh-4.5rem)] lg:grid-cols-[minmax(16rem,0.9fr)_minmax(24rem,1.25fr)_minmax(10rem,0.48fr)] lg:items-start lg:pt-36 lg:px-10">
         <section className="relative overflow-hidden py-2 md:py-12">
           <h1
             className={isJapanese
