@@ -3,9 +3,9 @@ import { themeColors } from "@/app/lib/theme";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "한일 청년 교류 플랫폼",
-    short_name: "한일교류",
-    description: "한일 2030 청년들을 위한 정보 큐레이션 및 소통 앱",
+    name: "마치모아(Machimoa)",
+    short_name: "Machimoa",
+    description: "마치모아(Machimoa)는 사람이 검수한 한국 생활정보를 한국어와 일본어로 제공합니다.",
     start_url: "/",
     display: "standalone",
     orientation: "portrait",

@@ -1,14 +1,20 @@
 {
   "Header": {
-    "title": "韓日青年交流"
+    "title": "Machimoa"
   },
   "Nav": {
+    "label": "主要ナビゲーション",
     "home": "ホーム",
-    "info": "情報",
+    "info": "生活",
     "qna": "質問"
   },
   "Home": {
-    "sectionTitle": "最新キュレーション",
+    "sectionTitle": "生活情報",
+    "headline": "韓国の暮らし、何から準備しますか？",
+    "intro": "人が確認した生活情報を、日本語と韓国語で読めます。",
+    "updatedAt": "最終更新",
+    "recentlyUpdated": "最近の更新",
+    "empty": "公開されている生活情報はまだありません。",
     "cardTag": "ビザ / VISA",
     "cardTitle": "外国人登録証 スピード発給ガイドライン",
     "cardBody": "出入国管理事務所を訪れる前に必ずチェックすべき必要書類と、Hi Korea（ハイコリア）の予約を素早く取るコツをまとめました。",

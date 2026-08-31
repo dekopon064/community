@@ -37,7 +37,7 @@ export default function CurationExplorer({
                 type="button"
                 onClick={() => setActive(category)}
                 aria-pressed={isActive}
-                className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold transition-colors ${
+                className={`min-h-11 shrink-0 rounded-full px-4 py-2 text-sm font-bold transition-colors ${
                   isActive
                     ? "bg-ink text-canvas-white"
                     : "border border-stone bg-transparent text-ink-sub hover:text-ink"

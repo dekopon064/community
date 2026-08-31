@@ -1,10 +1,10 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Home, Info, MessageSquare, type LucideIcon } from "lucide-react";
+import { Home, Info, type LucideIcon } from "lucide-react";
 import { Link, usePathname } from "@/i18n/navigation";
 
-type TabId = "home" | "info" | "qna";
+type TabId = "home" | "info";
 
 interface Tab {
   id: TabId;
@@ -15,7 +15,6 @@ interface Tab {
 const TABS: Tab[] = [
   { id: "home", href: "/", icon: Home },
   { id: "info", href: "/info", icon: Info },
-  { id: "qna", href: "/qna", icon: MessageSquare },
 ];
 
 export default function BottomNav() {
@@ -24,8 +23,8 @@ export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-md border-t border-stone bg-canvas-white">
-      <ul className="flex h-16 items-center justify-around">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-stone/90 bg-canvas-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm md:hidden">
+      <ul className="mx-auto flex h-[4.5rem] max-w-md items-center justify-around px-7">
         {TABS.map(({ id, href, icon: Icon }) => {
           const isActive =
             href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -36,16 +35,16 @@ export default function BottomNav() {
                 aria-current={isActive ? "page" : undefined}
                 className={`flex w-full flex-col items-center justify-center gap-1 py-2 transition-colors ${
                   isActive
-                    ? "font-black text-ink"
+                    ? "font-bold text-ink"
                     : "font-medium text-ink-sub hover:text-ink"
                 }`}
               >
                 <Icon
-                  className="h-6 w-6"
-                  strokeWidth={isActive ? 2.5 : 2}
+                  className="h-5 w-5"
+                  strokeWidth={isActive ? 2.4 : 1.9}
                   aria-hidden="true"
                 />
-                <span className="text-xs">{t(id)}</span>
+                <span className="text-xs tracking-tight">{t(id)}</span>
               </Link>
             </li>
           );

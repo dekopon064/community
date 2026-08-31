@@ -36,11 +36,11 @@ export default async function InfoDetailPage({
   }).format(new Date(item.created_at));
 
   return (
-    <div className="min-h-[60vh] bg-canvas px-5 pt-6 pb-24">
+    <div className="mx-auto min-h-[60vh] max-w-3xl bg-canvas px-5 pt-6 pb-24 md:px-8">
       {/* 뒤로 가기 */}
       <Link
         href="/info"
-        className="mb-6 inline-flex items-center gap-1 text-sm text-ink-sub transition-colors hover:text-ink"
+        className="mb-6 inline-flex min-h-11 items-center gap-1 text-sm text-ink-sub transition-colors hover:text-ink"
       >
         <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         {t("back")}

@@ -1,14 +1,20 @@
 {
   "Header": {
-    "title": "한일 청년 교류"
+    "title": "Machimoa"
   },
   "Nav": {
+    "label": "주요 탐색",
     "home": "홈",
-    "info": "정보",
+    "info": "생활",
     "qna": "Q&A"
   },
   "Home": {
-    "sectionTitle": "최신 큐레이션",
+    "sectionTitle": "생활정보",
+    "headline": "한국 생활, 어디서부터 준비할까요?",
+    "intro": "사람이 검수한 생활정보를 한국어와 일본어로 읽어보세요.",
+    "updatedAt": "최종 갱신",
+    "recentlyUpdated": "최근 갱신",
+    "empty": "아직 공개된 생활정보가 없습니다.",
     "cardTag": "비자 / VISA",
     "cardTitle": "외국인 등록증 초스피드 발급 가이드라인",
     "cardBody": "출입국 사무소 방문 전 반드시 체크해야 할 필수 서류와 하이코리아 빠른 예약 꿀팁을 정리했습니다.",

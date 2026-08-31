@@ -20,13 +20,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "한일 청년 교류 플랫폼",
-  description: "한일 2030 청년들을 위한 정보 큐레이션 및 소통 앱",
+  title: "마치모아(Machimoa)",
+  description: "마치모아(Machimoa)는 사람이 검수한 한국 생활정보를 한국어와 일본어로 제공합니다.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "한일교류",
+    title: "Machimoa",
   },
   icons: {
     icon: [
@@ -40,7 +40,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   // 앱 전역 배경(bg-canvas)과 동일한 토큰 값
   themeColor: themeColors.canvas,
 };
@@ -71,10 +70,9 @@ export default async function LocaleLayout({
     >
       <body className="bg-canvas">
         <NextIntlClientProvider>
-          {/* 모바일 최우선: 데스크탑에서도 스마트폰 해상도로 중앙 정렬 */}
-          <div className="relative mx-auto flex min-h-screen max-w-md flex-col bg-canvas text-ink shadow-xl">
+          <div className="relative flex min-h-screen w-full flex-col bg-canvas text-ink">
             <Header />
-            <main className="flex-1">{children}</main>
+            <main className="flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0">{children}</main>
             <BottomNav />
           </div>
         </NextIntlClientProvider>

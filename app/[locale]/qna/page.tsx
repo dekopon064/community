@@ -6,7 +6,7 @@ import { supabase } from "@/app/lib/supabase";
 import type { QnaEntry } from "@/app/lib/types";
 
 const inputClass =
-  "w-full bg-canvas-white border border-stone rounded-xl px-4 py-3 text-ink placeholder:text-ink-sub focus:outline-none focus:border-ink transition-colors";
+  "w-full min-h-11 bg-canvas-white border border-stone rounded-xl px-4 py-3 text-ink placeholder:text-ink-sub focus:border-ink focus:outline-none focus-visible:outline-3 focus-visible:outline-focus focus-visible:outline-offset-3 transition-colors";
 
 export default function QnaPage() {
   const t = useTranslations("Qna");
@@ -28,6 +28,8 @@ export default function QnaPage() {
   }, []);
 
   useEffect(() => {
+    // 공개 Q&A를 클라이언트에서 한 번 읽는 기존 동작을 유지한다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchEntries();
   }, [fetchEntries]);
 
@@ -40,7 +42,7 @@ export default function QnaPage() {
 
   return (
     // pt-6: 헤더(sticky) 여유 여백, pb-24: 고정 바텀 네비(h-16) 가림 방지
-    <div className="min-h-[60vh] bg-canvas px-5 pt-6 pb-24">
+    <div className="mx-auto min-h-[60vh] max-w-3xl bg-canvas px-5 pt-6 pb-24 md:px-8">
       <h2 className="mb-6 text-lg font-bold text-ink">{t("title")}</h2>
 
       <form className="flex flex-col gap-3">
