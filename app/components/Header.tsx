@@ -15,8 +15,8 @@ export default function Header() {
   ] as const;
 
   return (
-    <header className="sticky top-0 z-50 border-b border-stone/90 bg-canvas-white/95 backdrop-blur-sm">
-      <div className="mx-auto flex h-16 max-w-7xl items-center px-5 md:h-[4.5rem] md:px-8">
+    <header className="sticky top-0 z-50 border-b border-stone/90 bg-canvas-white">
+      <div className="mx-auto flex h-16 max-w-7xl items-center px-5 lg:h-[4.5rem] lg:px-8">
         <Link
           href="/"
           className="text-[1.65rem] font-black tracking-[-0.055em] text-ink md:text-[1.8rem]"
@@ -24,7 +24,7 @@ export default function Header() {
           {t("title")}
         </Link>
 
-        <nav className="ml-14 hidden items-center gap-8 md:flex" aria-label={nav("label")}>
+        <nav className="ml-14 hidden items-center gap-8 lg:flex" aria-label={nav("label")}>
           {items.map(({ id, href }) => {
             const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);
             return (

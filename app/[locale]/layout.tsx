@@ -72,7 +72,7 @@ export default async function LocaleLayout({
         <NextIntlClientProvider>
           <div className="relative flex min-h-screen w-full flex-col bg-canvas text-ink">
             <Header />
-            <main className="flex-1 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0">{children}</main>
+            <main className="flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0">{children}</main>
             <BottomNav />
           </div>
         </NextIntlClientProvider>

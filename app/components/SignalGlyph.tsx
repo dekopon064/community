@@ -29,7 +29,7 @@ export default function SignalGlyph({
       {kind === "housing" && (
         <>
           <path {...stroke} d="M4.5 11.2 12 4.8l7.5 6.4M7.2 10.4v8h9.6v-8" />
-          <circle cx="16.9" cy="17.1" r="1.45" fill={accent ? "#a8564a" : "currentColor"} />
+          <circle cx="16.9" cy="17.1" r="1.45" fill={accent ? "var(--color-coral)" : "currentColor"} />
         </>
       )}
       {kind === "identity" && (
@@ -43,7 +43,7 @@ export default function SignalGlyph({
         <>
           <path {...stroke} d="M7 4.5h6.1l3.9 3.9v9.1A2 2 0 0 1 15 19.5H7a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z" />
           <path {...stroke} d="M13 4.8v3.7h3.7M8.7 12h5.4M8.7 15h3.4" />
-          <circle cx="17.5" cy="18" r="1.25" fill={accent ? "#a8564a" : "currentColor"} />
+          <circle cx="17.5" cy="18" r="1.25" fill={accent ? "var(--color-coral)" : "currentColor"} />
         </>
       )}
     </svg>
