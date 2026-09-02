@@ -36,6 +36,13 @@
     "homeAction": "ホームへ",
     "showAllAction": "すべて見る"
   },
+  "LocaleSwitcher": {
+    "label": "言語を選択",
+    "ko": "한국어",
+    "ja": "日本語",
+    "current": "現在の言語: {language}",
+    "switch": "{language}に切り替える"
+  },
   "Categories": {
     "housing": "住まい",
     "identity": "ビザ・行政",

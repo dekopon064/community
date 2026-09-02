@@ -1,41 +1,54 @@
 "use client";
 
 import { useTransition } from "react";
-import { useLocale } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { usePathname, useRouter } from "@/i18n/navigation";
 
-const TARGET_LANGUAGE: Record<string, { label: string; ariaLabel: string }> = {
-  ko: { label: "日本語", ariaLabel: "일본어로 전환" },
-  ja: { label: "한국어", ariaLabel: "韓国語に切り替える" },
-};
+const LOCALES = ["ko", "ja"] as const;
 
 export default function LocaleSwitcher() {
   const locale = useLocale();
+  const t = useTranslations("LocaleSwitcher");
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  const nextLocale = locale === "ko" ? "ja" : "ko";
-  const targetLanguage = TARGET_LANGUAGE[locale] ?? {
-    label: nextLocale.toUpperCase(),
-    ariaLabel: `Switch to ${nextLocale.toUpperCase()}`,
-  };
+  function selectLocale(nextLocale: (typeof LOCALES)[number]) {
+    if (nextLocale === locale || isPending) return;
 
-  function toggle() {
     startTransition(() => {
       router.replace(pathname, { locale: nextLocale });
     });
   }
 
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      disabled={isPending}
-      aria-label={targetLanguage.ariaLabel}
-      className="min-h-11 min-w-11 rounded-full border border-stone bg-canvas-white px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-sky hover:bg-mineral disabled:opacity-50"
+    <div
+      role="group"
+      aria-label={t("label")}
+      className="inline-flex min-h-11 rounded-full border border-stone bg-canvas-white p-1"
     >
-      {targetLanguage.label}
-    </button>
+      {LOCALES.map((option) => {
+        const isActive = locale === option;
+        const language = t(option);
+
+        return (
+          <button
+            key={option}
+            type="button"
+            onClick={() => selectLocale(option)}
+            disabled={isPending}
+            aria-pressed={isActive}
+            aria-label={isActive ? t("current", { language }) : t("switch", { language })}
+            className={`min-h-11 min-w-11 rounded-full px-3 text-xs font-semibold transition-colors disabled:opacity-50 ${
+              isActive
+                ? "bg-ink text-canvas-white"
+                : "text-ink-sub hover:bg-mineral hover:text-ink"
+            }`}
+          >
+            {language}
+          </button>
+        );
+      })}
+    </div>
   );
 }

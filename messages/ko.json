@@ -36,6 +36,13 @@
     "homeAction": "홈으로",
     "showAllAction": "전체 보기"
   },
+  "LocaleSwitcher": {
+    "label": "언어 선택",
+    "ko": "한국어",
+    "ja": "日本語",
+    "current": "현재 언어: {language}",
+    "switch": "{language}로 전환"
+  },
   "Categories": {
     "housing": "주거",
     "identity": "비자·행정",
