@@ -1,4 +1,5 @@
 import { supabase } from "@/app/lib/supabase";
+import { classifyCurationCategory } from "@/app/lib/categories";
 import type { Curation, LocalizedCuration } from "@/app/lib/types";
 import { routing } from "@/i18n/routing";
 
@@ -51,6 +52,7 @@ export function localizeCuration(
     id: row.id,
     slug: row.slug,
     category: row.category,
+    categoryKey: classifyCurationCategory(row.category),
     title,
     summary,
     content,
@@ -63,10 +65,14 @@ export function localizeCuration(
 }
 
 async function fetchCurationRows(): Promise<Curation[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("curations")
     .select("*")
     .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error("Failed to load curations", { cause: error });
+  }
 
   return (data ?? []) as Curation[];
 }
@@ -84,11 +90,15 @@ export async function fetchLocalizedCurationBySlug(
   slug: string,
   locale: string,
 ): Promise<LocalizedCuration | null> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("curations")
     .select("*")
     .eq("slug", slug)
     .maybeSingle();
+
+  if (error) {
+    throw new Error("Failed to load curation", { cause: error });
+  }
 
   if (!data) {
     return null;
@@ -98,11 +108,15 @@ export async function fetchLocalizedCurationBySlug(
 }
 
 export async function fetchCompleteCurationSlugs(): Promise<string[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("curations")
     .select(
       "slug, title_ko, summary_ko, content_ko, title_ja, summary_ja, content_ja",
     );
+
+  if (error) {
+    throw new Error("Failed to load curation slugs", { cause: error });
+  }
 
   const rows = (data ?? []) as Pick<
     Curation,

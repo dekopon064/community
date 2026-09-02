@@ -20,6 +20,31 @@
     "cardBody": "出入国管理事務所を訪れる前に必ずチェックすべき必要書類と、Hi Korea（ハイコリア）の予約を素早く取るコツをまとめました。",
     "cta": "初回ミーティングに申し込む"
   },
+  "Info": {
+    "title": "生活情報",
+    "intro": "韓国での暮らしに必要な制度や地域の情報を、わかりやすく整理しています。",
+    "reviewNote": "公開前に、韓国語・日本語の内容と公式情報を人が確認しています。",
+    "filterLabel": "カテゴリーで生活情報を絞り込む",
+    "all": "すべて",
+    "resultCount": "生活情報 {count}件",
+    "atAGlance": "ひと目でわかる概要",
+    "publishedAt": "公開日",
+    "emptyTitle": "公開中の生活情報はまだありません。",
+    "emptyDescription": "翻訳と確認が完了した情報から、順次公開します。",
+    "filteredEmptyTitle": "このカテゴリーの情報はありません。",
+    "filteredEmptyDescription": "別のカテゴリーを選ぶか、すべての情報をご覧ください。",
+    "homeAction": "ホームへ",
+    "showAllAction": "すべて見る"
+  },
+  "Categories": {
+    "housing": "住まい",
+    "identity": "ビザ・行政",
+    "work": "仕事",
+    "education": "教育",
+    "welfare": "暮らし・福祉",
+    "participation": "参加",
+    "other": "その他"
+  },
   "Qna": {
     "title": "質問と回答",
     "nicknamePlaceholder": "ニックネーム",
@@ -32,6 +57,26 @@
   },
   "InfoDetail": {
     "back": "一覧へ戻る",
-    "publishedAt": "投稿日"
+    "publishedAt": "公開日"
+  },
+  "InfoTrust": {
+    "title": "確認情報",
+    "reviewedTitle": "公開前に人が確認",
+    "reviewedBody": "韓国語・日本語の内容と公式情報を人が確認したうえで公開しています。",
+    "publishedAt": "公開日",
+    "updatedAt": "最終更新",
+    "sourceTitle": "公式情報",
+    "openSource": "公式ページを開く",
+    "newWindow": "新しいタブで開きます",
+    "sourceUnavailable": "現在確認できる公式ページへのリンクはありません。"
+  },
+  "InfoStates": {
+    "notFoundTitle": "この生活情報は見つかりません。",
+    "notFoundDescription": "URLが変更されたか、選択中の言語では提供されていない可能性があります。",
+    "errorTitle": "生活情報を読み込めませんでした。",
+    "errorDescription": "しばらくしてからもう一度お試しください。問題が続く場合はホームに戻れます。",
+    "retry": "もう一度試す",
+    "goToList": "生活情報の一覧",
+    "goHome": "ホームへ"
   }
 }

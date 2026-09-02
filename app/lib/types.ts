@@ -1,3 +1,5 @@
+import type { CurationCategoryKey } from "@/app/lib/categories";
+
 // Supabase 테이블 행(row)에 대응하는 도메인 타입
 
 export interface Curation {
@@ -24,6 +26,7 @@ export interface LocalizedCuration {
   id: string;
   slug: string;
   category: string;
+  categoryKey: CurationCategoryKey;
   title: string;
   summary: string;
   content: string;

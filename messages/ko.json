@@ -20,6 +20,31 @@
     "cardBody": "출입국 사무소 방문 전 반드시 체크해야 할 필수 서류와 하이코리아 빠른 예약 꿀팁을 정리했습니다.",
     "cta": "첫 모임 신청하기"
   },
+  "Info": {
+    "title": "생활정보",
+    "intro": "한국 생활에 필요한 정책과 로컬 정보를 이해하기 쉽게 정리했습니다.",
+    "reviewNote": "공개 전 한국어·일본어 내용과 공식 원문을 사람이 확인합니다.",
+    "filterLabel": "카테고리로 생활정보 필터링",
+    "all": "전체",
+    "resultCount": "생활정보 {count}건",
+    "atAGlance": "한눈에 보기",
+    "publishedAt": "공개일",
+    "emptyTitle": "아직 공개된 생활정보가 없습니다.",
+    "emptyDescription": "번역과 검수가 완료된 정보부터 차례로 소개합니다.",
+    "filteredEmptyTitle": "이 카테고리에는 정보가 없습니다.",
+    "filteredEmptyDescription": "다른 카테고리를 선택하거나 전체 정보를 확인해 보세요.",
+    "homeAction": "홈으로",
+    "showAllAction": "전체 보기"
+  },
+  "Categories": {
+    "housing": "주거",
+    "identity": "비자·행정",
+    "work": "일자리",
+    "education": "교육",
+    "welfare": "생활·복지",
+    "participation": "참여",
+    "other": "기타"
+  },
   "Qna": {
     "title": "질문과 답변",
     "nicknamePlaceholder": "닉네임",
@@ -32,6 +57,26 @@
   },
   "InfoDetail": {
     "back": "목록으로",
-    "publishedAt": "작성일"
+    "publishedAt": "공개일"
+  },
+  "InfoTrust": {
+    "title": "확인 정보",
+    "reviewedTitle": "공개 전 사람 확인",
+    "reviewedBody": "한국어·일본어 내용과 공식 원문을 사람이 확인한 뒤 공개합니다.",
+    "publishedAt": "공개일",
+    "updatedAt": "최종 갱신",
+    "sourceTitle": "공식 출처",
+    "openSource": "공식 원문 열기",
+    "newWindow": "새 창에서 열림",
+    "sourceUnavailable": "현재 확인할 수 있는 원문 링크가 없습니다."
+  },
+  "InfoStates": {
+    "notFoundTitle": "이 생활정보를 찾을 수 없습니다.",
+    "notFoundDescription": "주소가 바뀌었거나 현재 선택한 언어로 제공되지 않는 정보일 수 있습니다.",
+    "errorTitle": "생활정보를 불러오지 못했습니다.",
+    "errorDescription": "잠시 후 다시 시도해 주세요. 문제가 계속되면 홈으로 돌아갈 수 있습니다.",
+    "retry": "다시 시도",
+    "goToList": "생활정보 목록",
+    "goHome": "홈으로"
   }
 }
