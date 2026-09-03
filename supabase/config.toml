@@ -1,0 +1,7 @@
+project_id = "machimoa-community"
+
+[functions.submit-feedback]
+verify_jwt = false
+
+[functions.delete-feedback]
+verify_jwt = false
