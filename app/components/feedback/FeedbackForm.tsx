@@ -39,29 +39,9 @@ const controlClass =
 const validControlClass = "border-stone focus:border-ink focus-visible:outline-focus";
 const invalidControlClass = "border-coral focus:border-coral focus-visible:outline-coral";
 
-const EMAIL_RE = /^[^@]+@[^@]+\.[^@]+$/;
-const EMAIL_SPACE_RE = /[ \t\n\r\u00a0\u3000]/;
-
 function asStringList(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
-}
-
-function normalizeEmail(value: string): string {
-  let start = 0;
-  let end = value.length;
-  while (start < end && value.charCodeAt(start) === 32) start += 1;
-  while (end > start && value.charCodeAt(end - 1) === 32) end -= 1;
-  return value.slice(start, end);
-}
-
-function isValidEmail(email: string): boolean {
-  return (
-    email.length >= 3 &&
-    email.length <= 254 &&
-    !EMAIL_SPACE_RE.test(email) &&
-    EMAIL_RE.test(email)
-  );
 }
 
 type FeedbackFormProps = {
@@ -84,8 +64,6 @@ export default function FeedbackForm({
   const [body, setBody] = useState("");
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [ageConfirmed, setAgeConfirmed] = useState(false);
-  const [contactConsent, setContactConsent] = useState(false);
-  const [email, setEmail] = useState("");
   const [honeypot, setHoneypot] = useState("");
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [widgetState, setWidgetState] = useState<TurnstileWidgetState>("loading");
@@ -103,15 +81,11 @@ export default function FeedbackForm({
     bodyError: useId(),
     requiredNotice: useId(),
     privacyError: useId(),
-    optionalNotice: useId(),
     ageHelp: useId(),
     ageError: useId(),
     turnstile: useId(),
     turnstileHelp: useId(),
     turnstileError: useId(),
-    email: useId(),
-    emailHelp: useId(),
-    emailError: useId(),
     error: useId(),
     errorTitle: useId(),
   };
@@ -124,13 +98,6 @@ export default function FeedbackForm({
     setResetSignal((value) => value + 1);
   }
 
-  function setContactConsentValue(next: boolean) {
-    setContactConsent(next);
-    if (!next) {
-      setEmail("");
-    }
-  }
-
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting || status === "success") return;
@@ -141,9 +108,6 @@ export default function FeedbackForm({
     if (!privacyConsent) nextErrors.push("privacyRequired");
     if (!ageConfirmed) nextErrors.push("ageRequired");
     if (!turnstileToken) nextErrors.push("turnstileRequired");
-    if (contactConsent && !isValidEmail(normalizeEmail(email))) {
-      nextErrors.push("emailInvalid");
-    }
 
     setClientErrors(nextErrors);
     setServerError(null);
@@ -172,8 +136,6 @@ export default function FeedbackForm({
       privacy_notice_version: FEEDBACK_PRIVACY_NOTICE_VERSION,
       turnstile_token: turnstileToken ?? "",
       topic: topic === "" ? undefined : topic,
-      contact_consent: contactConsent,
-      email: contactConsent ? normalizeEmail(email) : undefined,
       honeypot: honeypot.length > 0 ? honeypot : undefined,
     });
 
@@ -215,7 +177,6 @@ export default function FeedbackForm({
   const privacyInvalid = clientErrors.includes("privacyRequired");
   const ageInvalid = clientErrors.includes("ageRequired");
   const turnstileInvalid = clientErrors.includes("turnstileRequired");
-  const emailInvalid = clientErrors.includes("emailInvalid");
 
   return (
     <form
@@ -415,62 +376,6 @@ export default function FeedbackForm({
           <p id={ids.ageError} className="text-sm leading-6 text-coral">
             {t("errors.ageRequired")}
           </p>
-        )}
-      </fieldset>
-
-      <fieldset className="space-y-4">
-        <legend className="sr-only">{t("optionalNoticeLegend")}</legend>
-        <FeedbackPrivacyNotice
-          legendId={ids.optionalNotice}
-          copy={{
-            title: t("optionalNotice.title"),
-            purposeLabel: t("optionalNotice.purposeLabel"),
-            purposes: asStringList(t.raw("optionalNotice.purposes")),
-            itemsLabel: t("optionalNotice.itemsLabel"),
-            items: asStringList(t.raw("optionalNotice.items")),
-            retentionLabel: t("optionalNotice.retentionLabel"),
-            retention: asStringList(t.raw("optionalNotice.retention")),
-            refusalLabel: t("optionalNotice.refusalLabel"),
-            refusal: asStringList(t.raw("optionalNotice.refusal")),
-          }}
-        />
-        <label className="flex min-h-11 items-start gap-3">
-          <input
-            type="checkbox"
-            checked={contactConsent}
-            onChange={(event) => setContactConsentValue(event.target.checked)}
-            disabled={submitting}
-            className="mt-1 h-5 w-5 accent-focus"
-          />
-          <span className="text-sm leading-6 text-ink">{t("contactConsent")}</span>
-        </label>
-        {contactConsent && (
-          <div>
-            <label htmlFor={ids.email} className="text-sm font-bold text-ink">
-              {t("emailLabel")}
-            </label>
-            <p id={ids.emailHelp} className="mt-2 text-sm leading-6 text-ink-sub">
-              {t("emailHelp")}
-            </p>
-            <input
-              id={ids.email}
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              disabled={submitting}
-              aria-describedby={
-                emailInvalid ? `${ids.emailHelp} ${ids.emailError}` : ids.emailHelp
-              }
-              aria-invalid={emailInvalid}
-              className={`${controlClass} ${emailInvalid ? invalidControlClass : validControlClass} mt-2`}
-            />
-            {emailInvalid && (
-              <p id={ids.emailError} className="mt-2 text-sm leading-6 text-coral">
-                {t("errors.emailInvalid")}
-              </p>
-            )}
-          </div>
         )}
       </fieldset>
 

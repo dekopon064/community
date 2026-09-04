@@ -26,8 +26,6 @@ export type SubmitFeedbackRequest = {
   privacy_notice_version: string;
   turnstile_token: string;
   topic?: "housing" | "identity" | "work" | "education" | "welfare" | "participation" | "other";
-  contact_consent: boolean;
-  email?: string;
   honeypot?: string;
 };
 
@@ -119,15 +117,10 @@ function buildSubmitPayload(input: SubmitFeedbackRequest): Record<string, unknow
     age_confirmed: true,
     privacy_notice_version: input.privacy_notice_version,
     turnstile_token: input.turnstile_token,
-    contact_consent: input.contact_consent,
   };
 
   if (input.topic) {
     payload.topic = input.topic;
-  }
-
-  if (input.contact_consent) {
-    payload.email = input.email;
   }
 
   if (typeof input.honeypot === "string" && input.honeypot.length > 0) {
