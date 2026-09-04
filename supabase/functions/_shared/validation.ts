@@ -31,16 +31,12 @@ const SUBMIT_KEYS = new Set([
   "privacy_notice_version",
   "turnstile_token",
   "topic",
-  "contact_consent",
-  "email",
   "honeypot",
 ]);
 
 const DELETE_KEYS = new Set(["receipt_code", "turnstile_token", "honeypot"]);
 
 const BODY_TRIM_RE = /^[ \t\n\r\u3000]+|[ \t\n\r\u3000]+$/g;
-const EMAIL_RE = /^[^@]+@[^@]+\.[^@]+$/;
-const SPACE_RE = /[ \t\n\r\u00a0\u3000]/;
 const CROCKFORD_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
 export type SubmitFields = {
@@ -48,8 +44,6 @@ export type SubmitFields = {
   feedbackType: FeedbackType;
   topic: Topic | null;
   body: string;
-  contactConsent: boolean;
-  email: string | null;
   turnstileToken: string;
 };
 
@@ -82,28 +76,6 @@ function isTurnstileToken(value: unknown): value is string {
 
 export function normalizeFeedbackBody(body: string): string {
   return body.replace(BODY_TRIM_RE, "");
-}
-
-function normalizeEmail(email: string): string {
-  let start = 0;
-  let end = email.length;
-  while (start < end && email.charCodeAt(start) === 32) {
-    start += 1;
-  }
-  while (end > start && email.charCodeAt(end - 1) === 32) {
-    end -= 1;
-  }
-  return email.slice(start, end);
-}
-
-function isValidEmail(email: string): boolean {
-  if (email.length < 3 || email.length > 254) {
-    return false;
-  }
-  if (SPACE_RE.test(email)) {
-    return false;
-  }
-  return EMAIL_RE.test(email);
 }
 
 export function canonicalizeReceiptInput(raw: string): string | null {
@@ -204,23 +176,6 @@ export function parseSubmitBody(
     return { ok: false, error: "validation_failed" };
   }
 
-  const contactConsent = body.contact_consent === undefined ? false : body.contact_consent;
-  if (contactConsent !== true && contactConsent !== false) {
-    return { ok: false, error: "validation_failed" };
-  }
-
-  let email: string | null = null;
-  if (contactConsent === true) {
-    if (typeof body.email !== "string") {
-      return { ok: false, error: "validation_failed" };
-    }
-    const normalizedEmail = normalizeEmail(body.email);
-    if (!isValidEmail(normalizedEmail)) {
-      return { ok: false, error: "validation_failed" };
-    }
-    email = normalizedEmail;
-  }
-
   if (!isTurnstileToken(body.turnstile_token)) {
     return { ok: false, error: "validation_failed" };
   }
@@ -232,8 +187,6 @@ export function parseSubmitBody(
       feedbackType,
       topic,
       body: normalizedBody,
-      contactConsent,
-      email,
       turnstileToken: body.turnstile_token,
     },
   };

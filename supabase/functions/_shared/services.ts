@@ -78,8 +78,6 @@ export async function submitFeedbackRpc(
     p_body: fields.body,
     p_privacy_consent: true,
     p_age_gate_accepted: true,
-    p_contact_consent: fields.contactConsent,
-    p_email: fields.email,
     p_privacy_notice_version: config.privacyNoticeVersion,
     p_receipt_hmac: receiptHmac,
     p_rate_hmac: rateHmac,
@@ -129,38 +127,7 @@ export async function deleteFeedbackRpc(
   return { ok: false };
 }
 
-function telegramText(args: {
-  submissionId: string;
-  submittedAt: string;
-  locale: string;
-  feedbackType: string;
-  topic: string | null;
-  contactConsent: boolean;
-}): string {
-  const topic = args.topic === null ? "-" : args.topic;
-  const contact = args.contactConsent ? "true" : "false";
-  return [
-    "feedback inserted",
-    `id ${args.submissionId}`,
-    `time ${args.submittedAt}`,
-    `locale ${args.locale}`,
-    `type ${args.feedbackType}`,
-    `topic ${topic}`,
-    `contact_consent ${contact}`,
-  ].join("\n");
-}
-
-export async function notifyTelegramInserted(
-  config: AppConfig,
-  args: {
-    submissionId: string;
-    submittedAt: string;
-    locale: string;
-    feedbackType: string;
-    topic: string | null;
-    contactConsent: boolean;
-  },
-): Promise<boolean> {
+export async function notifyTelegramInserted(config: AppConfig): Promise<boolean> {
   if (config.telegram === null) {
     return true;
   }
@@ -175,7 +142,7 @@ export async function notifyTelegramInserted(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: config.telegram.chatId,
-          text: telegramText(args),
+          text: "새 비공개 의견이 저장되었습니다.",
         }),
         signal: controller.signal,
       },

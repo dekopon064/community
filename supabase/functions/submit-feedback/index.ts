@@ -151,14 +151,7 @@ if (runtime !== null) {
       return errorResponse(503, "temporary_error", gated.origin);
     }
 
-    const telegramOk = await notifyTelegramInserted(config, {
-      submissionId: rpc.submissionId,
-      submittedAt: new Date().toISOString(),
-      locale: parsed.value.locale,
-      feedbackType: parsed.value.feedbackType,
-      topic: parsed.value.topic,
-      contactConsent: parsed.value.contactConsent,
-    });
+    const telegramOk = await notifyTelegramInserted(config);
     if (!telegramOk) {
       logRequest({
         request_id: requestId,
