@@ -88,5 +88,14 @@
     "retry": "もう一度試す",
     "goToList": "生活情報の一覧",
     "goHome": "ホームへ"
+  },
+  "Privacy": {
+    "documentTitle": "個人情報処理方針",
+    "skipToContent": "本文へスキップ",
+    "contactLabel": "個人情報保護担当",
+    "emailLabel": "問い合わせメール",
+    "datesNote": "[公告日]と[施行日]は仮表示です。同じ公開であれば同じ実際の日付であり、この画面で任意に確定しません。",
+    "feedbackLink": "非公開フィードバックを送る",
+    "deleteLink": "受付コードで削除を依頼"
   }
 }
