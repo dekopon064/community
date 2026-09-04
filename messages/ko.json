@@ -97,5 +97,156 @@
     "datesNote": "공고일과 시행일은 자리 표시입니다. 같은 배포에서 공개되면 같은 실제 날짜이며, 이 화면에서 임의로 확정하지 않습니다.",
     "feedbackLink": "비공개 피드백 보내기",
     "deleteLink": "접수 코드로 삭제 요청"
+  },
+  "Feedback": {
+    "pageTitle": "비공개 피드백",
+    "title": "비공개 피드백",
+    "intro": "로그인 없이 비공개로 보낼 수 있습니다. 바로 공개되지 않습니다.",
+    "anonymousNote": "이메일을 입력하지 않는 경우, 운영자가 신원을 확인하기 위한 연락처를 수집하지 않는 익명 제출입니다. 후속 연락에 동의하고 이메일을 입력하면 완전한 익명 제출이 아닙니다.",
+    "typeLegend": "피드백 유형",
+    "types": {
+      "hard_to_find_life_info": "찾기 어려웠던 생활정보",
+      "product_opinion": "제품 의견",
+      "other_inquiry": "기타 문의"
+    },
+    "topicLegend": "관련 생활 주제 (선택)",
+    "topicNone": "선택하지 않음",
+    "bodyLabel": "내용",
+    "bodyHelp": "개인정보나 민감한 정보는 적지 마세요. HTML이나 Markdown은 해석되지 않습니다.",
+    "bodyCount": "{count} / {max}자 (최소 {min}자)",
+    "honeypotLabel": "이 칸은 비워 두세요",
+    "requiredNoticeLegend": "필수 개인정보 수집·이용 안내",
+    "requiredNotice": {
+      "title": "필수 개인정보 수집·이용 안내",
+      "purposeLabel": "목적",
+      "purposes": [
+        "한국 생활정보 수요와 제품 의견·기타 문의 검토",
+        "피드백 처리 및 삭제 요청",
+        "스팸·반복 제출 방지"
+      ],
+      "itemsLabel": "처리 항목",
+      "items": [
+        "피드백 유형, 본문, locale",
+        "선택한 생활 주제",
+        "개인정보 동의 여부, 만 14세 이상 확인 여부",
+        "적용된 개인정보 안내문 버전",
+        "Turnstile 검증 정보",
+        "원본 IP를 저장하지 않고 생성한 rate-limit HMAC"
+      ],
+      "retentionLabel": "보존",
+      "retention": [
+        "일반 피드백 최대 180일",
+        "스팸 판정 피드백 최대 30일",
+        "rate-limit HMAC 최대 72시간",
+        "접수 코드 삭제 요청 성공 시 Supabase 데이터 즉시 완전 삭제"
+      ],
+      "refusalLabel": "거부",
+      "refusal": [
+        "동의를 거부할 수 있으나 필수 동의가 없으면 제출할 수 없습니다.",
+        "생활정보 열람에는 영향이 없습니다."
+      ]
+    },
+    "privacyConsent": "필수 개인정보 수집·이용 안내에 동의합니다.",
+    "ageLegend": "만 14세 이상 확인",
+    "ageHelp": "생년월일이나 정확한 나이는 받지 않습니다. 생활정보 열람에 연령 제한을 두는 확인이 아닙니다.",
+    "ageConsent": "만 14세 이상입니다.",
+    "optionalNoticeLegend": "선택 후속 연락 안내",
+    "optionalNotice": {
+      "title": "선택 후속 연락 안내",
+      "purposeLabel": "목적",
+      "purposes": [
+        "제출 내용 확인과 후속 질문에 대한 운영자의 수동 연락"
+      ],
+      "itemsLabel": "처리 항목",
+      "items": [
+        "이메일 주소",
+        "수동 이메일 회신 내용"
+      ],
+      "retentionLabel": "보존",
+      "retention": [
+        "연락 완료 또는 삭제 요청 시 삭제합니다.",
+        "어떤 경우에도 최초 수신일부터 최대 90일입니다."
+      ],
+      "refusalLabel": "거부",
+      "refusal": [
+        "동의하지 않아도 이메일 없이 제출할 수 있습니다."
+      ]
+    },
+    "contactConsent": "후속 연락을 위한 이메일 제공에 동의합니다. (선택)",
+    "emailLabel": "이메일 주소",
+    "emailHelp": "동의를 해제하면 입력한 이메일은 지워지고 제출 요청에도 포함되지 않습니다.",
+    "turnstileLegend": "스팸 방지 확인",
+    "turnstileHelp": "확인이 끝나면 제출할 수 있습니다. 만료되거나 실패하면 다시 확인해야 합니다.",
+    "turnstileStatus": "확인 상태",
+    "turnstileLoading": "확인을 준비하고 있습니다.",
+    "turnstileReady": "확인이 완료되었습니다.",
+    "turnstileExpired": "확인이 만료되었습니다. 다시 진행해 주세요.",
+    "turnstileFailed": "확인에 실패했습니다. 다시 진행해 주세요.",
+    "legalReviewNote": "이 안내문은 법률 적합성을 보장하지 않으며, 공개 전 법률 검토 대상입니다.",
+    "receiptBeforeSubmit": "제출이 완료되면 접수 코드가 이 화면에만 한 번 표시됩니다. 새로고침하거나 이 페이지를 떠나면 다시 볼 수 없습니다.",
+    "submit": "보내기",
+    "submitting": "보내는 중",
+    "successTitle": "피드백을 받았습니다.",
+    "receiptWarning": "접수 코드를 지금 복사해 두세요. 이 화면을 벗어나면 다시 볼 수 없습니다.",
+    "receiptUnrecoverable": "분실한 접수 코드는 복구할 수 없습니다. 복사 여부는 서버로 보내지 않습니다.",
+    "copy": "접수 코드 복사",
+    "copied": "복사했습니다.",
+    "copyFailed": "복사하지 못했습니다. 코드를 직접 선택해 복사해 주세요.",
+    "privacyLink": "개인정보처리방침",
+    "deleteLink": "접수 코드로 삭제 요청",
+    "errorTitle": "제출할 수 없습니다.",
+    "errors": {
+      "typeRequired": "피드백 유형을 선택해 주세요.",
+      "bodyLength": "내용은 10자 이상 1000자 이하여야 합니다.",
+      "privacyRequired": "필수 개인정보 수집·이용 안내에 동의해 주세요.",
+      "ageRequired": "만 14세 이상임을 확인해 주세요.",
+      "turnstileRequired": "스팸 방지 확인을 완료해 주세요.",
+      "emailInvalid": "이메일 주소를 확인해 주세요.",
+      "method_not_allowed": "잠시 후 다시 시도해 주세요. 이번 요청이 저장됐는지는 이 화면에서 확인할 수 없습니다.",
+      "origin_denied": "이 페이지에서는 제출할 수 없습니다. 이번 요청이 저장됐는지는 이 화면에서 확인할 수 없습니다.",
+      "payload_too_large": "내용이 너무 깁니다. 줄인 뒤 다시 시도해 주세요.",
+      "unsupported_media_type": "잠시 후 다시 시도해 주세요. 이번 요청이 저장됐는지는 이 화면에서 확인할 수 없습니다.",
+      "invalid_json": "잠시 후 다시 시도해 주세요. 이번 요청이 저장됐는지는 이 화면에서 확인할 수 없습니다.",
+      "validation_failed": "입력 내용과 스팸 방지 확인을 다시 살펴봐 주세요.",
+      "privacy_notice_outdated": "개인정보 안내가 갱신되었습니다. 페이지를 새로고침한 뒤 최신 안내에 동의해 주세요.",
+      "turnstile_unavailable": "스팸 방지를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요. 이번 요청이 저장됐는지는 이 화면에서 확인할 수 없습니다.",
+      "rate_limited": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+      "temporary_error": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요. 이번 요청이 저장됐는지는 이 화면에서 확인할 수 없습니다."
+    }
+  },
+  "FeedbackDelete": {
+    "pageTitle": "접수 코드로 삭제 요청",
+    "title": "접수 코드로 삭제 요청",
+    "intro": "제출 후 화면에 표시된 접수 코드로 삭제를 요청할 수 있습니다.",
+    "existenceNote": "완료 안내는 접수 코드가 실제로 있었는지, 이미 없었는지를 구분하지 않습니다.",
+    "receiptLabel": "접수 코드",
+    "receiptHelp": "하이픈이 있어도 됩니다. 서버가 형식을 맞춥니다.",
+    "turnstileLegend": "스팸 방지 확인",
+    "turnstileHelp": "확인이 끝나면 삭제 요청을 보낼 수 있습니다. 만료되거나 실패하면 다시 확인해야 합니다.",
+    "turnstileStatus": "확인 상태",
+    "turnstileLoading": "확인을 준비하고 있습니다.",
+    "turnstileReady": "확인이 완료되었습니다.",
+    "turnstileExpired": "확인이 만료되었습니다. 다시 진행해 주세요.",
+    "turnstileFailed": "확인에 실패했습니다. 다시 진행해 주세요.",
+    "submit": "삭제 요청",
+    "submitting": "요청 중",
+    "processedTitle": "삭제 요청을 처리했습니다.",
+    "processedBody": "접수 코드가 실제로 있었는지, 이미 없었는지는 이 안내에서 구분하지 않습니다.",
+    "privacyLink": "개인정보처리방침",
+    "errorTitle": "삭제 요청을 보낼 수 없습니다.",
+    "errors": {
+      "receiptInvalid": "접수 코드를 입력해 주세요.",
+      "turnstileRequired": "스팸 방지 확인을 완료해 주세요.",
+      "method_not_allowed": "지원하지 않는 요청 방식입니다.",
+      "origin_denied": "이 페이지에서는 삭제 요청을 보낼 수 없습니다.",
+      "payload_too_large": "접수 코드를 확인해 주세요.",
+      "unsupported_media_type": "요청 형식을 처리할 수 없습니다.",
+      "invalid_json": "요청 내용을 처리할 수 없습니다.",
+      "validation_failed": "접수 코드와 스팸 방지 확인을 다시 살펴봐 주세요.",
+      "privacy_notice_outdated": "페이지를 새로고침한 뒤 다시 시도해 주세요.",
+      "turnstile_unavailable": "스팸 방지를 확인할 수 없습니다. 요청 처리 결과를 이 화면에서 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+      "rate_limited": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+      "temporary_error": "요청 처리 결과를 이 화면에서 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."
+    }
   }
 }
