@@ -1,6 +1,7 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import HomeAtlasBackdrop from "@/app/components/HomeAtlasBackdrop";
 import HomeCurationEntry from "@/app/components/HomeCurationEntry";
+import HomeFeedbackCta from "@/app/components/HomeFeedbackCta";
 import { fetchLocalizedCurations } from "@/app/lib/curations";
 
 // 새 글 등록 시 최대 60초 안에 대표 카드를 최신화 (ISR)
@@ -50,6 +51,9 @@ export default async function Home({
           <p className="mt-5 max-w-sm text-base leading-7 text-ink-sub md:text-lg">
             {t("intro")}
           </p>
+          <div className="mt-6 hidden lg:block">
+            <HomeFeedbackCta title={t("feedbackCta")} hint={t("feedbackCtaHint")} />
+          </div>
         </section>
 
         <section aria-label={t("sectionTitle")} className="mt-[33px] space-y-[18px] lg:mt-0 lg:space-y-8">
@@ -99,6 +103,10 @@ export default async function Home({
             </time>
           </aside>
         )}
+
+        <div className="mt-8 lg:col-span-3 lg:hidden">
+          <HomeFeedbackCta title={t("feedbackCta")} hint={t("feedbackCtaHint")} />
+        </div>
       </div>
     </div>
   );
