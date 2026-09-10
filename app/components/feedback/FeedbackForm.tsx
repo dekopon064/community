@@ -34,8 +34,20 @@ const TOPICS: readonly CurationCategoryKey[] = [
   "other",
 ];
 
+type FeedbackType = (typeof FEEDBACK_TYPES)[number];
+
+function isFeedbackType(value: string): value is FeedbackType {
+  return FEEDBACK_TYPES.some((option) => option === value);
+}
+
+function isTopic(value: string): value is CurationCategoryKey {
+  return TOPICS.some((option) => option === value);
+}
+
 const controlClass =
   "w-full min-h-11 rounded-xl border bg-canvas-white px-4 py-3 text-ink placeholder:text-ink-sub transition-colors focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-3 disabled:opacity-60";
+const textareaClass =
+  "w-full min-h-[13.5rem] rounded-xl border bg-canvas-white px-4 py-3 text-ink placeholder:text-ink-sub transition-colors focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-3 disabled:opacity-60 resize-none overflow-y-auto md:max-h-[28rem] md:resize-y";
 const validControlClass = "border-stone focus:border-ink focus-visible:outline-focus";
 const invalidControlClass = "border-coral focus:border-coral focus-visible:outline-coral";
 
@@ -54,12 +66,11 @@ export default function FeedbackForm({
   turnstileAction,
 }: FeedbackFormProps) {
   const t = useTranslations("Feedback");
-  const categoriesT = useTranslations("Categories");
   const locale = useLocale();
   const language = locale === "ja" ? "ja" : "ko";
 
   const errorRef = useRef<HTMLDivElement>(null);
-  const [feedbackType, setFeedbackType] = useState<(typeof FEEDBACK_TYPES)[number] | "">("");
+  const [feedbackType, setFeedbackType] = useState<FeedbackType | "">("");
   const [topic, setTopic] = useState<CurationCategoryKey | "">("");
   const [body, setBody] = useState("");
   const [privacyConsent, setPrivacyConsent] = useState(false);
@@ -75,16 +86,18 @@ export default function FeedbackForm({
 
   const ids = {
     title: useId(),
+    type: useId(),
     typeError: useId(),
+    topic: useId(),
     body: useId(),
     bodyHelp: useId(),
     bodyError: useId(),
     requiredNotice: useId(),
     privacyError: useId(),
+    ageTitle: useId(),
     ageHelp: useId(),
     ageError: useId(),
     turnstile: useId(),
-    turnstileHelp: useId(),
     turnstileError: useId(),
     error: useId(),
     errorTitle: useId(),
@@ -213,64 +226,158 @@ export default function FeedbackForm({
         </div>
       )}
 
-      <p className="text-base leading-7 text-ink-sub">{t("intro")}</p>
-      <p className="text-sm leading-6 text-ink-sub">{t("anonymousNote")}</p>
+      <div className="space-y-3">
+        <p className="text-base leading-7 text-ink-sub">{t("intro")}</p>
+        <p className="text-base leading-7 text-ink-sub">{t("anonymousNote")}</p>
+        <p className="text-base leading-7 text-ink-sub">{t("purposeNote")}</p>
+      </div>
 
-      <fieldset
-        className="space-y-3"
-        aria-describedby={typeInvalid ? ids.typeError : undefined}
+      <fieldset>
+        <legend className="sr-only">{t("requiredNoticeLegend")}</legend>
+        <FeedbackPrivacyNotice
+          legendId={ids.requiredNotice}
+          consentInvalid={privacyInvalid}
+          copy={{
+            title: t("requiredNotice.title"),
+            purposeLabel: t("requiredNotice.purposeLabel"),
+            purposes: asStringList(t.raw("requiredNotice.purposes")),
+            itemsLabel: t("requiredNotice.itemsLabel"),
+            items: asStringList(t.raw("requiredNotice.items")),
+            retentionLabel: t("requiredNotice.retentionLabel"),
+            retention: asStringList(t.raw("requiredNotice.retention")),
+            refusalLabel: t("requiredNotice.refusalLabel"),
+            refusal: asStringList(t.raw("requiredNotice.refusal")),
+          }}
+        >
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              checked={privacyConsent}
+              onChange={(event) => setPrivacyConsent(event.target.checked)}
+              disabled={submitting}
+              aria-describedby={privacyInvalid ? ids.privacyError : undefined}
+              aria-invalid={privacyInvalid}
+              className={`mt-0.5 h-5 w-5 shrink-0 accent-focus focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-focus ${privacyInvalid ? "outline outline-2 outline-offset-2 outline-coral" : ""}`}
+            />
+            <span className="text-sm leading-6 text-ink">{t("privacyConsent")}</span>
+          </label>
+          {privacyInvalid && (
+            <p id={ids.privacyError} className="mt-2 text-sm leading-6 text-coral">
+              {t("errors.privacyRequired")}
+            </p>
+          )}
+        </FeedbackPrivacyNotice>
+      </fieldset>
+
+      <div
+        role="group"
+        aria-labelledby={ids.ageTitle}
+        className="overflow-hidden rounded-[1.25rem] border border-stone bg-canvas-white shadow-premium-sm"
       >
-        <legend className="text-sm font-bold text-ink">{t("typeLegend")}</legend>
-        {FEEDBACK_TYPES.map((value) => (
-          <label key={value} className="flex min-h-11 items-center gap-3">
-            <input
-              type="radio"
-              name="feedback_type"
-              value={value}
-              checked={feedbackType === value}
-              onChange={() => setFeedbackType(value)}
-              disabled={submitting}
-              className={`h-5 w-5 accent-focus ${typeInvalid ? "outline outline-2 outline-offset-2 outline-coral" : ""}`}
-            />
-            <span className="text-sm leading-6 text-ink">{t(`types.${value}`)}</span>
-          </label>
-        ))}
-        {typeInvalid && (
-          <p id={ids.typeError} className="text-sm leading-6 text-coral">
-            {t("errors.typeRequired")}
+        <div className="px-4 py-4 md:px-6">
+          <h3
+            id={ids.ageTitle}
+            className="text-sm font-bold tracking-[-0.02em] text-ink md:text-base"
+          >
+            {t("ageLegend")}
+          </h3>
+          <p id={ids.ageHelp} className="mt-2 text-sm leading-6 text-ink-sub">
+            {t("ageHelp")}
           </p>
-        )}
-      </fieldset>
-
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-bold text-ink">{t("topicLegend")}</legend>
-        <label className="flex min-h-11 items-center gap-3">
-          <input
-            type="radio"
-            name="topic"
-            value=""
-            checked={topic === ""}
-            onChange={() => setTopic("")}
-            disabled={submitting}
-            className="h-5 w-5 accent-focus"
-          />
-          <span className="text-sm leading-6 text-ink">{t("topicNone")}</span>
-        </label>
-        {TOPICS.map((value) => (
-          <label key={value} className="flex min-h-11 items-center gap-3">
+        </div>
+        <div
+          className={`border-t px-4 py-4 md:px-6 ${
+            ageInvalid ? "border-coral bg-coral/5" : "border-stone bg-mineral/70"
+          }`}
+        >
+          <label className="flex cursor-pointer items-start gap-2">
             <input
-              type="radio"
-              name="topic"
-              value={value}
-              checked={topic === value}
-              onChange={() => setTopic(value)}
+              type="checkbox"
+              checked={ageConfirmed}
+              onChange={(event) => setAgeConfirmed(event.target.checked)}
               disabled={submitting}
-              className="h-5 w-5 accent-focus"
+              aria-describedby={
+                ageInvalid ? `${ids.ageHelp} ${ids.ageError}` : ids.ageHelp
+              }
+              aria-invalid={ageInvalid}
+              className={`mt-0.5 h-5 w-5 shrink-0 accent-focus focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-focus ${ageInvalid ? "outline outline-2 outline-offset-2 outline-coral" : ""}`}
             />
-            <span className="text-sm leading-6 text-ink">{categoriesT(value)}</span>
+            <span className="text-sm leading-6 text-ink">{t("ageConsent")}</span>
           </label>
-        ))}
-      </fieldset>
+          {ageInvalid && (
+            <p id={ids.ageError} className="mt-2 text-sm leading-6 text-coral">
+              {t("errors.ageRequired")}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-6">
+        <div>
+          <label htmlFor={ids.type} className="text-sm font-bold text-ink">
+            {t("typeLegend")}
+          </label>
+          <select
+            id={ids.type}
+            name="feedback_type"
+            value={feedbackType}
+            onChange={(event) => {
+              const value = event.target.value;
+              setFeedbackType(isFeedbackType(value) ? value : "");
+            }}
+            disabled={submitting}
+            required
+            aria-required="true"
+            aria-describedby={typeInvalid ? ids.typeError : undefined}
+            aria-invalid={typeInvalid}
+            className={`${controlClass} ${typeInvalid ? invalidControlClass : validControlClass} mt-3`}
+          >
+            <option value="" disabled hidden>
+              {t("typePlaceholder")}
+            </option>
+            {FEEDBACK_TYPES.map((value) => (
+              <option key={value} value={value}>
+                {t(`types.${value}`)}
+              </option>
+            ))}
+          </select>
+          {typeInvalid && (
+            <p id={ids.typeError} className="mt-2 text-sm leading-6 text-coral">
+              {t("errors.typeRequired")}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label
+            htmlFor={ids.topic}
+            className="flex flex-wrap items-baseline gap-x-2 gap-y-1"
+          >
+            <span className="text-sm font-bold text-ink">{t("topicLegend")}</span>
+            <span className="text-xs font-medium text-ink-sub">
+              {t("topicOptional")}
+            </span>
+          </label>
+          <select
+            id={ids.topic}
+            name="topic"
+            value={topic}
+            onChange={(event) => {
+              const value = event.target.value;
+              setTopic(isTopic(value) ? value : "");
+            }}
+            disabled={submitting}
+            className={`${controlClass} ${validControlClass} mt-3`}
+          >
+            <option value="">{t("topicNone")}</option>
+            {TOPICS.map((value) => (
+              <option key={value} value={value}>
+                {t(`topics.${value}`)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       <div>
         <label htmlFor={ids.body} className="text-sm font-bold text-ink">
@@ -289,7 +396,7 @@ export default function FeedbackForm({
             bodyInvalid ? `${ids.bodyHelp} ${ids.bodyError}` : ids.bodyHelp
           }
           aria-invalid={bodyInvalid}
-          className={`${controlClass} ${bodyInvalid ? invalidControlClass : validControlClass} mt-3 resize-y`}
+          className={`${textareaClass} ${bodyInvalid ? invalidControlClass : validControlClass} mt-3`}
         />
         {bodyInvalid && (
           <p id={ids.bodyError} className="mt-2 text-sm leading-6 text-coral">
@@ -318,73 +425,9 @@ export default function FeedbackForm({
         </label>
       </div>
 
-      <fieldset className="space-y-4">
-        <legend className="sr-only">{t("requiredNoticeLegend")}</legend>
-        <FeedbackPrivacyNotice
-          legendId={ids.requiredNotice}
-          copy={{
-            title: t("requiredNotice.title"),
-            purposeLabel: t("requiredNotice.purposeLabel"),
-            purposes: asStringList(t.raw("requiredNotice.purposes")),
-            itemsLabel: t("requiredNotice.itemsLabel"),
-            items: asStringList(t.raw("requiredNotice.items")),
-            retentionLabel: t("requiredNotice.retentionLabel"),
-            retention: asStringList(t.raw("requiredNotice.retention")),
-            refusalLabel: t("requiredNotice.refusalLabel"),
-            refusal: asStringList(t.raw("requiredNotice.refusal")),
-          }}
-        />
-        <label className="flex min-h-11 items-start gap-3">
-          <input
-            type="checkbox"
-            checked={privacyConsent}
-            onChange={(event) => setPrivacyConsent(event.target.checked)}
-            disabled={submitting}
-            aria-describedby={privacyInvalid ? ids.privacyError : undefined}
-            aria-invalid={privacyInvalid}
-            className={`mt-1 h-5 w-5 accent-focus ${privacyInvalid ? "outline outline-2 outline-offset-2 outline-coral" : ""}`}
-          />
-          <span className="text-sm leading-6 text-ink">{t("privacyConsent")}</span>
-        </label>
-        {privacyInvalid && (
-          <p id={ids.privacyError} className="text-sm leading-6 text-coral">
-            {t("errors.privacyRequired")}
-          </p>
-        )}
-      </fieldset>
-
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-bold text-ink">{t("ageLegend")}</legend>
-        <p id={ids.ageHelp} className="text-sm leading-6 text-ink-sub">
-          {t("ageHelp")}
-        </p>
-        <label className="flex min-h-11 items-start gap-3">
-          <input
-            type="checkbox"
-            checked={ageConfirmed}
-            onChange={(event) => setAgeConfirmed(event.target.checked)}
-            disabled={submitting}
-            aria-describedby={
-              ageInvalid ? `${ids.ageHelp} ${ids.ageError}` : ids.ageHelp
-            }
-            aria-invalid={ageInvalid}
-            className={`mt-1 h-5 w-5 accent-focus ${ageInvalid ? "outline outline-2 outline-offset-2 outline-coral" : ""}`}
-          />
-          <span className="text-sm leading-6 text-ink">{t("ageConsent")}</span>
-        </label>
-        {ageInvalid && (
-          <p id={ids.ageError} className="text-sm leading-6 text-coral">
-            {t("errors.ageRequired")}
-          </p>
-        )}
-      </fieldset>
-
       <div>
         <p id={ids.turnstile} className="text-sm font-bold text-ink">
           {t("turnstileLegend")}
-        </p>
-        <p id={ids.turnstileHelp} className="mt-2 text-sm leading-6 text-ink-sub">
-          {t("turnstileHelp")}
         </p>
         <div className={`mt-3 ${turnstileInvalid ? "rounded-xl outline outline-2 outline-offset-2 outline-coral" : ""}`}>
           <TurnstileField
@@ -393,11 +436,7 @@ export default function FeedbackForm({
             language={language}
             resetSignal={resetSignal}
             labelledBy={ids.turnstile}
-            describedBy={
-              turnstileInvalid
-                ? `${ids.turnstileHelp} ${ids.turnstileError}`
-                : ids.turnstileHelp
-            }
+            describedBy={turnstileInvalid ? ids.turnstileError : undefined}
             statusLabel={t("turnstileStatus")}
             loadingLabel={t("turnstileLoading")}
             readyLabel={t("turnstileReady")}
@@ -415,7 +454,6 @@ export default function FeedbackForm({
         )}
       </div>
 
-      <p className="text-sm leading-6 text-ink-sub">{t("legalReviewNote")}</p>
       <p className="text-sm leading-6 text-ink-sub">{t("receiptBeforeSubmit")}</p>
 
       <button
