@@ -20,7 +20,8 @@ export default function Header() {
       <div className="mx-auto flex h-16 max-w-7xl items-center px-5 lg:h-[4.5rem] lg:px-8">
         <Link
           href="/"
-          className="text-[1.65rem] font-black tracking-[-0.055em] text-ink md:text-[1.8rem]"
+          lang="en"
+          className="font-brand text-[1.65rem] font-black tracking-[-0.055em] text-ink md:text-[1.8rem]"
         >
           {t("title")}
         </Link>

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Noto_Sans_JP, Noto_Sans_KR } from "next/font/google";
 import { notFound } from "next/navigation";
 import { hasLocale, NextIntlClientProvider } from "next-intl";
 import { setRequestLocale } from "next-intl/server";
@@ -12,11 +12,29 @@ import BottomNav from "@/app/components/BottomNav";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
+});
+
+const notoSansKr = Noto_Sans_KR({
+  variable: "--font-noto-sans",
+  subsets: ["latin"],
+  display: "swap",
+  preload: false,
+  fallback: ["Arial", "Helvetica", "sans-serif"],
+});
+
+const notoSansJp = Noto_Sans_JP({
+  variable: "--font-noto-sans",
+  subsets: ["latin"],
+  display: "swap",
+  preload: false,
+  fallback: ["Arial", "Helvetica", "sans-serif"],
 });
 
 export const metadata: Metadata = {
@@ -63,10 +81,12 @@ export default async function LocaleLayout({
   // 정적 렌더링을 위해 요청 locale을 활성화
   setRequestLocale(locale);
 
+  const notoSans = locale === "ja" ? notoSansJp : notoSansKr;
+
   return (
     <html
       lang={locale}
-      className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+      className={`${notoSans.variable} ${geistSans.variable} ${geistMono.variable} antialiased`}
     >
       <body className="bg-canvas">
         <NextIntlClientProvider>
