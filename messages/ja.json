@@ -6,8 +6,28 @@
     "label": "主要ナビゲーション",
     "home": "ホーム",
     "info": "生活",
-    "feedback": "問い合わせ",
+    "mailbox": "ポスト",
     "qna": "質問"
+  },
+  "Footer": {
+    "feedbackLink": "韓国での暮らしについて伝える"
+  },
+  "Mailbox": {
+    "promptLines": [
+      "韓国での暮らしについて、匿名でお話を送れます。"
+    ],
+    "expandLabel": "Machimoaポストの案内を開く",
+    "collapseLabel": "Machimoaポストの案内を閉じる",
+    "letterTitleLines": [
+      "韓国での暮らしについて",
+      "聞かせてください。"
+    ],
+    "letterDescriptionLines": [
+      "韓国で暮らす中で、不便だった",
+      "ことや、もっと知りたかった",
+      "ことを聞かせてください。"
+    ],
+    "cta": "声を届ける"
   },
   "Home": {
     "sectionTitle": "生活情報",
@@ -19,8 +39,6 @@
     "latestPublishedAt": "最終公開日",
     "publishedAt": "公開日",
     "empty": "公開されている生活情報はまだありません。",
-    "feedbackCta": "韓国生活で困ったことを教えてください",
-    "feedbackCtaHint": "ログインなしで非公開のまま送れます。すぐに公開はされません。",
     "cardTag": "ビザ / VISA",
     "cardTitle": "外国人登録証 スピード発給ガイドライン",
     "cardBody": "出入国管理事務所を訪れる前に必ずチェックすべき必要書類と、Hi Korea（ハイコリア）の予約を素早く取るコツをまとめました。",

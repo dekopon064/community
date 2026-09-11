@@ -1,7 +1,7 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import HomeAtlasBackdrop from "@/app/components/HomeAtlasBackdrop";
 import HomeCurationEntry from "@/app/components/HomeCurationEntry";
-import HomeFeedbackCta from "@/app/components/HomeFeedbackCta";
+import HomeMailbox from "@/app/components/HomeMailbox";
 import { fetchLocalizedCurations } from "@/app/lib/curations";
 
 // 새 글 등록 시 최대 60초 안에 대표 카드를 최신화 (ISR)
@@ -39,7 +39,7 @@ export default async function Home({
   return (
     <div className="relative isolate min-h-[calc(100dvh-4.25rem)] overflow-hidden bg-canvas lg:min-h-[calc(100dvh-4.5rem)]">
       <HomeAtlasBackdrop />
-      <div className="relative mx-auto max-w-xl px-4 pb-24 pt-[49px] sm:px-8 lg:max-w-7xl lg:grid lg:grid-cols-[minmax(15rem,0.9fr)_minmax(0,1.25fr)_minmax(9rem,0.48fr)] lg:items-start lg:gap-x-12 lg:px-8 lg:pb-16 lg:pt-[51px]">
+      <div className="relative mx-auto max-w-xl px-4 pb-24 pt-[49px] sm:px-8 lg:max-w-7xl lg:grid lg:grid-cols-[minmax(13.5rem,0.82fr)_minmax(0,1.18fr)_18.5rem] lg:items-start lg:gap-x-8 lg:px-8 lg:pb-16 lg:pt-[51px]">
         <section className="relative lg:pt-[69px]">
           <h1
             className={isJapanese
@@ -51,9 +51,6 @@ export default async function Home({
           <p className="mt-5 max-w-sm text-base leading-7 text-ink-sub md:text-lg">
             {t("intro")}
           </p>
-          <div className="mt-6 hidden lg:block">
-            <HomeFeedbackCta title={t("feedbackCta")} hint={t("feedbackCtaHint")} />
-          </div>
         </section>
 
         <section aria-label={t("sectionTitle")} className="mt-[33px] space-y-[18px] lg:mt-0 lg:space-y-8">
@@ -87,26 +84,27 @@ export default async function Home({
           )}
         </section>
 
-        {primary && primaryPublishedAt && (
-          <aside className="relative hidden pl-5 lg:block lg:pt-[82px]">
-            <span className="absolute left-0 top-[86px] h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-coral" aria-hidden="true" />
-            <span className="absolute left-0 top-[98px] h-9 w-px bg-stone" aria-hidden="true" />
-            <p className="text-sm font-bold tracking-[-0.02em] text-ink">
-              {t("recentlyPublished", { count: visibleCurationCount })}
-            </p>
-            <p className="mt-5 text-xs font-semibold text-ink-sub">{t("latestPublishedAt")}</p>
-            <time
-              dateTime={primary.created_at}
-              className="mt-1 block text-base font-bold tabular-nums tracking-[-0.025em] text-ink"
-            >
-              {primaryPublishedAt}
-            </time>
-          </aside>
-        )}
-
-        <div className="mt-8 lg:col-span-3 lg:hidden">
-          <HomeFeedbackCta title={t("feedbackCta")} hint={t("feedbackCtaHint")} />
-        </div>
+        <aside className="relative hidden min-w-0 pl-5 lg:block lg:pt-[82px]">
+          {primary && primaryPublishedAt && (
+            <>
+              <span className="absolute left-0 top-[86px] h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-coral" aria-hidden="true" />
+              <span className="absolute left-0 top-[98px] h-9 w-px bg-stone" aria-hidden="true" />
+              <p className="text-sm font-bold tracking-[-0.02em] text-ink">
+                {t("recentlyPublished", { count: visibleCurationCount })}
+              </p>
+              <p className="mt-5 text-xs font-semibold text-ink-sub">{t("latestPublishedAt")}</p>
+              <time
+                dateTime={primary.created_at}
+                className="mt-1 block text-base font-bold tabular-nums tracking-[-0.025em] text-ink"
+              >
+                {primaryPublishedAt}
+              </time>
+            </>
+          )}
+          <div className={primary && primaryPublishedAt ? "mt-10" : undefined}>
+            <HomeMailbox />
+          </div>
+        </aside>
       </div>
     </div>
   );

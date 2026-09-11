@@ -1,13 +1,11 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Home, Info, type LucideIcon } from "lucide-react";
+import { Home, Info, Mailbox, type LucideIcon } from "lucide-react";
 import { Link, usePathname } from "@/i18n/navigation";
 
-type TabId = "home" | "info";
-
 interface Tab {
-  id: TabId;
+  id: "home" | "info" | "mailbox";
   href: string;
   icon: LucideIcon;
 }
@@ -15,11 +13,11 @@ interface Tab {
 const TABS: Tab[] = [
   { id: "home", href: "/", icon: Home },
   { id: "info", href: "/info", icon: Info },
+  { id: "mailbox", href: "/feedback", icon: Mailbox },
 ];
 
 export default function BottomNav() {
   const t = useTranslations("Nav");
-  // next-intl의 usePathname은 locale 프리픽스가 제거된 경로를 반환 (예: "/info")
   const pathname = usePathname();
 
   return (

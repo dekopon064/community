@@ -6,8 +6,28 @@
     "label": "주요 탐색",
     "home": "홈",
     "info": "생활",
-    "feedback": "문의",
+    "mailbox": "우체통",
     "qna": "Q&A"
+  },
+  "Footer": {
+    "feedbackLink": "한국 생활 이야기 보내기"
+  },
+  "Mailbox": {
+    "promptLines": [
+      "한국 생활에 관한 이야기를",
+      "익명으로 보내주세요"
+    ],
+    "expandLabel": "마치모아 우체통 안내 펼치기",
+    "collapseLabel": "마치모아 우체통 안내 접기",
+    "letterTitleLines": [
+      "한국 생활 이야기를",
+      "들려주세요"
+    ],
+    "letterDescriptionLines": [
+      "한국에서 지내며 불편했거나",
+      "알고 싶었던 점을 보내주세요."
+    ],
+    "cta": "이야기 보내기"
   },
   "Home": {
     "sectionTitle": "생활정보",
@@ -19,8 +39,6 @@
     "latestPublishedAt": "최종 공개일",
     "publishedAt": "공개일",
     "empty": "아직 공개된 생활정보가 없습니다.",
-    "feedbackCta": "한국 생활에서 어려웠던 점을 알려주세요",
-    "feedbackCtaHint": "로그인 없이 비공개로 보낼 수 있습니다. 바로 공개되지 않습니다.",
     "cardTag": "비자 / VISA",
     "cardTitle": "외국인 등록증 초스피드 발급 가이드라인",
     "cardBody": "출입국 사무소 방문 전 반드시 체크해야 할 필수 서류와 하이코리아 빠른 예약 꿀팁을 정리했습니다.",

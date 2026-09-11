@@ -12,7 +12,6 @@ export default function Header() {
   const items = [
     { id: "home", href: "/" },
     { id: "info", href: "/info" },
-    { id: "feedback", href: "/feedback" },
   ] as const;
 
   return (

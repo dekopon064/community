@@ -7,6 +7,7 @@ import { routing } from "@/i18n/routing";
 import { themeColors } from "@/app/lib/theme";
 import "@/app/globals.css";
 import Header from "@/app/components/Header";
+import SiteFooter from "@/app/components/SiteFooter";
 import BottomNav from "@/app/components/BottomNav";
 
 const geistSans = Geist({
@@ -92,7 +93,10 @@ export default async function LocaleLayout({
         <NextIntlClientProvider>
           <div className="relative flex min-h-screen w-full flex-col bg-canvas text-ink">
             <Header />
-            <main className="flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0">{children}</main>
+            <main className="flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0">
+              {children}
+              <SiteFooter />
+            </main>
             <BottomNav />
           </div>
         </NextIntlClientProvider>
