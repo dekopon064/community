@@ -12,6 +12,10 @@ import {
 import { submitFeedback, type FeedbackErrorCode } from "@/app/lib/feedback-client";
 import { FEEDBACK_PRIVACY_NOTICE_VERSION } from "@/app/lib/feedback-privacy";
 import type { CurationCategoryKey } from "@/app/lib/categories";
+import {
+  mailboxPaperFieldClass,
+  mailboxPaperFieldInvalidClass,
+} from "@/app/components/mailbox/mailboxPaper";
 import FeedbackPrivacyNotice from "@/app/components/feedback/FeedbackPrivacyNotice";
 import FeedbackSuccess from "@/app/components/feedback/FeedbackSuccess";
 import TurnstileField, {
@@ -47,7 +51,7 @@ function isTopic(value: string): value is CurationCategoryKey {
 const controlClass =
   "w-full min-h-11 rounded-xl border bg-canvas-white px-4 py-3 text-ink placeholder:text-ink-sub transition-colors focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-3 disabled:opacity-60";
 const textareaClass =
-  "w-full min-h-[13.5rem] rounded-xl border bg-canvas-white px-4 py-3 text-ink placeholder:text-ink-sub transition-colors focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-3 disabled:opacity-60 resize-none overflow-y-auto md:max-h-[28rem] md:resize-y";
+  "w-full min-h-[13.5rem] rounded-md border-0 bg-transparent px-0 py-2 text-ink placeholder:text-ink-sub focus:outline-none focus-visible:outline-none disabled:opacity-60 resize-none overflow-y-auto md:max-h-[28rem] md:resize-y";
 const validControlClass = "border-stone focus:border-ink focus-visible:outline-focus";
 const invalidControlClass = "border-coral focus:border-coral focus-visible:outline-coral";
 
@@ -386,18 +390,25 @@ export default function FeedbackForm({
         <p id={ids.bodyHelp} className="mt-2 text-sm leading-6 text-ink-sub">
           {t("bodyHelp")}
         </p>
-        <textarea
-          id={ids.body}
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
-          disabled={submitting}
-          rows={8}
-          aria-describedby={
-            bodyInvalid ? `${ids.bodyHelp} ${ids.bodyError}` : ids.bodyHelp
-          }
-          aria-invalid={bodyInvalid}
-          className={`${textareaClass} ${bodyInvalid ? invalidControlClass : validControlClass} mt-3`}
-        />
+        <div
+          data-invalid={bodyInvalid ? "true" : undefined}
+          className={`${mailboxPaperFieldClass} ${
+            bodyInvalid ? mailboxPaperFieldInvalidClass : ""
+          }`}
+        >
+          <textarea
+            id={ids.body}
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            disabled={submitting}
+            rows={8}
+            aria-describedby={
+              bodyInvalid ? `${ids.bodyHelp} ${ids.bodyError}` : ids.bodyHelp
+            }
+            aria-invalid={bodyInvalid}
+            className={textareaClass}
+          />
+        </div>
         {bodyInvalid && (
           <p id={ids.bodyError} className="mt-2 text-sm leading-6 text-coral">
             {t("errors.bodyLength")}

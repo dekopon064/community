@@ -45,3 +45,14 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media (forced-colors: active) {
+  .mailbox-paper:focus-within {
+    outline: 3px solid Highlight;
+    outline-offset: 3px;
+  }
+
+  .mailbox-paper[data-invalid="true"]:focus-within {
+    outline-color: Mark;
+  }
+}
