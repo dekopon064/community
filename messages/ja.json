@@ -252,8 +252,8 @@
     "turnstileFailed": "自動確認に失敗しました。もう一度お試しください。",
     "submit": "削除を依頼",
     "submitting": "依頼中",
-    "processedTitle": "削除依頼を処理しました。",
-    "processedBody": "受付コードが実際に存在したか、すでに無かったかは、この案内では区別しません。",
+    "processedTitle": "削除のリクエストを処理しました。",
+    "processedBody": "この画面は閉じてもかまいません。",
     "privacyLink": "個人情報処理方針",
     "errorTitle": "削除依頼を送れません。",
     "errors": {

@@ -253,7 +253,7 @@
     "submit": "삭제 요청",
     "submitting": "요청 중",
     "processedTitle": "삭제 요청을 처리했습니다.",
-    "processedBody": "접수 코드가 실제로 있었는지, 이미 없었는지는 이 안내에서 구분하지 않습니다.",
+    "processedBody": "이제 이 창을 닫아도 됩니다.",
     "privacyLink": "개인정보처리방침",
     "errorTitle": "삭제 요청을 보낼 수 없습니다.",
     "errors": {
