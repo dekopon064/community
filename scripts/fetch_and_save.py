@@ -916,6 +916,17 @@ def main() -> int:
     return 0
 
 
+def run_ingest_architecture(*args: Any, **kwargs: Any) -> int:
+    """승인된 공통 수집 아키텍처. workflow가 이 경로로 전환되기 전까지 main()은 레거시다.
+
+    실제 온통청년/Gemini/Supabase 호출은 호출자가 넘긴 의존성에만 위임한다.
+    """
+    from ingest.run import run_ingest_architecture as _run
+
+    result = _run(*args, **kwargs)
+    return int(getattr(result, "exit_code", result))
+
+
 if __name__ == "__main__":
     try:
         sys.exit(main())

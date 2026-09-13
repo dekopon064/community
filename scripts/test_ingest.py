@@ -1,0 +1,1453 @@
+"""ingest 단위·통합 테스트. 운영 API·Gemini·Supabase에 연결하지 않는다."""
+
+from __future__ import annotations
+
+import io
+import json
+import logging
+import pathlib
+import sys
+import time
+import traceback
+import unittest
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from typing import Any
+
+import requests
+
+from ingest.ai_worker import (
+    AI_SKIPPED_NOT_CONFIGURED,
+    WORKER_ID,
+    process_ai_jobs,
+)
+from ingest.attachments import (
+    contains_forbidden_attachment_key,
+    drop_forbidden_attachments,
+    extract_sanitized_source_items,
+)
+from ingest.connectors.youthcenter_content import (
+    CONTENT_PAGE_SIZE,
+    YouthcenterContentConnector,
+    content_job_and_flags,
+)
+from ingest.connectors.youthcenter_policy import (
+    POLICY_PAGE_SIZE,
+    YouthcenterPolicyConnector,
+)
+from ingest.constants import (
+    AI_MAX_ATTEMPTS,
+    DEFAULT_LEASE_SECONDS,
+    LEASE_SECONDS_MAX,
+    LEASE_SECONDS_MIN,
+)
+from ingest.dates import parse_source_datetime
+from ingest.http_client import (
+    HttpBudgetExhausted,
+    HttpClient,
+    HttpRequestFailed,
+    HttpStatusError,
+    PRODUCTION_SLEEP,
+    RETRYABLE_STATUSES,
+    ResponseTooLarge,
+)
+from ingest.models import BatchResult, Checkpoint, ObservationRecord
+from ingest.orchestrator import run_connector
+from ingest.region import classify_policy_disposition
+from ingest.run import build_youthcenter_connectors, run_ingest_architecture
+from ingest.sanitize import html_to_plain_text
+from ingest.source_identity import (
+    CANONICAL_CONTENT_SOURCE,
+    CANONICAL_POLICY_SOURCE,
+    LEGACY_POLICY_CURATION_SOURCE,
+    canonical_source_id,
+    curation_source_for_enqueue,
+)
+from ingest.store import LeaseLost, MemoryIngestStore
+
+FIXTURES = pathlib.Path(__file__).resolve().parent / "ingest" / "fixtures"
+HWASUN_PATH = FIXTURES / "hwasun_policy.json"
+CONTENT_PATH = FIXTURES / "content_with_tiny_attachment.json"
+ATCH_SNIPPET = "data:text/plain;base64,QUFBQQ=="
+ATCH_MARKER = "ATCHFILE_MARKER_x7kQ2n"
+HTTP_KEY_MARKER = "ingest-http-marker-K9q2Vx7LmN4p"
+NO_SLEEP = lambda _seconds: None
+
+
+class FakeStreamResponse:
+    def __init__(
+        self,
+        status_code: int = 200,
+        *,
+        headers: dict[str, str] | None = None,
+        chunks: list[bytes] | None = None,
+        json_payload: Any = None,
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers or {}
+        if chunks is None:
+            if json_payload is not None:
+                chunks = [json.dumps(json_payload).encode("utf-8")]
+            else:
+                chunks = []
+        self._chunks = list(chunks)
+        self.closed = False
+        self.chunk_reads = 0
+
+    def iter_content(self, chunk_size: int = 8192):
+        for chunk in self._chunks:
+            if self.closed:
+                break
+            self.chunk_reads += 1
+            yield chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+    def json(self) -> Any:
+        raise AssertionError("response.json() would buffer the body")
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, seconds: int) -> None:
+        self.now += timedelta(seconds=seconds)
+
+
+class FakeConnector:
+    canonical_source_id = CANONICAL_POLICY_SOURCE
+    provider = "youthcenter"
+    source_kind = "policy"
+    connector_type = "rest"
+    legacy_curation_source = LEGACY_POLICY_CURATION_SOURCE
+    start_mode = "fresh_from_origin"
+    page_size = 5
+    bootstrap_max_pages = 5
+    bootstrap_max_items = 25
+    max_pages = 10
+    http_budget = 30
+    streak_needed = 3
+    batch_delay_seconds = 1.0
+
+    def __init__(
+        self,
+        batches: list[BatchResult] | None = None,
+        fetch_error: Exception | None = None,
+        error_on: int = 0,
+        start_mode: str | None = None,
+        http_budget: int = 30,
+        max_pages: int = 10,
+        bootstrap_max_pages: int = 5,
+        source_id: str = CANONICAL_POLICY_SOURCE,
+    ) -> None:
+        self.batches = list(batches or [])
+        self.fetch_error = fetch_error
+        self.error_on = error_on
+        if start_mode is not None:
+            self.start_mode = start_mode  # type: ignore[assignment]
+        self.http_budget = http_budget
+        self.max_pages = max_pages
+        self.bootstrap_max_pages = bootstrap_max_pages
+        self.canonical_source_id = source_id
+        self.calls = 0
+        self.http = SimpleNamespace(request_count=0)
+
+    def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:
+        self.calls += 1
+        self.http.request_count += 1
+        if self.fetch_error is not None and self.calls >= self.error_on:
+            raise self.fetch_error
+        if not self.batches:
+            return BatchResult(items=(), next_checkpoint=None, natural_end=True)
+        return self.batches.pop(0)
+
+    def to_observation(
+        self,
+        item: dict[str, Any],
+        *,
+        permission_status: str,
+        enabled: bool,
+    ) -> ObservationRecord:
+        return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
+            item, permission_status=permission_status, enabled=enabled
+        )
+
+
+def policy_item(
+    plcy_no: str,
+    *,
+    zip_cd: str,
+    oper_cd: str,
+    group: str = "0054002",
+    updated: str = "2026-09-13 12:00:00",
+    created: str = "2026-09-01 12:00:00",
+    title: str = "테스트 정책",
+    **extra: Any,
+) -> dict[str, Any]:
+    item = {
+        "plcyNo": plcy_no,
+        "plcyNm": title,
+        "plcyExplnCn": "설명입니다. 본문이 충분히 있습니다.",
+        "plcySprtCn": "지원 내용입니다.",
+        "aplyUrlAddr": "https://example.go.kr/apply",
+        "zipCd": zip_cd,
+        "operInstCd": oper_cd,
+        "operInstNm": extra.pop("operInstNm", ""),
+        "pvsnInstGroupCd": group,
+        "frstRegDt": created,
+        "lastMdfcnDt": updated,
+        "inqCnt": "999",
+    }
+    item.update(extra)
+    return item
+
+
+def observation_for(item: dict[str, Any]) -> ObservationRecord:
+    return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
+        item, permission_status="testing_only", enabled=True
+    )
+
+
+def _ai_deps(**overrides: Any) -> dict[str, Any]:
+    deps: dict[str, Any] = {
+        "supabase": object(),
+        "summarize_ko": lambda text, url: (text, "success", "model"),
+        "translate_ja": lambda title, body: ("t", "b", "success", "model"),
+        "enqueue": lambda *_a, **_k: {"outcome": "inserted", "candidate_id": "x"},
+        "revision_precheck": lambda *_a, **_k: False,
+    }
+    deps.update(overrides)
+    return deps
+
+
+def _seed_ai_jobs(store: MemoryIngestStore, count: int) -> None:
+    started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+    records = [
+        observation_for(
+            policy_item(f"p{i}", zip_cd="11680", oper_cd="11680", title=f"정책{i}")
+        )
+        for i in range(count)
+    ]
+    store.upsert_source_observations(
+        CANONICAL_POLICY_SOURCE,
+        started.run_id,
+        records,
+        Checkpoint.for_rest_page(2),
+    )
+    return json.loads(HWASUN_PATH.read_text(encoding="utf-8"))
+
+
+def load_hwasun() -> dict[str, Any]:
+    return json.loads(HWASUN_PATH.read_text(encoding="utf-8"))
+
+
+def load_content() -> dict[str, Any]:
+    return json.loads(CONTENT_PATH.read_text(encoding="utf-8"))
+
+
+class SourceIdentityTests(unittest.TestCase):
+    def test_legacy_policy_maps_to_canonical_and_back(self) -> None:
+        self.assertEqual(canonical_source_id("youthcenter"), CANONICAL_POLICY_SOURCE)
+        self.assertEqual(
+            curation_source_for_enqueue(CANONICAL_POLICY_SOURCE),
+            LEGACY_POLICY_CURATION_SOURCE,
+        )
+        self.assertEqual(
+            curation_source_for_enqueue(CANONICAL_CONTENT_SOURCE),
+            "youthcenter_content",
+        )
+
+
+class RegionTests(unittest.TestCase):
+    def test_capital_operator_and_capital_eligible_is_target(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item("p1", zip_cd="11680", oper_cd="11680")
+            ),
+            "target",
+        )
+
+    def test_capital_operator_non_capital_only_is_review(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item("p1", zip_cd="50110", oper_cd="11680")
+            ),
+            "region_review_required",
+        )
+
+    def test_capital_operator_conflict_is_review(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item("p1", zip_cd="11680,50110", oper_cd="11680")
+            ),
+            "region_review_required",
+        )
+
+    def test_central_and_capital_eligible_is_target(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item(
+                    "p1", zip_cd="11680", oper_cd="", group="0054001"
+                )
+            ),
+            "target",
+        )
+
+    def test_non_capital_operator_and_only_is_non_target(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item("p1", zip_cd="50110", oper_cd="50110")
+            ),
+            "non_target",
+        )
+
+    def test_hwasun_fixture_is_region_review(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(load_hwasun()),
+            "region_review_required",
+        )
+
+    def test_legacy_003_code_does_not_force_target(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item(
+                    "p1",
+                    zip_cd="003002001",
+                    oper_cd="50110",
+                    operInstNm="서울특별시",
+                )
+            ),
+            "non_target",
+        )
+
+
+class DateParseTests(unittest.TestCase):
+    def test_created_and_updated_parse_independently(self) -> None:
+        ok = parse_source_datetime("2026-09-01 10:00:00")
+        bad = parse_source_datetime("not-a-date")
+        missing = parse_source_datetime(None)
+        self.assertEqual(ok.status, "ok")
+        self.assertEqual(bad.status, "unparsed")
+        self.assertEqual(bad.raw, "not-a-date")
+        self.assertIsNone(bad.value)
+        self.assertEqual(missing.status, "missing")
+
+
+class AttachmentAndSanitizeTests(unittest.TestCase):
+    def test_atchfile_dropped_and_meta_kept(self) -> None:
+        payload = load_content()
+        cleaned, meta = drop_forbidden_attachments(payload)
+        self.assertTrue(meta.present)
+        self.assertTrue(meta.is_data_url)
+        self.assertGreater(meta.length, 0)
+        self.assertNotIn("atchFile", cleaned)
+        blob = json.dumps(cleaned, ensure_ascii=False)
+        self.assertNotIn(ATCH_SNIPPET, blob)
+        self.assertNotIn("atchFile", blob)
+
+    def test_html_to_plain_text_strips_script(self) -> None:
+        text = html_to_plain_text(
+            "<p>안녕</p><script>alert(1)</script><iframe src='x'></iframe>"
+        )
+        self.assertIn("안녕", text)
+        self.assertNotIn("alert", text)
+        self.assertNotIn("<script", text)
+
+
+class ContentJobPlanTests(unittest.TestCase):
+    def test_positive_conditions_create_ai_job(self) -> None:
+        disposition, jobs = content_job_and_flags(
+            body_usable=True,
+            has_source_url=True,
+            attachment_present=False,
+            permission_ok=True,
+        )
+        self.assertEqual(disposition, "target")
+        self.assertEqual(jobs[0].stage, "ai_enrichment")
+
+    def test_each_missing_positive_condition_skips_ai(self) -> None:
+        cases = [
+            dict(body_usable=False, has_source_url=True, attachment_present=False, permission_ok=True),
+            dict(body_usable=True, has_source_url=False, attachment_present=False, permission_ok=True),
+            dict(body_usable=True, has_source_url=True, attachment_present=False, permission_ok=False),
+            dict(body_usable=False, has_source_url=True, attachment_present=True, permission_ok=True),
+        ]
+        for kwargs in cases:
+            with self.subTest(kwargs=kwargs):
+                _disposition, jobs = content_job_and_flags(**kwargs)
+                self.assertTrue(all(job.stage != "ai_enrichment" for job in jobs))
+                self.assertTrue(any(job.stage == "content_review" for job in jobs))
+
+
+class HttpClientTests(unittest.TestCase):
+    def test_default_sleeper_is_production_sleep(self) -> None:
+        self.assertIs(HttpClient(budget=1).sleep, PRODUCTION_SLEEP)
+        self.assertIs(PRODUCTION_SLEEP, time.sleep)
+
+    def test_budget_includes_retries_and_blocks_extra_calls(self) -> None:
+        calls: list[int] = []
+        sleeps: list[float] = []
+
+        def transport(*_args: Any, **_kwargs: Any) -> FakeStreamResponse:
+            calls.append(1)
+            if len(calls) < 3:
+                return FakeStreamResponse(500, chunks=[b"err"])
+            return FakeStreamResponse(200, json_payload={"ok": True})
+
+        client = HttpClient(budget=3, sleep=sleeps.append, transport=transport)
+        payload, status, _size = client.get_json("https://example.test/x")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, {"ok": True})
+        self.assertEqual(client.request_count, 3)
+        self.assertEqual(sleeps, [1.0, 2.0])
+        with self.assertRaises(HttpBudgetExhausted):
+            client.get_json("https://example.test/x")
+        self.assertEqual(len(calls), 3)
+
+    def test_retryable_statuses_stop_after_three_attempts(self) -> None:
+        for status in sorted(RETRYABLE_STATUSES):
+            with self.subTest(status=status):
+                calls = {"n": 0}
+
+                def transport(*_args: Any, **_kwargs: Any) -> FakeStreamResponse:
+                    calls["n"] += 1
+                    return FakeStreamResponse(status, chunks=[b"err"])
+
+                client = HttpClient(
+                    budget=10, sleep=NO_SLEEP, transport=transport, max_attempts=3
+                )
+                with self.assertRaises(HttpStatusError) as ctx:
+                    client.get_json("https://example.test/x")
+                self.assertEqual(ctx.exception.status, status)
+                self.assertEqual(calls["n"], 3)
+                self.assertEqual(client.request_count, 3)
+
+    def test_403_is_not_retried(self) -> None:
+        calls = {"n": 0}
+
+        def transport(*_args: Any, **_kwargs: Any) -> FakeStreamResponse:
+            calls["n"] += 1
+            return FakeStreamResponse(403, chunks=[b"secret"])
+
+        client = HttpClient(budget=10, sleep=NO_SLEEP, transport=transport)
+        with self.assertRaises(HttpStatusError):
+            client.get_json("https://example.test/x")
+        self.assertEqual(calls["n"], 1)
+
+    def test_oversized_content_length_does_not_read_chunks(self) -> None:
+        response = FakeStreamResponse(
+            200,
+            headers={"Content-Length": str(9_000_000)},
+            chunks=[ATCH_MARKER.encode("utf-8") * 10],
+        )
+        client = HttpClient(
+            budget=5,
+            max_response_bytes=8_000_000,
+            sleep=NO_SLEEP,
+            transport=lambda *_a, **_k: response,
+        )
+        with self.assertRaises(ResponseTooLarge) as ctx:
+            client.get_json("https://example.test/x")
+        self.assertEqual(response.chunk_reads, 0)
+        self.assertTrue(response.closed)
+        self.assertNotIn(ATCH_MARKER, str(ctx.exception))
+        self.assertEqual(client.request_count, 1)
+
+    def test_missing_content_length_stops_when_chunks_exceed_cap(self) -> None:
+        response = FakeStreamResponse(
+            200,
+            headers={},
+            chunks=[b"a" * 5_000_000, (ATCH_MARKER + "b" * 4_000_000).encode("utf-8")],
+        )
+        client = HttpClient(
+            budget=5,
+            max_response_bytes=8_000_000,
+            sleep=NO_SLEEP,
+            transport=lambda *_a, **_k: response,
+        )
+        with self.assertRaises(ResponseTooLarge) as ctx:
+            client.get_json("https://example.test/x")
+        self.assertEqual(response.chunk_reads, 2)
+        self.assertTrue(response.closed)
+        self.assertNotIn(ATCH_MARKER, str(ctx.exception))
+        self.assertNotIn(ATCH_MARKER, repr(ctx.exception))
+
+    def test_under_cap_parses_json(self) -> None:
+        client = HttpClient(
+            budget=5,
+            sleep=NO_SLEEP,
+            transport=lambda *_a, **_k: FakeStreamResponse(
+                200, json_payload={"result": {"ok": True}}
+            ),
+        )
+        payload, status, size = client.get_json("https://example.test/x")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["result"]["ok"], True)
+        self.assertGreater(size, 0)
+
+    def test_api_key_not_exposed_in_exception_traceback_or_logs(self) -> None:
+        leaky_url = f"https://example.test/x?apiKeyNm={HTTP_KEY_MARKER}"
+
+        def transport(*_args: Any, **_kwargs: Any) -> Any:
+            raise requests.Timeout(f"Read timed out. (url: {leaky_url})")
+
+        buf = io.StringIO()
+        handler = logging.StreamHandler(buf)
+        logger = logging.getLogger("ingest.http_client")
+        logger.addHandler(handler)
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout = buf
+        sys.stderr = buf
+        try:
+            client = HttpClient(budget=5, sleep=NO_SLEEP, transport=transport)
+            with self.assertRaises(HttpRequestFailed) as ctx:
+                client.get_json(leaky_url, params={"apiKeyNm": HTTP_KEY_MARKER})
+        finally:
+            sys.stdout = old_out
+            sys.stderr = old_err
+            logger.removeHandler(handler)
+        exc = ctx.exception
+        visible = "".join(
+            [
+                str(exc),
+                repr(exc),
+                "".join(traceback.format_exception(exc)),
+                buf.getvalue(),
+            ]
+        )
+        self.assertEqual(str(exc), "timeout")
+        self.assertIsNone(exc.__cause__)
+        self.assertIsNone(exc.__context__)
+        self.assertNotIn(HTTP_KEY_MARKER, visible)
+        self.assertNotIn("apiKeyNm=", str(exc))
+        self.assertNotIn("apiKeyNm=", repr(exc))
+
+
+class StoreLeaseTests(unittest.TestCase):
+    def test_stale_worker_cannot_advance_checkpoint_or_release_new_lease(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        first = store.start_ingest_run(CANONICAL_POLICY_SOURCE, lease_seconds=60)
+        clock.advance(120)
+        second = store.start_ingest_run(CANONICAL_POLICY_SOURCE, lease_seconds=60)
+        self.assertFalse(second.skipped)
+        record = observation_for(policy_item("p1", zip_cd="11680", oper_cd="11680"))
+        with self.assertRaises(LeaseLost):
+            store.upsert_source_observations(
+                CANONICAL_POLICY_SOURCE,
+                first.run_id,
+                [record],
+                Checkpoint.for_rest_page(2),
+            )
+        self.assertIsNone(store.sync[CANONICAL_POLICY_SOURCE].committed_checkpoint)
+        store.finish_ingest_run(
+            first.run_id,
+            status="complete",
+            stop_reason="streak_complete",
+            http_request_count=1,
+            bootstrap_complete=True,
+        )
+        sync = store.sync[CANONICAL_POLICY_SOURCE]
+        self.assertEqual(sync.lease_owner, second.run_id)
+        self.assertFalse(sync.bootstrap_complete)
+        self.assertEqual(store.runs[first.run_id].stop_reason, "lease_lost")
+
+    def test_batch_mid_failure_rolls_back_entire_batch(self) -> None:
+        store = MemoryIngestStore()
+        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+        good = observation_for(policy_item("p1", zip_cd="11680", oper_cd="11680"))
+        bad = observation_for(policy_item("p2", zip_cd="11680", oper_cd="11680"))
+        bad = ObservationRecord(**{**bad.__dict__, "external_key": ""})
+        with self.assertRaises(ValueError):
+            store.upsert_source_observations(
+                CANONICAL_POLICY_SOURCE,
+                started.run_id,
+                [good, bad],
+                Checkpoint.for_rest_page(2),
+            )
+        self.assertEqual(store.items, {})
+        self.assertIsNone(store.sync[CANONICAL_POLICY_SOURCE].committed_checkpoint)
+
+    def test_previous_batch_survives_later_failure(self) -> None:
+        store = MemoryIngestStore()
+        item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        connector = FakeConnector(
+            batches=[
+                BatchResult(
+                    items=(item,),
+                    next_checkpoint=Checkpoint.for_rest_page(2),
+                    natural_end=False,
+                )
+            ],
+            fetch_error=HttpStatusError(500),
+            error_on=2,
+        )
+        result = run_connector(connector, store, sleep=lambda _s: None)
+        self.assertEqual(result.status, "incomplete")
+        self.assertIn((CANONICAL_POLICY_SOURCE, "p1"), store.items)
+        self.assertIsNotNone(
+            store.sync[CANONICAL_POLICY_SOURCE].committed_checkpoint
+        )
+
+
+class JobClaimTests(unittest.TestCase):
+    def test_human_jobs_are_not_claimed_by_ai_worker(self) -> None:
+        store = MemoryIngestStore()
+        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+        hwasun = observation_for(load_hwasun())
+        store.upsert_source_observations(
+            CANONICAL_POLICY_SOURCE,
+            started.run_id,
+            [hwasun],
+            Checkpoint.for_rest_page(2),
+        )
+        stages = {job.processing_stage for job in store.jobs.values()}
+        self.assertEqual(stages, {"region_review"})
+        claimed = store.claim_processing_jobs(
+            "ai_enrichment", limit=10, worker_id=WORKER_ID
+        )
+        self.assertEqual(claimed, [])
+        self.assertEqual(store.jobs_for_stage("region_review")[0].status, "queued")
+
+    def test_ai_claim_cap_ten_keeps_backlog(self) -> None:
+        store = MemoryIngestStore()
+        _seed_ai_jobs(store, 12)
+        result = process_ai_jobs(store, limit=10, **_ai_deps())
+        self.assertEqual(result.status, "processed")
+        self.assertEqual(result.claimed, 10)
+        self.assertEqual(result.completed, 10)
+        queued = [
+            job
+            for job in store.jobs.values()
+            if job.processing_stage == "ai_enrichment" and job.status == "queued"
+        ]
+        self.assertEqual(len(queued), 2)
+
+
+class OrchestratorTests(unittest.TestCase):
+    def test_bootstrap_incomplete_does_not_set_complete_flag(self) -> None:
+        store = MemoryIngestStore()
+        item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        connector = FakeConnector(
+            batches=[
+                BatchResult(
+                    items=(item,),
+                    next_checkpoint=Checkpoint.for_rest_page(2),
+                    natural_end=False,
+                )
+            ],
+            fetch_error=HttpStatusError(500),
+            error_on=2,
+            bootstrap_max_pages=5,
+        )
+        result = run_connector(connector, store, sleep=lambda _s: None)
+        self.assertEqual(result.status, "incomplete")
+        self.assertFalse(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        self.assertIn((CANONICAL_POLICY_SOURCE, "p1"), store.items)
+
+    def test_ordering_anomaly_continues_to_max_pages(self) -> None:
+        store = MemoryIngestStore()
+        # seed bootstrap complete so this is a normal run using max_pages
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        batches = []
+        for page in range(1, 4):
+            batches.append(
+                BatchResult(
+                    items=(
+                        policy_item(
+                            f"p{page}",
+                            zip_cd="11680",
+                            oper_cd="11680",
+                            updated="2026-09-01 00:00:00"
+                            if page == 2
+                            else f"2026-09-{10 + page:02d} 00:00:00",
+                        ),
+                    ),
+                    next_checkpoint=Checkpoint.for_rest_page(page + 1),
+                    natural_end=False,
+                )
+            )
+        connector = FakeConnector(batches=batches, max_pages=3, bootstrap_max_pages=3)
+        result = run_connector(connector, store, sleep=lambda _s: None)
+        self.assertEqual(result.stop_reason, "ordering_anomaly")
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(result.batches_ok, 3)
+
+    def test_fresh_from_origin_ignores_committed_checkpoint(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].committed_checkpoint = {"page_num": 9}
+        seen: list[Checkpoint | None] = []
+
+        class Tracking(FakeConnector):
+            def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:
+                seen.append(checkpoint)
+                return super().fetch_batch(checkpoint)
+
+        connector = Tracking(
+            batches=[
+                BatchResult(items=(), next_checkpoint=None, natural_end=True),
+            ]
+        )
+        run_connector(connector, store, sleep=lambda _s: None)
+        self.assertEqual(seen[0], None)
+
+    def test_resume_committed_uses_saved_checkpoint(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].committed_checkpoint = {"page_num": 4}
+        seen: list[int | None] = []
+
+        class Resume(FakeConnector):
+            start_mode = "resume_committed"
+
+            def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:
+                seen.append(None if checkpoint is None else checkpoint.rest_page_num())
+                return BatchResult(items=(), next_checkpoint=None, natural_end=True)
+
+        run_connector(Resume(), store, sleep=lambda _s: None)
+        self.assertEqual(seen[0], 4)
+
+    def test_source_failures_are_isolated(self) -> None:
+        store = MemoryIngestStore()
+        bad = FakeConnector(fetch_error=HttpStatusError(403), error_on=1)
+        good_item = policy_item("ok1", zip_cd="11680", oper_cd="11680")
+        good = FakeConnector(
+            batches=[
+                BatchResult(items=(good_item,), next_checkpoint=None, natural_end=True)
+            ],
+            source_id=CANONICAL_POLICY_SOURCE,
+        )
+        # two sequential runs on same source would conflict; isolation is per call.
+        first = run_connector(bad, store, sleep=lambda _s: None)
+        second = run_connector(good, store, sleep=lambda _s: None)
+        self.assertEqual(first.status, "failed")
+        self.assertGreaterEqual(second.batches_ok, 1)
+
+    def test_http_budget_stop_keeps_prior_batch(self) -> None:
+        store = MemoryIngestStore()
+        item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        connector = FakeConnector(
+            batches=[
+                BatchResult(
+                    items=(item,),
+                    next_checkpoint=Checkpoint.for_rest_page(2),
+                    natural_end=False,
+                )
+            ],
+            http_budget=1,
+            max_pages=10,
+        )
+        connector.http.request_count = 0
+        result = run_connector(connector, store, sleep=lambda _s: None)
+        self.assertEqual(result.stop_reason, "http_budget_exhausted")
+        self.assertEqual(result.status, "incomplete")
+        self.assertIn((CANONICAL_POLICY_SOURCE, "p1"), store.items)
+
+
+class PolicyConnectorTests(unittest.TestCase):
+    def test_hwasun_creates_region_review_not_ai(self) -> None:
+        store = MemoryIngestStore()
+        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+        record = observation_for(load_hwasun())
+        store.upsert_source_observations(
+            CANONICAL_POLICY_SOURCE,
+            started.run_id,
+            [record],
+            Checkpoint.for_rest_page(2),
+        )
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertEqual(
+            {job.processing_stage for job in store.jobs.values()},
+            {"region_review"},
+        )
+
+    def test_non_target_has_no_normalized_payload_or_job(self) -> None:
+        record = observation_for(policy_item("p1", zip_cd="50110", oper_cd="50110"))
+        self.assertEqual(record.disposition, "non_target")
+        self.assertIsNone(record.normalized_payload)
+        self.assertEqual(record.jobs, ())
+
+    def test_revision_hash_ignores_view_count(self) -> None:
+        a = observation_for(policy_item("p1", zip_cd="11680", oper_cd="11680", inqCnt="1"))
+        b = observation_for(policy_item("p1", zip_cd="11680", oper_cd="11680", inqCnt="999"))
+        self.assertEqual(a.revision_hash, b.revision_hash)
+
+
+class ContentConnectorTests(unittest.TestCase):
+    def test_fixture_drops_atchfile_from_payload_and_hash_inputs(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        item = load_content()
+        record = connector.to_observation(
+            item, permission_status="testing_only", enabled=True
+        )
+        dumped = json.dumps(record.to_rpc_item(), ensure_ascii=False)
+        self.assertNotIn(ATCH_SNIPPET, dumped)
+        self.assertNotIn("atchFile", dumped)
+        self.assertTrue(record.attachment_present)
+        self.assertTrue(record.body_usable)
+        self.assertTrue(record.has_source_url)
+        self.assertEqual(record.jobs[0].stage, "ai_enrichment")
+
+    def test_missing_source_url_creates_content_review(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        item = load_content()
+        item["pstUrlAddr"] = None
+        item["pstCn"] = "<p>본문만 있고 링크는 없습니다. 충분한 텍스트입니다.</p>"
+        record = connector.to_observation(
+            item, permission_status="testing_only", enabled=True
+        )
+        self.assertFalse(record.has_source_url)
+        self.assertEqual(record.jobs[0].stage, "content_review")
+        self.assertIn("missing_source_url", record.jobs[0].reason_codes)
+
+
+class PublishGateTests(unittest.TestCase):
+    def test_testing_only_publish_is_rejected(self) -> None:
+        store = MemoryIngestStore()
+        with self.assertRaises(PermissionError):
+            store.publish_candidate(
+                candidate_source="youthcenter",
+                external_key="p1",
+                revision_hash="a" * 64,
+                candidate_id="cand-1",
+                slug="policy-p1",
+            )
+
+    def test_approved_publish_writes_event_before_lineage_lookup(self) -> None:
+        store = MemoryIngestStore()
+        store.sources[CANONICAL_POLICY_SOURCE].permission_status = (
+            "approved_noncommercial"
+        )
+        curation_id = store.publish_candidate(
+            candidate_source="youthcenter",
+            external_key="p1",
+            revision_hash="a" * 64,
+            candidate_id="cand-1",
+            slug="policy-p1",
+        )
+        self.assertEqual(store.publication_events[0]["event_kind"], "published")
+        self.assertEqual(store.publication_events[0]["source_id"], CANONICAL_POLICY_SOURCE)
+        self.assertEqual(store.publications[0].public_curation_id, curation_id)
+
+    def test_hard_delete_keeps_event_after_row_removed(self) -> None:
+        store = MemoryIngestStore()
+        store.sources[CANONICAL_POLICY_SOURCE].permission_status = (
+            "approved_noncommercial"
+        )
+        curation_id = store.publish_candidate(
+            candidate_source="youthcenter",
+            external_key="p1",
+            revision_hash="a" * 64,
+            candidate_id="cand-1",
+            slug="policy-p1",
+        )
+        store.hard_delete_published_curation(curation_id, actor="postgres")
+        kinds = [event["event_kind"] for event in store.publication_events]
+        self.assertEqual(kinds, ["published", "hard_deleted"])
+        self.assertNotIn(curation_id, store.public_curations)
+        self.assertIsNone(store.publications[0].public_curation_id)
+
+
+class AiWorkerEnqueueAliasTests(unittest.TestCase):
+    def test_policy_jobs_use_legacy_youthcenter_source(self) -> None:
+        store = MemoryIngestStore()
+        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+        record = observation_for(policy_item("p1", zip_cd="11680", oper_cd="11680"))
+        store.upsert_source_observations(
+            CANONICAL_POLICY_SOURCE,
+            started.run_id,
+            [record],
+            Checkpoint.for_rest_page(2),
+        )
+        captured: dict[str, Any] = {}
+
+        def enqueue(_supabase: Any, params: dict[str, Any]) -> dict[str, Any]:
+            captured.update(params)
+            return {"outcome": "inserted", "candidate_id": "x"}
+
+        process_ai_jobs(
+            store,
+            supabase=object(),
+            summarize_ko=lambda text, url: (text, "success", "model"),
+            translate_ja=lambda title, body: ("t", "b", "success", "model"),
+            enqueue=enqueue,
+            revision_precheck=lambda *_a, **_k: False,
+        )
+        self.assertEqual(captured["p_source"], LEGACY_POLICY_CURATION_SOURCE)
+        self.assertNotIn("atchFile", json.dumps(captured["p_raw_payload"]))
+
+
+class LogSafetyTests(unittest.TestCase):
+    def test_atchfile_snippet_not_logged_during_content_observation(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        buf = io.StringIO()
+        old = sys.stdout
+        sys.stdout = buf
+        try:
+            record = connector.to_observation(
+                load_content(), permission_status="testing_only", enabled=True
+            )
+            print("observed", record.external_key, record.disposition)
+        finally:
+            sys.stdout = old
+        text = buf.getvalue()
+        self.assertNotIn(ATCH_SNIPPET, text)
+        self.assertNotIn("atchFile", text)
+
+
+class AiDependencyAndRetryTests(unittest.TestCase):
+    def test_missing_dependencies_do_not_claim_or_complete(self) -> None:
+        store = MemoryIngestStore()
+        _seed_ai_jobs(store, 3)
+        queued_before = store.ai_job_counts()["queued"]
+        result = process_ai_jobs(store)
+        self.assertEqual(result.status, AI_SKIPPED_NOT_CONFIGURED)
+        self.assertEqual(result.claimed, 0)
+        self.assertEqual(result.completed, 0)
+        self.assertEqual(store.ai_job_counts()["queued"], queued_before)
+        self.assertEqual(store.ai_job_counts()["completed"], 0)
+
+    def test_summarize_without_enqueue_does_not_claim(self) -> None:
+        store = MemoryIngestStore()
+        _seed_ai_jobs(store, 2)
+        result = process_ai_jobs(
+            store,
+            supabase=object(),
+            summarize_ko=lambda text, url: (text, "success", "model"),
+        )
+        self.assertEqual(result.claimed, 0)
+        self.assertEqual(store.ai_job_counts()["queued"], 2)
+
+    def test_enqueue_without_summarize_does_not_claim(self) -> None:
+        store = MemoryIngestStore()
+        _seed_ai_jobs(store, 2)
+        result = process_ai_jobs(
+            store,
+            supabase=object(),
+            enqueue=lambda *_a, **_k: {"outcome": "inserted"},
+        )
+        self.assertEqual(result.claimed, 0)
+        self.assertEqual(store.ai_job_counts()["queued"], 2)
+
+    def test_processing_exception_retries_then_terminal_failed(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        _seed_ai_jobs(store, 1)
+        job_id = next(iter(store.jobs))
+
+        def boom(*_a: Any, **_k: Any) -> dict[str, Any]:
+            raise RuntimeError("enqueue_failed")
+
+        for attempt in range(1, AI_MAX_ATTEMPTS + 1):
+            if attempt > 1:
+                clock.advance(30)
+            result = process_ai_jobs(store, **_ai_deps(enqueue=boom))
+            job = store.jobs[job_id]
+            self.assertEqual(result.claimed, 1)
+            self.assertEqual(result.completed, 0)
+            self.assertEqual(job.retry_count, attempt)
+            if attempt < AI_MAX_ATTEMPTS:
+                self.assertEqual(job.status, "queued")
+                self.assertEqual(result.retried, 1)
+            else:
+                self.assertEqual(job.status, "failed")
+                self.assertEqual(result.failed, 1)
+
+        later = process_ai_jobs(store, **_ai_deps(enqueue=boom))
+        self.assertEqual(later.claimed, 0)
+        self.assertEqual(store.jobs[job_id].status, "failed")
+        counts = store.ai_job_counts()
+        self.assertEqual(counts["failed"], 1)
+        self.assertEqual(counts["queued"], 0)
+        self.assertEqual(counts["retry_waiting"], 0)
+
+    def test_success_completes_regardless_of_retry_count(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        _seed_ai_jobs(store, 1)
+        job_id = next(iter(store.jobs))
+
+        def boom(*_a: Any, **_k: Any) -> dict[str, Any]:
+            raise RuntimeError("enqueue_failed")
+
+        process_ai_jobs(store, **_ai_deps(enqueue=boom))
+        clock.advance(30)
+        result = process_ai_jobs(store, **_ai_deps())
+        self.assertEqual(result.completed, 1)
+        self.assertEqual(store.jobs[job_id].status, "completed")
+        self.assertEqual(store.jobs[job_id].retry_count, 1)
+
+    def test_run_ai_false_leaves_queue_unchanged(self) -> None:
+        store = MemoryIngestStore()
+        _seed_ai_jobs(store, 2)
+        connector = FakeConnector(
+            batches=[BatchResult(items=(), next_checkpoint=None, natural_end=True)]
+        )
+        result = run_ingest_architecture(
+            store=store,
+            connectors=[connector],
+            sleep=NO_SLEEP,
+            run_ai=False,
+        )
+        self.assertEqual(result.ai.status, "ai_disabled")
+        self.assertEqual(store.ai_job_counts()["queued"], 2)
+        self.assertEqual(store.ai_job_counts()["completed"], 0)
+
+    def test_run_ai_true_without_deps_keeps_collection_and_queue(self) -> None:
+        store = MemoryIngestStore()
+        item = policy_item("keep1", zip_cd="11680", oper_cd="11680")
+        connector = FakeConnector(
+            batches=[
+                BatchResult(items=(item,), next_checkpoint=None, natural_end=True)
+            ]
+        )
+        result = run_ingest_architecture(
+            store=store,
+            connectors=[connector],
+            sleep=NO_SLEEP,
+            run_ai=True,
+        )
+        self.assertEqual(result.ai.status, AI_SKIPPED_NOT_CONFIGURED)
+        self.assertIn((CANONICAL_POLICY_SOURCE, "keep1"), store.items)
+        self.assertEqual(store.ai_job_counts()["queued"], 1)
+        self.assertEqual(store.ai_job_counts()["completed"], 0)
+
+    def test_latest_revision_skip_completes_without_enqueue(self) -> None:
+        store = MemoryIngestStore()
+        _seed_ai_jobs(store, 1)
+        called = {"enqueue": 0}
+
+        def enqueue(*_a: Any, **_k: Any) -> dict[str, Any]:
+            called["enqueue"] += 1
+            return {"outcome": "skipped"}
+
+        result = process_ai_jobs(
+            store,
+            **_ai_deps(enqueue=enqueue, revision_precheck=lambda *_a, **_k: True),
+        )
+        self.assertEqual(result.completed, 1)
+        self.assertEqual(called["enqueue"], 0)
+
+
+class StreakAndPageBoundTests(unittest.TestCase):
+    def test_unchanged_streak_three_completes(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        batches = [
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(page + 1),
+                natural_end=False,
+            )
+            for page in range(1, 5)
+        ]
+        result = run_connector(
+            FakeConnector(batches=batches, max_pages=10),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.stop_reason, "streak_complete")
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.batches_ok, 4)
+
+    def test_streak_crosses_batch_boundary(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        batches = [
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(2),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(3),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(4),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(5),
+                natural_end=False,
+            ),
+        ]
+        result = run_connector(FakeConnector(batches=batches), store, sleep=NO_SLEEP)
+        self.assertEqual(result.stop_reason, "streak_complete")
+        self.assertEqual(result.batches_ok, 4)
+
+    def test_new_or_changed_resets_streak(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        first = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        changed = policy_item(
+            "p1", zip_cd="11680", oper_cd="11680", title="바뀐 제목"
+        )
+        other = policy_item("p2", zip_cd="11680", oper_cd="11680")
+        batches = [
+            BatchResult(
+                items=(first,),
+                next_checkpoint=Checkpoint.for_rest_page(2),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(first,),
+                next_checkpoint=Checkpoint.for_rest_page(3),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(first,),
+                next_checkpoint=Checkpoint.for_rest_page(4),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(changed,),
+                next_checkpoint=Checkpoint.for_rest_page(5),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(other,),
+                next_checkpoint=None,
+                natural_end=True,
+            ),
+        ]
+        result = run_connector(FakeConnector(batches=batches), store, sleep=NO_SLEEP)
+        self.assertNotEqual(result.stop_reason, "streak_complete")
+        self.assertEqual(store.items[(CANONICAL_POLICY_SOURCE, "p1")].revision_hash,
+                         observation_for(changed).revision_hash)
+
+    def test_in_batch_duplicate_is_excluded_from_streak(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        batches = [
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(2),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(3),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(4),
+                natural_end=False,
+            ),
+            BatchResult(
+                items=(item, dict(item)),
+                next_checkpoint=Checkpoint.for_rest_page(5),
+                natural_end=False,
+            ),
+        ]
+        result = run_connector(FakeConnector(batches=batches), store, sleep=NO_SLEEP)
+        self.assertEqual(result.stop_reason, "streak_complete")
+        self.assertEqual(result.batches_ok, 4)
+
+    def test_max_pages_is_incomplete(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        batches = [
+            BatchResult(
+                items=(
+                    policy_item(f"p{page}", zip_cd="11680", oper_cd="11680"),
+                ),
+                next_checkpoint=Checkpoint.for_rest_page(page + 1),
+                natural_end=False,
+            )
+            for page in range(1, 4)
+        ]
+        result = run_connector(
+            FakeConnector(batches=batches, max_pages=3),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(result.stop_reason, "max_pages")
+        self.assertEqual(result.batches_ok, 3)
+
+
+class ConnectorRequestAndAttachmentTests(unittest.TestCase):
+    def test_content_request_uses_page_size_two_without_pstsecd(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def transport(url: str, **kwargs: Any) -> FakeStreamResponse:
+            captured["url"] = url
+            captured["params"] = dict(kwargs.get("params") or {})
+            return FakeStreamResponse(
+                200, json_payload={"result": {"youthPolicyList": []}}
+            )
+
+        http = HttpClient(budget=15, sleep=NO_SLEEP, transport=transport)
+        connector = YouthcenterContentConnector(
+            http=http, api_key_provider=lambda: "unused-key"
+        )
+        batch = connector.fetch_batch(None)
+        self.assertEqual(captured["params"]["pageSize"], CONTENT_PAGE_SIZE)
+        self.assertEqual(captured["params"]["pageSize"], 2)
+        self.assertNotIn("pstSeCd", captured["params"])
+        self.assertEqual(batch.items, ())
+
+    def test_policy_request_uses_page_size_five(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def transport(_url: str, **kwargs: Any) -> FakeStreamResponse:
+            captured["params"] = dict(kwargs.get("params") or {})
+            return FakeStreamResponse(
+                200, json_payload={"result": {"youthPolicyList": []}}
+            )
+
+        http = HttpClient(budget=30, sleep=NO_SLEEP, transport=transport)
+        connector = YouthcenterPolicyConnector(
+            http=http, api_key_provider=lambda: "unused-key"
+        )
+        connector.fetch_batch(None)
+        self.assertEqual(captured["params"]["pageSize"], POLICY_PAGE_SIZE)
+
+    def test_fetch_batch_drops_atchfile_immediately_without_mutating_input(self) -> None:
+        original = load_content()
+        original["atchFile"] = ATCH_MARKER
+        original["nested"] = {"atchFile": ATCH_MARKER}
+        payload_items = [original]
+
+        def transport(*_a: Any, **_k: Any) -> FakeStreamResponse:
+            return FakeStreamResponse(
+                200,
+                json_payload={"result": {"youthPolicyList": payload_items}},
+            )
+
+        http = HttpClient(budget=15, sleep=NO_SLEEP, transport=transport)
+        connector = YouthcenterContentConnector(
+            http=http, api_key_provider=lambda: "unused-key"
+        )
+        batch = connector.fetch_batch(None)
+        self.assertEqual(len(batch.items), 1)
+        self.assertNotIn("atchFile", batch.items[0])
+        self.assertFalse(contains_forbidden_attachment_key(batch.items[0]))
+        dumped = json.dumps(batch.items[0], ensure_ascii=False)
+        self.assertNotIn(ATCH_MARKER, dumped)
+        self.assertTrue(batch.items[0]["attachment_present"])
+        self.assertIn("atchFile", original)
+        self.assertEqual(original["atchFile"], ATCH_MARKER)
+        self.assertEqual(original["nested"]["atchFile"], ATCH_MARKER)
+
+        record = connector.to_observation(
+            batch.items[0], permission_status="testing_only", enabled=True
+        )
+        rpc = json.dumps(record.to_rpc_item(), ensure_ascii=False)
+        self.assertNotIn(ATCH_MARKER, rpc)
+        self.assertNotIn("atchFile", rpc)
+        self.assertTrue(record.attachment_present)
+
+    def test_policy_fetch_batch_strips_nested_atchfile(self) -> None:
+        original = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        original["atchFile"] = ATCH_MARKER
+        original["extra"] = {"atch_file": ATCH_MARKER}
+
+        def transport(*_a: Any, **_k: Any) -> FakeStreamResponse:
+            return FakeStreamResponse(
+                200,
+                json_payload={"result": {"youthPolicyList": [original]}},
+            )
+
+        http = HttpClient(budget=30, sleep=NO_SLEEP, transport=transport)
+        connector = YouthcenterPolicyConnector(
+            http=http, api_key_provider=lambda: "unused-key"
+        )
+        batch = connector.fetch_batch(None)
+        self.assertNotIn("atchFile", batch.items[0])
+        self.assertFalse(contains_forbidden_attachment_key(batch.items[0]))
+        self.assertEqual(original["atchFile"], ATCH_MARKER)
+
+    def test_sanitize_copies_do_not_share_input_dicts(self) -> None:
+        item = {"pstSn": "1", "atchFile": ATCH_MARKER}
+        copies = extract_sanitized_source_items([item, item])
+        copies[0]["pstSn"] = "changed"
+        self.assertEqual(item["pstSn"], "1")
+        self.assertEqual(copies[1]["pstSn"], "1")
+        self.assertIn("atchFile", item)
+
+
+class LeaseAndPermissionTests(unittest.TestCase):
+    def test_default_lease_ttl_is_120(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+        sync = store.sync[CANONICAL_POLICY_SOURCE]
+        self.assertEqual(store.runs[started.run_id].lease_seconds, DEFAULT_LEASE_SECONDS)
+        self.assertEqual(
+            sync.lease_expires_at,
+            clock.now + timedelta(seconds=DEFAULT_LEASE_SECONDS),
+        )
+
+    def test_custom_ttl_is_reused_on_batch_renew(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE, lease_seconds=180)
+        clock.advance(10)
+        record = observation_for(policy_item("p1", zip_cd="11680", oper_cd="11680"))
+        store.upsert_source_observations(
+            CANONICAL_POLICY_SOURCE,
+            started.run_id,
+            [record],
+            Checkpoint.for_rest_page(2),
+        )
+        sync = store.sync[CANONICAL_POLICY_SOURCE]
+        self.assertEqual(store.runs[started.run_id].lease_seconds, 180)
+        self.assertEqual(sync.lease_expires_at, clock.now + timedelta(seconds=180))
+
+    def test_out_of_range_ttl_is_rejected(self) -> None:
+        store = MemoryIngestStore()
+        with self.assertRaises(ValueError):
+            store.start_ingest_run(
+                CANONICAL_POLICY_SOURCE, lease_seconds=LEASE_SECONDS_MIN - 1
+            )
+        with self.assertRaises(ValueError):
+            store.start_ingest_run(
+                CANONICAL_POLICY_SOURCE, lease_seconds=LEASE_SECONDS_MAX + 1
+            )
+
+    def test_other_run_cannot_change_ttl(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        first = store.start_ingest_run(CANONICAL_POLICY_SOURCE, lease_seconds=60)
+        clock.advance(120)
+        second = store.start_ingest_run(CANONICAL_POLICY_SOURCE, lease_seconds=240)
+        record = observation_for(policy_item("p1", zip_cd="11680", oper_cd="11680"))
+        with self.assertRaises(LeaseLost):
+            store.upsert_source_observations(
+                CANONICAL_POLICY_SOURCE,
+                first.run_id,
+                [record],
+                Checkpoint.for_rest_page(2),
+            )
+        self.assertEqual(store.runs[second.run_id].lease_seconds, 240)
+        self.assertEqual(store.sync[CANONICAL_POLICY_SOURCE].lease_seconds, 240)
+
+    def test_permission_change_is_atomic_with_event(self) -> None:
+        store = MemoryIngestStore()
+        store.set_source_permission(
+            CANONICAL_POLICY_SOURCE,
+            "approved_noncommercial",
+            reason="review passed",
+            evidence_note="note",
+            actor="postgres",
+        )
+        self.assertEqual(
+            store.sources[CANONICAL_POLICY_SOURCE].permission_status,
+            "approved_noncommercial",
+        )
+        self.assertEqual(len(store.permission_events), 1)
+        self.assertEqual(store.permission_events[0]["from_status"], "testing_only")
+
+        store._fail_permission_event = True
+        with self.assertRaises(RuntimeError):
+            store.set_source_permission(
+                CANONICAL_POLICY_SOURCE,
+                "commercial_review_required",
+                reason="next step",
+                evidence_note=None,
+                actor="postgres",
+            )
+        self.assertEqual(
+            store.sources[CANONICAL_POLICY_SOURCE].permission_status,
+            "approved_noncommercial",
+        )
+        self.assertEqual(len(store.permission_events), 1)
+
+        store._fail_permission_event = False
+        with self.assertRaises(ValueError):
+            store.set_source_permission(
+                CANONICAL_POLICY_SOURCE,
+                "approved_commercial",
+                reason="skip",
+                evidence_note=None,
+                actor="postgres",
+            )
+        self.assertEqual(
+            store.sources[CANONICAL_POLICY_SOURCE].permission_status,
+            "approved_noncommercial",
+        )
+        self.assertEqual(
+            store.sources[CANONICAL_CONTENT_SOURCE].permission_status,
+            "testing_only",
+        )
+
+
+class PublicationSnapshotTests(unittest.TestCase):
+    def test_republish_upserts_snapshot_and_appends_event(self) -> None:
+        store = MemoryIngestStore()
+        store.sources[CANONICAL_POLICY_SOURCE].permission_status = (
+            "approved_noncommercial"
+        )
+        first = store.publish_candidate(
+            candidate_source="youthcenter",
+            external_key="p1",
+            revision_hash="a" * 64,
+            candidate_id="cand-1",
+            slug="policy-p1",
+        )
+        second = store.publish_candidate(
+            candidate_source="youthcenter",
+            external_key="p1",
+            revision_hash="b" * 64,
+            candidate_id="cand-2",
+            slug="policy-p1-v2",
+        )
+        self.assertEqual(len(store.publications), 1)
+        self.assertEqual(len(store.publication_events), 2)
+        snap = store.publications[0]
+        self.assertEqual(snap.source_id, CANONICAL_POLICY_SOURCE)
+        self.assertEqual(snap.revision_hash, "b" * 64)
+        self.assertEqual(snap.public_curation_id, second)
+        self.assertNotEqual(first, second)
+
+        store.publish_candidate(
+            candidate_source="youthcenter",
+            external_key="p2",
+            revision_hash="c" * 64,
+            candidate_id="cand-3",
+            slug="policy-p2",
+        )
+        self.assertEqual(len(store.publications), 2)
+
+    def test_deleting_candidate_or_curation_keeps_snapshot(self) -> None:
+        store = MemoryIngestStore()
+        store.sources[CANONICAL_POLICY_SOURCE].permission_status = (
+            "approved_noncommercial"
+        )
+        curation_id = store.publish_candidate(
+            candidate_source="youthcenter",
+            external_key="p1",
+            revision_hash="a" * 64,
+            candidate_id="cand-1",
+            slug="policy-p1",
+        )
+        store.delete_candidate("cand-1")
+        store.delete_public_curation(curation_id)
+        self.assertEqual(len(store.publications), 1)
+        self.assertIsNone(store.publications[0].candidate_id)
+        self.assertIsNone(store.publications[0].public_curation_id)
+        self.assertEqual(len(store.publication_events), 1)
+
+
+class DefaultConnectorSleeperTests(unittest.TestCase):
+    def test_default_connectors_hold_production_sleeper(self) -> None:
+        policy, content = build_youthcenter_connectors(api_key_provider=lambda: "x")
+        self.assertIs(policy.http.sleep, PRODUCTION_SLEEP)
+        self.assertIs(content.http.sleep, PRODUCTION_SLEEP)
+
+
+if __name__ == "__main__":
+    unittest.main()
