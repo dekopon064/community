@@ -20,7 +20,6 @@ from ingest.constants import (
 )
 from ingest.models import (
     AI_STAGE,
-    HUMAN_REVIEW_STAGES,
     Checkpoint,
     ClaimedJob,
     FinishRunResult,
@@ -455,22 +454,17 @@ class MemoryIngestStore:
         return claimed
 
     def complete_processing_job(self, job_id: str, *, worker_id: str) -> None:
-        job = self.jobs[job_id]
-        if job.processing_stage in HUMAN_REVIEW_STAGES:
-            raise ValueError("human_job_not_completable_by_ai")
-        if job.claimed_by != worker_id:
-            raise LeaseLost()
+        job = self._require_claimed_ai_job(job_id, worker_id)
         job.status = "completed"
         job.completed_at = self._clock()
+        job.claimed_by = None
+        job.claim_lease_until = None
+        job.next_retry_at = None
 
     def fail_processing_job(
         self, job_id: str, *, worker_id: str, error_code: str
     ) -> str:
-        job = self.jobs[job_id]
-        if job.processing_stage in HUMAN_REVIEW_STAGES:
-            raise ValueError("human_job_not_completable_by_ai")
-        if job.claimed_by != worker_id:
-            raise LeaseLost()
+        job = self._require_claimed_ai_job(job_id, worker_id)
         job.retry_count += 1
         job.error_code = error_code[:64]
         job.claimed_by = None
@@ -639,6 +633,21 @@ class MemoryIngestStore:
 
     def jobs_for_stage(self, stage: str) -> list[_Job]:
         return [job for job in self.jobs.values() if job.processing_stage == stage]
+
+    def _require_claimed_ai_job(self, job_id: str, worker_id: str) -> _Job:
+        now = self._clock()
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise ValueError("job not found")
+        if job.processing_stage != AI_STAGE:
+            raise ValueError("human_job_not_completable_by_ai")
+        if job.status != "claimed":
+            raise ValueError("unexpected_job_status")
+        if job.claimed_by != worker_id:
+            raise LeaseLost()
+        if job.claim_lease_until is None or job.claim_lease_until <= now:
+            raise LeaseLost()
+        return job
 
     def _require_active_lease(self, source_id: str, run_id: str, now: datetime) -> None:
         sync = self.sync[source_id]

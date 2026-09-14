@@ -964,10 +964,14 @@ set search_path = ''
 as $function$
 declare
   v_stage pg_catalog.text;
+  v_status pg_catalog.text;
   v_claimed_by pg_catalog.text;
+  v_lease_until pg_catalog.timestamptz;
+  v_worker pg_catalog.text := pg_catalog.btrim(coalesce(p_worker_id, ''));
+  v_now pg_catalog.timestamptz := pg_catalog.now();
 begin
-  select j.processing_stage, j.claimed_by
-    into v_stage, v_claimed_by
+  select j.processing_stage, j.status, j.claimed_by, j.claim_lease_until
+    into v_stage, v_status, v_claimed_by, v_lease_until
   from machimoa_review.processing_jobs as j
   where j.id = p_job_id
   for update;
@@ -977,12 +981,31 @@ begin
   if v_stage is distinct from 'ai_enrichment' then
     raise exception 'human_job_not_completable_by_ai';
   end if;
-  if v_claimed_by is distinct from pg_catalog.btrim(p_worker_id) then
+  if v_status is distinct from 'claimed' then
+    raise exception 'unexpected_job_status';
+  end if;
+  if v_claimed_by is distinct from v_worker then
     raise exception 'lease_lost';
   end if;
+  if v_lease_until is null or v_lease_until <= v_now then
+    raise exception 'lease_lost';
+  end if;
+
   update machimoa_review.processing_jobs
-  set status = 'completed', completed_at = pg_catalog.now()
-  where id = p_job_id;
+  set
+    status = 'completed',
+    completed_at = v_now,
+    claimed_by = null,
+    claim_lease_until = null,
+    next_retry_at = null
+  where id = p_job_id
+    and status = 'claimed'
+    and claimed_by is not distinct from v_worker
+    and claim_lease_until is not null
+    and claim_lease_until > v_now;
+  if not found then
+    raise exception 'lease_lost';
+  end if;
 end
 $function$;
 
@@ -998,22 +1021,36 @@ set search_path = ''
 as $function$
 declare
   v_stage pg_catalog.text;
+  v_status pg_catalog.text;
   v_claimed_by pg_catalog.text;
+  v_lease_until pg_catalog.timestamptz;
+  v_worker pg_catalog.text := pg_catalog.btrim(coalesce(p_worker_id, ''));
+  v_now pg_catalog.timestamptz := pg_catalog.now();
   v_code pg_catalog.text := pg_catalog.left(pg_catalog.btrim(coalesce(p_error_code, 'error')), 64);
   -- Keep in sync with scripts/ingest/constants.py AI_MAX_ATTEMPTS.
   v_ai_max_attempts pg_catalog.int4 := 3;
 begin
-  select j.processing_stage, j.claimed_by
-    into v_stage, v_claimed_by
+  select j.processing_stage, j.status, j.claimed_by, j.claim_lease_until
+    into v_stage, v_status, v_claimed_by, v_lease_until
   from machimoa_review.processing_jobs as j
   where j.id = p_job_id
   for update;
+  if not found then
+    raise exception 'job not found';
+  end if;
   if v_stage is distinct from 'ai_enrichment' then
     raise exception 'human_job_not_completable_by_ai';
   end if;
-  if v_claimed_by is distinct from pg_catalog.btrim(p_worker_id) then
+  if v_status is distinct from 'claimed' then
+    raise exception 'unexpected_job_status';
+  end if;
+  if v_claimed_by is distinct from v_worker then
     raise exception 'lease_lost';
   end if;
+  if v_lease_until is null or v_lease_until <= v_now then
+    raise exception 'lease_lost';
+  end if;
+
   update machimoa_review.processing_jobs
   set
     error_code = v_code,
@@ -1026,9 +1063,16 @@ begin
     end,
     next_retry_at = case
       when retry_count + 1 >= v_ai_max_attempts then null
-      else pg_catalog.now() + interval '30 seconds'
+      else v_now + interval '30 seconds'
     end
-  where id = p_job_id;
+  where id = p_job_id
+    and status = 'claimed'
+    and claimed_by is not distinct from v_worker
+    and claim_lease_until is not null
+    and claim_lease_until > v_now;
+  if not found then
+    raise exception 'lease_lost';
+  end if;
 end
 $function$;
 

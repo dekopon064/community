@@ -151,6 +151,105 @@ class IngestSqlContractTests(unittest.TestCase):
         self.assertIn("j.status = 'claimed'", claim)
         self.assertNotIn("j.status = 'failed'", claim)
 
+    def _private_sql(self, name: str, nxt: str) -> str:
+        chunk = self.obs.split(f"create function machimoa_review.{name}")[1]
+        return chunk.split(f"create function machimoa_review.{nxt}")[0]
+
+    def _private_header_and_body(self, name: str, nxt: str) -> tuple[str, str]:
+        chunk = self._private_sql(name, nxt)
+        header, rest = chunk.split("as $function$", 1)
+        body = rest.split("$function$", 1)[0]
+        return header, body
+
+    def _assert_claimed_guarded_update(self, body: str) -> str:
+        lowered = body.lower()
+        self.assertEqual(lowered.count("update machimoa_review.processing_jobs"), 1)
+        update = lowered.split("update machimoa_review.processing_jobs", 1)[1]
+        where = update.split("where", 1)[1]
+        self.assertIn("status = 'claimed'", where)
+        self.assertIn("claimed_by is not distinct from", where)
+        self.assertIn("claim_lease_until is not null", where)
+        self.assertIn("claim_lease_until >", where)
+        self.assertNotRegex(
+            update,
+            r"where\s+id\s*=\s*p_job_id\s*;",
+        )
+        return update
+
+    def test_complete_requires_claimed_owner_and_live_lease(self) -> None:
+        header, body = self._private_header_and_body(
+            "complete_processing_job", "fail_processing_job"
+        )
+        self.assertIn("p_job_id pg_catalog.uuid", header)
+        self.assertIn("p_worker_id pg_catalog.text", header)
+        self.assertIn("returns pg_catalog.void", header)
+        self.assertIn("security definer", header)
+        self.assertIn("set search_path = ''", header)
+        self.assertIn("for update", body.lower())
+        self.assertIn("raise exception 'job not found'", body)
+        self.assertIn("raise exception 'human_job_not_completable_by_ai'", body)
+        self.assertIn("v_status is distinct from 'claimed'", body)
+        self.assertIn("raise exception 'unexpected_job_status'", body)
+        self.assertIn("raise exception 'lease_lost'", body)
+        self.assertIn("v_claimed_by is distinct from v_worker", body)
+        self.assertIn("v_lease_until is null or v_lease_until <= v_now", body)
+        update = self._assert_claimed_guarded_update(body)
+        self.assertIn("status = 'completed'", update)
+        self.assertIn("claimed_by = null", update)
+        self.assertIn("claim_lease_until = null", update)
+        self.assertIn("next_retry_at = null", update)
+        self.assertNotIn("retry_count = retry_count + 1", body)
+        self.assertLess(body.find("for update"), body.lower().find("update machimoa_review.processing_jobs"))
+        self.assertLess(
+            body.find("v_status is distinct from 'claimed'"),
+            body.lower().find("update machimoa_review.processing_jobs"),
+        )
+
+    def test_fail_requires_claimed_owner_live_lease_and_single_retry(self) -> None:
+        header, body = self._private_header_and_body(
+            "fail_processing_job", "set_source_permission"
+        )
+        self.assertIn("p_job_id pg_catalog.uuid", header)
+        self.assertIn("p_worker_id pg_catalog.text", header)
+        self.assertIn("p_error_code pg_catalog.text", header)
+        self.assertIn("returns pg_catalog.void", header)
+        self.assertIn("security definer", header)
+        self.assertIn("set search_path = ''", header)
+        self.assertIn("for update", body.lower())
+        self.assertIn("raise exception 'job not found'", body)
+        self.assertIn("raise exception 'human_job_not_completable_by_ai'", body)
+        self.assertIn("v_status is distinct from 'claimed'", body)
+        self.assertIn("raise exception 'unexpected_job_status'", body)
+        self.assertIn("v_claimed_by is distinct from v_worker", body)
+        self.assertIn("v_lease_until is null or v_lease_until <= v_now", body)
+        self.assertIn("raise exception 'lease_lost'", body)
+        update = self._assert_claimed_guarded_update(body)
+        self.assertEqual(body.count("retry_count = retry_count + 1"), 1)
+        self.assertIn("when retry_count + 1 >= v_ai_max_attempts then 'failed'", update)
+        self.assertIn("else 'queued'", update)
+        self.assertIn("claimed_by = null", update)
+        self.assertIn("claim_lease_until = null", update)
+        self.assertLess(
+            body.find("v_status is distinct from 'claimed'"),
+            body.lower().find("update machimoa_review.processing_jobs"),
+        )
+
+    def test_complete_and_fail_keep_owner_acl(self) -> None:
+        for name in ("complete_processing_job", "fail_processing_job"):
+            self.assertIn(
+                f"alter function machimoa_review.{name}",
+                self.obs,
+            )
+            self.assertIn("owner to postgres", self.obs)
+            self.assertIn(
+                f"revoke all privileges on function machimoa_review.{name}",
+                self.obs,
+            )
+            self.assertIn(
+                f"grant execute on function machimoa_review.{name}",
+                self.obs,
+            )
+
     def test_publication_unique_and_upsert(self) -> None:
         pubs = self.obs.split("create table machimoa_review.source_publications")[1]
         pubs = pubs.split("create table machimoa_review.source_publication_events")[0]
@@ -351,6 +450,7 @@ class IngestPublicRpcAdapterContractTests(unittest.TestCase):
         self.assertIn("is distinct from 'completed'", complete)
         self.assertIn("return 'completed'", complete)
         self.assertIn("for update", complete.lower())
+        self.assertNotIn("exception when", complete.lower())
 
     def test_finish_and_fail_wrapper_return_contracts(self) -> None:
         finish = self._public_fn("finish_ingest_run", "claim_processing_jobs")
@@ -364,6 +464,8 @@ class IngestPublicRpcAdapterContractTests(unittest.TestCase):
         self.assertIn("job not found", fail)
         self.assertIn("perform machimoa_review.fail_processing_job", fail)
         self.assertIn("'queued', 'failed'", fail)
+        self.assertNotIn("exception when", fail.lower())
+        self.assertNotIn("return 'completed'", fail)
 
     def test_get_ingest_source_wrapper(self) -> None:
         get_source = self._public_fn("get_ingest_source", "start_ingest_run")

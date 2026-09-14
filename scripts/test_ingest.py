@@ -1133,6 +1133,119 @@ class AiDependencyAndRetryTests(unittest.TestCase):
         self.assertEqual(called["enqueue"], 0)
 
 
+class ProcessingJobTerminalStateTests(unittest.TestCase):
+    def _claim_one(self, store: MemoryIngestStore, worker_id: str = "gate5-worker"):
+        claimed = store.claim_processing_jobs(
+            "ai_enrichment", worker_id=worker_id, lease_seconds=300
+        )
+        self.assertEqual(len(claimed), 1)
+        return claimed[0]
+
+    def test_complete_clears_claim_and_rejects_follow_up_fail(self) -> None:
+        store = MemoryIngestStore()
+        _seed_ai_jobs(store, 1)
+        claimed = self._claim_one(store)
+        store.complete_processing_job(claimed.job_id, worker_id="gate5-worker")
+        job = store.jobs[claimed.job_id]
+        self.assertEqual(job.status, "completed")
+        self.assertIsNone(job.claimed_by)
+        self.assertIsNone(job.claim_lease_until)
+        self.assertEqual(job.retry_count, 0)
+        with self.assertRaises(ValueError) as caught:
+            store.fail_processing_job(
+                claimed.job_id, worker_id="gate5-worker", error_code="x"
+            )
+        self.assertEqual(str(caught.exception), "unexpected_job_status")
+        self.assertEqual(store.jobs[claimed.job_id].status, "completed")
+        self.assertEqual(store.jobs[claimed.job_id].retry_count, 0)
+
+    def test_failed_and_queued_reject_complete_and_fail(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        _seed_ai_jobs(store, 1)
+        job_id = next(iter(store.jobs))
+        with self.assertRaises(ValueError) as queued:
+            store.complete_processing_job(job_id, worker_id="gate5-worker")
+        self.assertEqual(str(queued.exception), "unexpected_job_status")
+        with self.assertRaises(ValueError) as queued_fail:
+            store.fail_processing_job(
+                job_id, worker_id="gate5-worker", error_code="x"
+            )
+        self.assertEqual(str(queued_fail.exception), "unexpected_job_status")
+
+        for attempt in range(1, AI_MAX_ATTEMPTS + 1):
+            if attempt > 1:
+                clock.advance(30)
+            claimed = self._claim_one(store)
+            status = store.fail_processing_job(
+                claimed.job_id, worker_id="gate5-worker", error_code="x"
+            )
+            job = store.jobs[job_id]
+            self.assertIsNone(job.claimed_by)
+            self.assertIsNone(job.claim_lease_until)
+            if attempt < AI_MAX_ATTEMPTS:
+                self.assertEqual(status, "queued")
+                self.assertEqual(job.status, "queued")
+                self.assertEqual(job.retry_count, attempt)
+            else:
+                self.assertEqual(status, "failed")
+                self.assertEqual(job.status, "failed")
+                self.assertEqual(job.retry_count, 3)
+
+        with self.assertRaises(ValueError):
+            store.complete_processing_job(job_id, worker_id="gate5-worker")
+        with self.assertRaises(ValueError):
+            store.fail_processing_job(job_id, worker_id="gate5-worker", error_code="x")
+        self.assertEqual(store.jobs[job_id].status, "failed")
+        self.assertEqual(
+            store.claim_processing_jobs(
+                "ai_enrichment", worker_id="other", lease_seconds=300
+            ),
+            [],
+        )
+
+    def test_other_worker_and_expired_lease_are_rejected(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        _seed_ai_jobs(store, 1)
+        claimed = store.claim_processing_jobs(
+            "ai_enrichment", worker_id="owner", lease_seconds=30
+        )[0]
+        with self.assertRaises(LeaseLost):
+            store.complete_processing_job(claimed.job_id, worker_id="other")
+        with self.assertRaises(LeaseLost):
+            store.fail_processing_job(
+                claimed.job_id, worker_id="other", error_code="x"
+            )
+        self.assertEqual(store.jobs[claimed.job_id].status, "claimed")
+        clock.advance(31)
+        with self.assertRaises(LeaseLost):
+            store.complete_processing_job(claimed.job_id, worker_id="owner")
+        with self.assertRaises(LeaseLost):
+            store.fail_processing_job(
+                claimed.job_id, worker_id="owner", error_code="x"
+            )
+        self.assertEqual(store.jobs[claimed.job_id].status, "claimed")
+        self.assertEqual(store.jobs[claimed.job_id].retry_count, 0)
+
+    def test_human_stage_rejects_ai_complete_and_fail(self) -> None:
+        store = MemoryIngestStore()
+        _seed_ai_jobs(store, 1)
+        claimed = self._claim_one(store)
+        job = store.jobs[claimed.job_id]
+        job.processing_stage = "region_review"
+        with self.assertRaises(ValueError) as complete_err:
+            store.complete_processing_job(claimed.job_id, worker_id="gate5-worker")
+        with self.assertRaises(ValueError) as fail_err:
+            store.fail_processing_job(
+                claimed.job_id, worker_id="gate5-worker", error_code="x"
+            )
+        self.assertEqual(str(complete_err.exception), "human_job_not_completable_by_ai")
+        self.assertEqual(str(fail_err.exception), "human_job_not_completable_by_ai")
+        self.assertEqual(job.status, "claimed")
+        self.assertEqual(job.retry_count, 0)
+
+
 class StreakAndPageBoundTests(unittest.TestCase):
     def test_unchanged_streak_three_completes(self) -> None:
         store = MemoryIngestStore()
