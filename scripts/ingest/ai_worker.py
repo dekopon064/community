@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ingest.models import ClaimedJob
+from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.source_identity import (
     CANONICAL_POLICY_SOURCE,
     curation_source_for_enqueue,
@@ -16,6 +17,8 @@ WORKER_ID = "ingest-ai-worker"
 AI_SKIPPED_NOT_CONFIGURED = "ai_skipped_not_configured"
 AI_DISABLED = "ai_disabled"
 AI_PROCESSED = "processed"
+AI_STATE_UNKNOWN = "ai_state_unknown"
+AI_SKIPPED_SOURCE_INCOMPLETE = "ai_skipped_source_incomplete"
 
 SummarizeFn = Callable[..., tuple[str, str, str | None]]
 TranslateFn = Callable[..., tuple[str | None, str | None, str, str | None]]
@@ -30,6 +33,7 @@ class AiWorkerResult:
     completed: int = 0
     retried: int = 0
     failed: int = 0
+    state_unknown: int = 0
 
 
 def ai_dependencies_ready(
@@ -56,15 +60,20 @@ def process_ai_jobs(
     ):
         return AiWorkerResult(status=AI_SKIPPED_NOT_CONFIGURED)
 
-    jobs = store.claim_processing_jobs(
-        "ai_enrichment",
-        limit=limit,
-        worker_id=WORKER_ID,
-        lease_seconds=DEFAULT_JOB_LEASE_SECONDS,
-    )
+    try:
+        jobs = store.claim_processing_jobs(
+            "ai_enrichment",
+            limit=limit,
+            worker_id=WORKER_ID,
+            lease_seconds=DEFAULT_JOB_LEASE_SECONDS,
+        )
+    except Exception:
+        return AiWorkerResult(status=AI_STATE_UNKNOWN)
+
     completed = 0
     retried = 0
     failed = 0
+    state_unknown = 0
     for job in jobs:
         try:
             _process_one(
@@ -75,22 +84,41 @@ def process_ai_jobs(
                 enqueue=enqueue,
                 revision_precheck=revision_precheck,
             )
-            store.complete_processing_job(job.job_id, worker_id=WORKER_ID)
-            completed += 1
+        except (RpcTimeout, RpcAmbiguous):
+            state_unknown += 1
+            break
         except Exception:
-            new_status = store.fail_processing_job(
-                job.job_id, worker_id=WORKER_ID, error_code="ai_or_enqueue_failed"
-            )
+            try:
+                new_status = store.fail_processing_job(
+                    job.job_id, worker_id=WORKER_ID, error_code="ai_or_enqueue_failed"
+                )
+            except Exception:
+                state_unknown += 1
+                break
             if new_status == "failed":
                 failed += 1
-            else:
+            elif new_status == "queued":
                 retried += 1
+            else:
+                state_unknown += 1
+                break
+            continue
+
+        try:
+            store.complete_processing_job(job.job_id, worker_id=WORKER_ID)
+        except Exception:
+            state_unknown += 1
+            break
+        completed += 1
+
+    status = AI_STATE_UNKNOWN if state_unknown > 0 else AI_PROCESSED
     return AiWorkerResult(
-        status=AI_PROCESSED,
+        status=status,
         claimed=len(jobs),
         completed=completed,
         retried=retried,
         failed=failed,
+        state_unknown=state_unknown,
     )
 
 

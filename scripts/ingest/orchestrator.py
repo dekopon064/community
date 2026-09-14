@@ -18,6 +18,7 @@ from ingest.models import (
     SourceConnector,
     StartMode,
 )
+from ingest.rpc_errors import RpcAmbiguous, RpcFailure, RpcTimeout
 from ingest.store import (
     DEFAULT_LEASE_SECONDS,
     IngestStore,
@@ -285,33 +286,62 @@ def run_connector(
         status = "incomplete"
         stop_reason = "lease_lost"
         mark_bootstrap_complete = False
+    except RpcTimeout:
+        status = "incomplete" if batches_ok else "failed"
+        stop_reason = "rpc_timeout"
+        mark_bootstrap_complete = False
+    except (RpcAmbiguous, RpcFailure):
+        status = "incomplete" if batches_ok else "failed"
+        stop_reason = "rpc_error"
+        mark_bootstrap_complete = False
     except Exception:
         status = "incomplete" if batches_ok else "failed"
         stop_reason = "rpc_error"
         mark_bootstrap_complete = False
 
-    if stop_reason != "lease_lost" or batches_ok >= 0:
-        try:
-            store.finish_ingest_run(
-                run_id,
-                status=status,
-                stop_reason=stop_reason,
-                http_request_count=_http_count(connector),
-                bootstrap_complete=mark_bootstrap_complete
-                and status == "complete"
-                and stop_reason in BOOTSTRAP_COMPLETE_REASONS,
-                batches_ok=batches_ok,
-            )
-        except Exception:
-            pass
+    try:
+        finish_result = store.finish_ingest_run(
+            run_id,
+            status=status,
+            stop_reason=stop_reason,
+            http_request_count=_http_count(connector),
+            bootstrap_complete=mark_bootstrap_complete
+            and status == "complete"
+            and stop_reason in BOOTSTRAP_COMPLETE_REASONS,
+            batches_ok=batches_ok,
+        )
+    except Exception:
+        return SourceRunResult(
+            source_id,
+            status="incomplete" if batches_ok else "failed",
+            stop_reason="finish_failed",
+            batches_ok=batches_ok,
+            http_request_count=_http_count(connector),
+            bootstrap_complete=False,
+        )
 
+    result_status = finish_result.status
+    result_reason = finish_result.stop_reason
+    if result_status not in {"complete", "incomplete", "failed"}:
+        return SourceRunResult(
+            source_id,
+            status="incomplete" if batches_ok else "failed",
+            stop_reason="finish_failed",
+            batches_ok=batches_ok,
+            http_request_count=_http_count(connector),
+            bootstrap_complete=False,
+        )
     return SourceRunResult(
         source_id,
-        status=status,
-        stop_reason=stop_reason,
+        status=result_status,
+        stop_reason=result_reason,
         batches_ok=batches_ok,
         http_request_count=_http_count(connector),
-        bootstrap_complete=mark_bootstrap_complete and status == "complete",
+        bootstrap_complete=(
+            mark_bootstrap_complete
+            and result_status == "complete"
+            and result_reason in BOOTSTRAP_COMPLETE_REASONS
+        ),
     )
 
 
@@ -320,7 +350,6 @@ def run_ingest(
     store: IngestStore,
     *,
     sleep: SleepFn = lambda _seconds: None,
-    ai_worker: Callable[[IngestStore], int] | None = None,
 ) -> list[SourceRunResult]:
     results: list[SourceRunResult] = []
     for connector in connectors:
@@ -337,8 +366,6 @@ def run_ingest(
                     bootstrap_complete=False,
                 )
             )
-    if ai_worker is not None:
-        ai_worker(store)
     return results
 
 

@@ -1,0 +1,123 @@
+"""Secret-safe RPC error types for ingest and job-state mutations."""
+
+from __future__ import annotations
+
+LEASE_LOST = "lease_lost"
+RPC_TIMEOUT = "rpc_timeout"
+RPC_AMBIGUOUS = "rpc_ambiguous"
+RPC_FAILURE = "rpc_failure"
+
+SAFE_RPC_MESSAGES = frozenset(
+    {
+        LEASE_LOST,
+        "job not found",
+        "run not found",
+        "human_job_not_completable_by_ai",
+        "source_not_found",
+        "source_row_malformed",
+        "invalid source_id",
+        "invalid source_id or run_id",
+        "invalid lease_seconds",
+        "invalid status",
+        "invalid stop_reason",
+        "invalid claim limit",
+        "invalid worker_id",
+        "run_id is required",
+        "items must be a json array",
+        "complete_status_mismatch",
+        "unexpected_job_status",
+        "batch_too_large",
+        "forbidden_attachment_key",
+        RPC_TIMEOUT,
+        RPC_AMBIGUOUS,
+        RPC_FAILURE,
+        "enqueue_failed",
+        "permission_rpc_not_supported",
+        "publish_rpc_not_supported",
+    }
+)
+
+_TIMEOUT_TYPE_NAMES = frozenset(
+    {
+        "TimeoutException",
+        "ReadTimeout",
+        "ConnectTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "TimeoutError",
+    }
+)
+_LOST_TYPE_NAMES = frozenset(
+    {
+        "ConnectError",
+        "RemoteProtocolError",
+        "NetworkError",
+        "ProtocolError",
+    }
+)
+
+
+class RpcError(Exception):
+    def __init__(self, code: str) -> None:
+        safe = code if code in SAFE_RPC_MESSAGES else RPC_FAILURE
+        self.code = safe
+        super().__init__(safe)
+
+    def __str__(self) -> str:
+        return self.code
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.code!r})"
+
+
+class RpcFailure(RpcError):
+    """Deterministic RPC failure with a known safe code."""
+
+
+class RpcAmbiguous(RpcError):
+    """Commit or job state cannot be confirmed."""
+
+    def __init__(self, code: str = RPC_AMBIGUOUS) -> None:
+        super().__init__(code if code in SAFE_RPC_MESSAGES else RPC_AMBIGUOUS)
+
+
+class RpcTimeout(RpcAmbiguous):
+    def __init__(self) -> None:
+        super().__init__(RPC_TIMEOUT)
+
+
+def _type_names(exc: BaseException) -> set[str]:
+    return {base.__name__ for base in type(exc).mro()}
+
+
+def is_timeout_exception(exc: BaseException) -> bool:
+    return bool(_type_names(exc) & _TIMEOUT_TYPE_NAMES)
+
+
+def is_lost_response_exception(exc: BaseException) -> bool:
+    return bool(_type_names(exc) & _LOST_TYPE_NAMES)
+
+
+def safe_api_message(exc: BaseException) -> str | None:
+    message = getattr(exc, "message", None)
+    if isinstance(message, str) and message in SAFE_RPC_MESSAGES:
+        return message
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code in SAFE_RPC_MESSAGES:
+        return code
+    return None
+
+
+def map_rpc_exception(exc: BaseException) -> RpcError:
+    if isinstance(exc, RpcError):
+        return exc
+    message = safe_api_message(exc)
+    if message == LEASE_LOST:
+        return RpcFailure(LEASE_LOST)
+    if message is not None:
+        return RpcFailure(message)
+    if is_timeout_exception(exc):
+        return RpcTimeout()
+    if is_lost_response_exception(exc):
+        return RpcAmbiguous()
+    return RpcAmbiguous()

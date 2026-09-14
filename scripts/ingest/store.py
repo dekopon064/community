@@ -23,6 +23,7 @@ from ingest.models import (
     HUMAN_REVIEW_STAGES,
     Checkpoint,
     ClaimedJob,
+    FinishRunResult,
     ObservationRecord,
     ObservationResult,
     ProcessingStage,
@@ -78,7 +79,7 @@ class IngestStore(Protocol):
         http_request_count: int,
         bootstrap_complete: bool = False,
         batches_ok: int = 0,
-    ) -> None:
+    ) -> FinishRunResult:
         ...
 
     def claim_processing_jobs(
@@ -368,11 +369,11 @@ class MemoryIngestStore:
         http_request_count: int,
         bootstrap_complete: bool = False,
         batches_ok: int = 0,
-    ) -> None:
+    ) -> FinishRunResult:
         now = self._clock()
         run = self.runs.get(run_id)
         if run is None:
-            return
+            raise ValueError("run not found")
         run.status = status
         run.stop_reason = stop_reason
         run.http_request_count = http_request_count
@@ -398,6 +399,7 @@ class MemoryIngestStore:
         else:
             run.stop_reason = "lease_lost"
             run.status = "incomplete"
+        return FinishRunResult(status=run.status, stop_reason=run.stop_reason or "")
 
     def claim_processing_jobs(
         self,

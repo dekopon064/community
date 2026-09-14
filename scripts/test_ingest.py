@@ -18,6 +18,8 @@ import requests
 
 from ingest.ai_worker import (
     AI_SKIPPED_NOT_CONFIGURED,
+    AI_SKIPPED_SOURCE_INCOMPLETE,
+    AI_STATE_UNKNOWN,
     WORKER_ID,
     process_ai_jobs,
 )
@@ -51,9 +53,10 @@ from ingest.http_client import (
     RETRYABLE_STATUSES,
     ResponseTooLarge,
 )
-from ingest.models import BatchResult, Checkpoint, ObservationRecord
-from ingest.orchestrator import run_connector
+from ingest.models import BatchResult, Checkpoint, FinishRunResult, ObservationRecord
+from ingest.orchestrator import run_connector, run_ingest
 from ingest.region import classify_eligibility, classify_policy_disposition
+from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.run import build_youthcenter_connectors, run_ingest_architecture
 from ingest.sanitize import html_to_plain_text
 from ingest.source_identity import (
@@ -1544,6 +1547,228 @@ class DefaultConnectorSleeperTests(unittest.TestCase):
         policy, content = build_youthcenter_connectors(api_key_provider=lambda: "x")
         self.assertIs(policy.http.sleep, PRODUCTION_SLEEP)
         self.assertIs(content.http.sleep, PRODUCTION_SLEEP)
+
+
+class ClaimCountingStore(MemoryIngestStore):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.claim_calls = 0
+        self.finish_calls = 0
+
+    def claim_processing_jobs(self, *args: Any, **kwargs: Any) -> Any:
+        self.claim_calls += 1
+        return super().claim_processing_jobs(*args, **kwargs)
+
+    def finish_ingest_run(self, *args: Any, **kwargs: Any) -> FinishRunResult:
+        self.finish_calls += 1
+        return super().finish_ingest_run(*args, **kwargs)
+
+
+def _complete_connector() -> FakeConnector:
+    return FakeConnector(
+        batches=[BatchResult(items=(), next_checkpoint=None, natural_end=True)]
+    )
+
+
+def _incomplete_connector() -> FakeConnector:
+    item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+    return FakeConnector(
+        batches=[
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(2),
+                natural_end=False,
+            )
+        ],
+        max_pages=1,
+        bootstrap_max_pages=1,
+    )
+
+
+class MemoryFinishContractTests(unittest.TestCase):
+    def test_missing_run_is_not_success(self) -> None:
+        store = MemoryIngestStore()
+        with self.assertRaises(ValueError) as caught:
+            store.finish_ingest_run(
+                "missing",
+                status="complete",
+                stop_reason="empty_batch",
+                http_request_count=0,
+            )
+        self.assertIn("run not found", str(caught.exception))
+
+    def test_lease_lost_returns_actual_status(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        first = store.start_ingest_run(CANONICAL_POLICY_SOURCE, lease_seconds=60)
+        clock.advance(120)
+        second = store.start_ingest_run(CANONICAL_POLICY_SOURCE, lease_seconds=60)
+        self.assertFalse(second.skipped)
+        result = store.finish_ingest_run(
+            first.run_id,
+            status="complete",
+            stop_reason="streak_complete",
+            http_request_count=1,
+            bootstrap_complete=True,
+        )
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(result.stop_reason, "lease_lost")
+        self.assertEqual(store.sync[CANONICAL_POLICY_SOURCE].lease_owner, second.run_id)
+
+
+class OrchestratorFinishTests(unittest.TestCase):
+    def test_finish_status_is_authority(self) -> None:
+        class ForcedFinish(MemoryIngestStore):
+            def finish_ingest_run(self, *args: Any, **kwargs: Any) -> FinishRunResult:
+                super().finish_ingest_run(*args, **kwargs)
+                return FinishRunResult(status="incomplete", stop_reason="lease_lost")
+
+        store = ForcedFinish()
+        result = run_connector(_complete_connector(), store, sleep=NO_SLEEP)
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(result.stop_reason, "lease_lost")
+        self.assertFalse(result.bootstrap_complete)
+
+    def test_finish_raise_is_finish_failed_once(self) -> None:
+        class BoomFinish(ClaimCountingStore):
+            def finish_ingest_run(self, *args: Any, **kwargs: Any) -> FinishRunResult:
+                self.finish_calls += 1
+                raise RpcAmbiguous()
+
+        store = BoomFinish()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        result = run_connector(_incomplete_connector(), store, sleep=NO_SLEEP)
+        self.assertEqual(result.stop_reason, "finish_failed")
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(store.finish_calls, 1)
+        self.assertFalse(result.bootstrap_complete)
+        self.assertIsNotNone(store.sync[CANONICAL_POLICY_SOURCE].committed_checkpoint)
+
+        failed_store = BoomFinish()
+        failed = run_connector(
+            FakeConnector(fetch_error=HttpStatusError(403), error_on=1),
+            failed_store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.stop_reason, "finish_failed")
+        self.assertEqual(failed_store.finish_calls, 1)
+
+    def test_run_ingest_does_not_run_ai(self) -> None:
+        store = ClaimCountingStore()
+        _seed_ai_jobs(store, 2)
+        run_ingest([_complete_connector()], store, sleep=NO_SLEEP)
+        self.assertEqual(store.claim_calls, 0)
+        self.assertEqual(store.ai_job_counts()["queued"], 2)
+
+
+class SourceCompleteAiGateTests(unittest.TestCase):
+    def test_complete_source_may_claim(self) -> None:
+        store = ClaimCountingStore()
+        result = run_ingest_architecture(
+            store=store,
+            connectors=[_complete_connector()],
+            sleep=NO_SLEEP,
+            run_ai=True,
+            **_ai_deps(),
+        )
+        self.assertEqual(result.source_results[0].status, "complete")
+        self.assertEqual(result.ai.status, "processed")
+        self.assertEqual(store.claim_calls, 1)
+
+    def test_non_complete_sources_do_not_claim(self) -> None:
+        cases = []
+        incomplete = ClaimCountingStore()
+        incomplete.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        cases.append((incomplete, _incomplete_connector(), "incomplete"))
+
+        failed = ClaimCountingStore()
+        cases.append(
+            (
+                failed,
+                FakeConnector(fetch_error=HttpStatusError(403), error_on=1),
+                "failed",
+            )
+        )
+
+        held = ClaimCountingStore()
+        held.start_ingest_run(CANONICAL_POLICY_SOURCE)
+        cases.append((held, _complete_connector(), "lease_held"))
+
+        disabled = ClaimCountingStore()
+        disabled.sources[CANONICAL_POLICY_SOURCE].enabled = False
+        cases.append((disabled, _complete_connector(), "source_disabled"))
+
+        for store, connector, reason in cases:
+            result = run_ingest_architecture(
+                store=store,
+                connectors=[connector],
+                sleep=NO_SLEEP,
+                run_ai=True,
+                **_ai_deps(),
+            )
+            self.assertEqual(result.ai.status, AI_SKIPPED_SOURCE_INCOMPLETE, reason)
+            self.assertEqual(store.claim_calls, 0, reason)
+
+        class LostFinish(ClaimCountingStore):
+            def finish_ingest_run(self, *args: Any, **kwargs: Any) -> FinishRunResult:
+                self.finish_calls += 1
+                return FinishRunResult(status="incomplete", stop_reason="lease_lost")
+
+        lost_store = LostFinish()
+        lost_result = run_ingest_architecture(
+            store=lost_store,
+            connectors=[_complete_connector()],
+            sleep=NO_SLEEP,
+            run_ai=True,
+            **_ai_deps(),
+        )
+        self.assertEqual(lost_result.ai.status, AI_SKIPPED_SOURCE_INCOMPLETE)
+        self.assertEqual(lost_store.claim_calls, 0)
+
+        class Boom(ClaimCountingStore):
+            def finish_ingest_run(self, *args: Any, **kwargs: Any) -> FinishRunResult:
+                self.finish_calls += 1
+                raise RpcTimeout()
+
+        boom_store = Boom()
+        boom_result = run_ingest_architecture(
+            store=boom_store,
+            connectors=[_complete_connector()],
+            sleep=NO_SLEEP,
+            run_ai=True,
+            **_ai_deps(),
+        )
+        self.assertEqual(boom_result.source_results[0].stop_reason, "finish_failed")
+        self.assertEqual(boom_result.ai.status, AI_SKIPPED_SOURCE_INCOMPLETE)
+        self.assertEqual(boom_store.claim_calls, 0)
+
+    def test_complete_empty_queue_is_processed_claimed_zero(self) -> None:
+        store = ClaimCountingStore()
+        result = run_ingest_architecture(
+            store=store,
+            connectors=[_complete_connector()],
+            sleep=NO_SLEEP,
+            run_ai=True,
+            **_ai_deps(),
+        )
+        self.assertEqual(result.ai.status, "processed")
+        self.assertEqual(result.ai.claimed, 0)
+        self.assertEqual(store.claim_calls, 1)
+
+    def test_source_incomplete_is_not_empty_queue_success(self) -> None:
+        store = ClaimCountingStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        result = run_ingest_architecture(
+            store=store,
+            connectors=[_incomplete_connector()],
+            sleep=NO_SLEEP,
+            run_ai=True,
+            **_ai_deps(),
+        )
+        self.assertEqual(result.ai.status, AI_SKIPPED_SOURCE_INCOMPLETE)
+        self.assertEqual(result.ai.claimed, 0)
+        self.assertEqual(store.claim_calls, 0)
 
 
 if __name__ == "__main__":

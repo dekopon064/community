@@ -161,6 +161,12 @@ class StartRunResult:
 
 
 @dataclass(frozen=True)
+class FinishRunResult:
+    status: str
+    stop_reason: str
+
+
+@dataclass(frozen=True)
 class ClaimedJob:
     job_id: str
     source_item_id: str

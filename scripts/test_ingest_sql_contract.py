@@ -319,5 +319,123 @@ class IngestSqlContractTests(unittest.TestCase):
         self.assertNotIn("delete from public.curations", combined.lower())
 
 
+RPC = ROOT / "supabase" / "migrations" / "20260914000000_ingest_public_rpc_adapters.sql"
+RPC_DOWN = ROOT / "supabase" / "rollback" / "20260914000000_ingest_public_rpc_adapters_down.sql"
+
+
+class IngestPublicRpcAdapterContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.obs = OBS.read_text(encoding="utf-8")
+        self.rpc = RPC.read_text(encoding="utf-8")
+        self.rpc_down = RPC_DOWN.read_text(encoding="utf-8")
+
+    def _public_fn(self, name: str, nxt: str | None = None) -> str:
+        start = f"create function public.{name}"
+        body = self.rpc.split(start, 1)[1]
+        if nxt is None:
+            return body
+        return body.split(f"create function public.{nxt}", 1)[0]
+
+    def test_private_complete_still_returns_void(self) -> None:
+        private = self.obs.split("create function machimoa_review.complete_processing_job")[1]
+        header = private.split("language", 1)[0]
+        self.assertIn("returns pg_catalog.void", header)
+        self.assertNotIn("create function machimoa_review.complete_processing_job", self.rpc)
+
+    def test_public_complete_returns_text_and_performs_private(self) -> None:
+        complete = self._public_fn("complete_processing_job", "fail_processing_job")
+        header = complete.split("language", 1)[0]
+        self.assertIn("returns pg_catalog.text", header)
+        self.assertIn("perform machimoa_review.complete_processing_job", complete)
+        self.assertIn("job not found", complete)
+        self.assertIn("is distinct from 'completed'", complete)
+        self.assertIn("return 'completed'", complete)
+        self.assertIn("for update", complete.lower())
+
+    def test_finish_and_fail_wrapper_return_contracts(self) -> None:
+        finish = self._public_fn("finish_ingest_run", "claim_processing_jobs")
+        self.assertIn("returns table", finish.split("language", 1)[0])
+        self.assertIn("status pg_catalog.text", finish)
+        self.assertIn("stop_reason pg_catalog.text", finish)
+        self.assertIn("run not found", finish)
+        self.assertIn("perform machimoa_review.finish_ingest_run", finish)
+        fail = self._public_fn("fail_processing_job")
+        self.assertIn("returns pg_catalog.text", fail.split("language", 1)[0])
+        self.assertIn("job not found", fail)
+        self.assertIn("perform machimoa_review.fail_processing_job", fail)
+        self.assertIn("'queued', 'failed'", fail)
+
+    def test_get_ingest_source_wrapper(self) -> None:
+        get_source = self._public_fn("get_ingest_source", "start_ingest_run")
+        self.assertIn("p_source_id pg_catalog.text", get_source)
+        for column in (
+            "source_id pg_catalog.text",
+            "enabled pg_catalog.bool",
+            "permission_status pg_catalog.text",
+            "legacy_curation_source pg_catalog.text",
+        ):
+            self.assertIn(column, get_source)
+        self.assertIn("machimoa_review.ingest_sources", get_source)
+
+    def test_public_wrappers_owner_search_path_and_acl(self) -> None:
+        self.assertEqual(self.rpc.lower().count("security definer"), 7)
+        self.assertGreaterEqual(self.rpc.count("set search_path = ''"), 7)
+        self.assertEqual(self.rpc.lower().count("owner to postgres"), 7)
+        for name in (
+            "get_ingest_source",
+            "start_ingest_run",
+            "upsert_source_observations",
+            "finish_ingest_run",
+            "claim_processing_jobs",
+            "complete_processing_job",
+            "fail_processing_job",
+        ):
+            self.assertIn(f"revoke all privileges on function public.{name}", self.rpc)
+            self.assertIn(f"grant execute on function public.{name}", self.rpc)
+        self.assertIn("from public, anon, authenticated, service_role", self.rpc)
+        self.assertEqual(self.rpc.lower().count("to service_role"), 7)
+        self.assertNotIn("to anon", self.rpc.lower())
+        self.assertNotIn("to authenticated", self.rpc.lower())
+        self.assertNotIn("grant usage on schema machimoa_review", self.rpc.lower())
+        self.assertNotIn("grant select on table", self.rpc.lower())
+        self.assertNotIn("grant insert on table", self.rpc.lower())
+        self.assertNotIn("grant update on table", self.rpc.lower())
+        self.assertNotIn("grant delete on table", self.rpc.lower())
+
+    def test_no_permission_or_publish_wrappers(self) -> None:
+        lowered = self.rpc.lower()
+        self.assertNotIn("set_source_permission", lowered)
+        self.assertNotIn("publish_curation", lowered)
+        self.assertNotIn("unpublish", lowered)
+        self.assertNotIn("create function public.publish", lowered)
+
+    def test_notify_pgrst_on_up_and_down_inside_transaction(self) -> None:
+        for sql in (self.rpc, self.rpc_down):
+            lowered = sql.lower()
+            self.assertIn("notify pgrst, 'reload schema'", lowered)
+            self.assertLess(lowered.find("begin"), lowered.find("notify pgrst"))
+            self.assertLess(lowered.rfind("notify pgrst"), lowered.rfind("commit"))
+
+    def test_rollback_drops_public_wrappers_only(self) -> None:
+        down = self.rpc_down.lower()
+        self.assertIn(
+            "drop function if exists public.complete_processing_job(pg_catalog.uuid, pg_catalog.text)",
+            down,
+        )
+        self.assertIn("drop function if exists public.get_ingest_source", down)
+        self.assertIn("drop function if exists public.start_ingest_run", down)
+        self.assertIn("drop function if exists public.upsert_source_observations", down)
+        self.assertIn("drop function if exists public.finish_ingest_run", down)
+        self.assertIn("drop function if exists public.claim_processing_jobs", down)
+        self.assertIn("drop function if exists public.fail_processing_job", down)
+        self.assertNotIn("machimoa_review.complete_processing_job", down)
+        self.assertNotIn("machimoa_review.finish_ingest_run", down)
+        self.assertNotIn("machimoa_review.fail_processing_job", down)
+        self.assertNotIn("drop table", down)
+        self.assertNotIn("delete from machimoa_review.curation_candidates", down)
+        self.assertNotIn("delete from public.curations", down)
+        self.assertNotIn("create function machimoa_review", down)
+
+
 if __name__ == "__main__":
     unittest.main()
