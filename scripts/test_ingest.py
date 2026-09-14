@@ -53,7 +53,7 @@ from ingest.http_client import (
 )
 from ingest.models import BatchResult, Checkpoint, ObservationRecord
 from ingest.orchestrator import run_connector
-from ingest.region import classify_policy_disposition
+from ingest.region import classify_eligibility, classify_policy_disposition
 from ingest.run import build_youthcenter_connectors, run_ingest_architecture
 from ingest.sanitize import html_to_plain_text
 from ingest.source_identity import (
@@ -264,7 +264,16 @@ class SourceIdentityTests(unittest.TestCase):
 
 
 class RegionTests(unittest.TestCase):
-    def test_capital_operator_and_capital_eligible_is_target(self) -> None:
+    def test_eligibility_distinguishes_only_mixed_and_unknown(self) -> None:
+        self.assertEqual(classify_eligibility("11680"), "capital_only")
+        self.assertEqual(classify_eligibility("50110"), "non_capital_only")
+        self.assertEqual(
+            classify_eligibility("11680,50110"), "mixed_capital_and_non_capital"
+        )
+        self.assertEqual(classify_eligibility(""), "unknown")
+        self.assertEqual(classify_eligibility(None), "unknown")
+
+    def test_capital_operator_and_capital_only_is_target(self) -> None:
         self.assertEqual(
             classify_policy_disposition(
                 policy_item("p1", zip_cd="11680", oper_cd="11680")
@@ -280,15 +289,15 @@ class RegionTests(unittest.TestCase):
             "region_review_required",
         )
 
-    def test_capital_operator_conflict_is_review(self) -> None:
+    def test_capital_operator_mixed_regions_is_target(self) -> None:
         self.assertEqual(
             classify_policy_disposition(
                 policy_item("p1", zip_cd="11680,50110", oper_cd="11680")
             ),
-            "region_review_required",
+            "target",
         )
 
-    def test_central_and_capital_eligible_is_target(self) -> None:
+    def test_central_and_capital_only_is_target(self) -> None:
         self.assertEqual(
             classify_policy_disposition(
                 policy_item(
@@ -296,6 +305,34 @@ class RegionTests(unittest.TestCase):
                 )
             ),
             "target",
+        )
+
+    def test_central_mixed_regions_is_target(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item(
+                    "p1", zip_cd="11680,50110", oper_cd="", group="0054001"
+                )
+            ),
+            "target",
+        )
+
+    def test_central_non_capital_only_is_review(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item(
+                    "p1", zip_cd="50110", oper_cd="", group="0054001"
+                )
+            ),
+            "region_review_required",
+        )
+
+    def test_non_capital_operator_mixed_regions_is_review(self) -> None:
+        self.assertEqual(
+            classify_policy_disposition(
+                policy_item("p1", zip_cd="11680,50110", oper_cd="50110")
+            ),
+            "region_review_required",
         )
 
     def test_non_capital_operator_and_only_is_non_target(self) -> None:
@@ -324,6 +361,20 @@ class RegionTests(unittest.TestCase):
             ),
             "non_target",
         )
+
+    def test_new_target_creates_ai_job_under_permission(self) -> None:
+        mixed = observation_for(
+            policy_item("p-mix", zip_cd="11680,50110", oper_cd="11680")
+        )
+        self.assertEqual(mixed.disposition, "target")
+        self.assertEqual(mixed.jobs[0].stage, "ai_enrichment")
+        central = observation_for(
+            policy_item(
+                "p-central", zip_cd="11680,28100,50110", oper_cd="", group="0054001"
+            )
+        )
+        self.assertEqual(central.disposition, "target")
+        self.assertEqual(central.jobs[0].stage, "ai_enrichment")
 
 
 class DateParseTests(unittest.TestCase):
@@ -792,11 +843,57 @@ class ContentConnectorTests(unittest.TestCase):
         self.assertTrue(record.has_source_url)
         self.assertEqual(record.jobs[0].stage, "ai_enrichment")
 
+    def test_pstwholcn_html_becomes_plain_text_and_can_enqueue_ai(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        item = load_content()
+        self.assertIn("pstWholCn", item)
+        self.assertNotIn("pstCn", item)
+        record = connector.to_observation(
+            item, permission_status="testing_only", enabled=True
+        )
+        plain = (record.normalized_payload or {})["plain_text"]
+        self.assertIn("본문이 있는 게시물입니다", plain)
+        self.assertNotIn("<p>", plain)
+        self.assertNotIn("<a ", plain)
+        self.assertTrue(record.body_usable)
+        self.assertTrue(record.has_source_url)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs[0].stage, "ai_enrichment")
+        dumped = json.dumps(record.to_rpc_item(), ensure_ascii=False)
+        self.assertNotIn(ATCH_SNIPPET, dumped)
+        self.assertNotIn("atchFile", dumped)
+
+    def test_empty_pstwholcn_with_attachment_stays_content_review(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        item = load_content()
+        item["pstWholCn"] = ""
+        record = connector.to_observation(
+            item, permission_status="testing_only", enabled=True
+        )
+        self.assertFalse(record.body_usable)
+        self.assertTrue(record.attachment_present)
+        self.assertEqual(record.disposition, "attachment_dependent")
+        self.assertEqual(record.jobs[0].stage, "content_review")
+        self.assertIn("attachment_dependent", record.jobs[0].reason_codes)
+
+    def test_runtime_and_fixture_do_not_depend_on_pstcn(self) -> None:
+        connector_src = (
+            pathlib.Path(__file__).resolve().parent
+            / "ingest"
+            / "connectors"
+            / "youthcenter_content.py"
+        ).read_text(encoding="utf-8")
+        fixture = load_content()
+        self.assertNotIn("pstCn", connector_src)
+        self.assertNotIn("pstCn", fixture)
+        self.assertIn("pstWholCn", connector_src)
+        self.assertIn("pstWholCn", fixture)
+
     def test_missing_source_url_creates_content_review(self) -> None:
         connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         item = load_content()
         item["pstUrlAddr"] = None
-        item["pstCn"] = "<p>본문만 있고 링크는 없습니다. 충분한 텍스트입니다.</p>"
+        item["pstWholCn"] = "<p>본문만 있고 링크는 없습니다. 충분한 텍스트입니다.</p>"
         record = connector.to_observation(
             item, permission_status="testing_only", enabled=True
         )

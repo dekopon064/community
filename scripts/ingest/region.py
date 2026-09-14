@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-Eligibility = Literal["capital_eligible", "non_capital_only", "conflict", "unknown"]
+Eligibility = Literal[
+    "capital_only",
+    "non_capital_only",
+    "mixed_capital_and_non_capital",
+    "unknown",
+]
 OperatorKind = Literal[
     "central",
     "capital_operator",
@@ -15,6 +20,7 @@ Disposition = Literal["target", "non_target", "region_review_required"]
 
 CAPITAL_ZIP_PREFIXES = ("11", "28", "41")
 CENTRAL_PROVIDER_GROUP = "0054001"
+CAPITAL_INCLUDED = frozenset({"capital_only", "mixed_capital_and_non_capital"})
 
 
 def _five_digit_tokens(raw: object) -> tuple[str, ...]:
@@ -37,15 +43,16 @@ def _prefix_kind(zip_code: str) -> Literal["capital", "non_capital"]:
 
 
 def classify_eligibility(zip_cd: object) -> Eligibility:
+    """zipCd 지원지역. 수도권/비수도권 혼합은 기관 충돌이 아니다."""
     tokens = _five_digit_tokens(zip_cd)
     if not tokens:
         return "unknown"
     kinds = {_prefix_kind(token) for token in tokens}
     if kinds == {"capital"}:
-        return "capital_eligible"
+        return "capital_only"
     if kinds == {"non_capital"}:
         return "non_capital_only"
-    return "conflict"
+    return "mixed_capital_and_non_capital"
 
 
 def _code_operator_kind(raw: object) -> OperatorKind | None:
@@ -96,28 +103,16 @@ def classify_operator(policy: dict[str, Any]) -> OperatorKind:
 def classify_policy_disposition(policy: dict[str, Any]) -> Disposition:
     eligibility = classify_eligibility(policy.get("zipCd"))
     operator = classify_operator(policy)
+    capital_included = eligibility in CAPITAL_INCLUDED
 
-    if operator == "central" and eligibility == "capital_eligible":
-        return "target"
-    if operator == "capital_operator" and eligibility == "capital_eligible":
-        return "target"
-    if operator == "capital_operator" and eligibility in {
-        "non_capital_only",
-        "conflict",
-        "unknown",
-    }:
-        return "region_review_required"
-    if (
-        operator == "non_capital_operator"
-        and eligibility == "non_capital_only"
-    ):
-        return "non_target"
     if operator == "unknown":
         return "region_review_required"
-    if eligibility in {"conflict", "unknown"}:
-        return "region_review_required"
-    if operator == "central" and eligibility != "capital_eligible":
-        return "region_review_required"
-    if operator == "non_capital_operator" and eligibility != "non_capital_only":
+    if operator == "central":
+        return "target" if capital_included else "region_review_required"
+    if operator == "capital_operator":
+        return "target" if capital_included else "region_review_required"
+    if operator == "non_capital_operator":
+        if eligibility == "non_capital_only":
+            return "non_target"
         return "region_review_required"
     return "region_review_required"

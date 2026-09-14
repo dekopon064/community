@@ -216,7 +216,7 @@ class YouthcenterContentConnector(BatchConnector):
             item if isinstance(item, dict) else {}, scanned
         )
         cleaned = strip_attachment_meta_keys(cleaned)
-        html_body = str(cleaned.get("pstCn") or "")
+        html_body = str(cleaned.get("pstWholCn") or "")
         hrefs = extract_http_urls(html_body)
         plain = html_to_plain_text(html_body)
         title = html_to_plain_text(cleaned.get("pstTtl"))
