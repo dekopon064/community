@@ -457,6 +457,29 @@ grant execute on function public.fail_processing_job(
   pg_catalog.uuid, pg_catalog.text, pg_catalog.text
 ) to service_role;
 
+revoke all privileges on function machimoa_review.canonical_source_id(
+  pg_catalog.text
+) from public, anon, authenticated, service_role;
+revoke all privileges on function machimoa_review.start_ingest_run(
+  pg_catalog.text, pg_catalog.int4
+) from public, anon, authenticated, service_role;
+revoke all privileges on function machimoa_review.upsert_source_observations(
+  pg_catalog.text, pg_catalog.uuid, pg_catalog.jsonb, pg_catalog.jsonb
+) from public, anon, authenticated, service_role;
+revoke all privileges on function machimoa_review.finish_ingest_run(
+  pg_catalog.uuid, pg_catalog.text, pg_catalog.text, pg_catalog.int4,
+  pg_catalog.bool, pg_catalog.int4
+) from public, anon, authenticated, service_role;
+revoke all privileges on function machimoa_review.claim_processing_jobs(
+  pg_catalog.text, pg_catalog.int4, pg_catalog.text, pg_catalog.int4
+) from public, anon, authenticated, service_role;
+revoke all privileges on function machimoa_review.complete_processing_job(
+  pg_catalog.uuid, pg_catalog.text
+) from public, anon, authenticated, service_role;
+revoke all privileges on function machimoa_review.fail_processing_job(
+  pg_catalog.uuid, pg_catalog.text, pg_catalog.text
+) from public, anon, authenticated, service_role;
+
 notify pgrst, 'reload schema';
 
 commit;

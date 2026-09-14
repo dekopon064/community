@@ -22,6 +22,29 @@ drop function if exists public.fail_processing_job(
   pg_catalog.uuid, pg_catalog.text, pg_catalog.text
 );
 
+grant execute on function machimoa_review.canonical_source_id(
+  pg_catalog.text
+) to service_role;
+grant execute on function machimoa_review.start_ingest_run(
+  pg_catalog.text, pg_catalog.int4
+) to service_role;
+grant execute on function machimoa_review.upsert_source_observations(
+  pg_catalog.text, pg_catalog.uuid, pg_catalog.jsonb, pg_catalog.jsonb
+) to service_role;
+grant execute on function machimoa_review.finish_ingest_run(
+  pg_catalog.uuid, pg_catalog.text, pg_catalog.text, pg_catalog.int4,
+  pg_catalog.bool, pg_catalog.int4
+) to service_role;
+grant execute on function machimoa_review.claim_processing_jobs(
+  pg_catalog.text, pg_catalog.int4, pg_catalog.text, pg_catalog.int4
+) to service_role;
+grant execute on function machimoa_review.complete_processing_job(
+  pg_catalog.uuid, pg_catalog.text
+) to service_role;
+grant execute on function machimoa_review.fail_processing_job(
+  pg_catalog.uuid, pg_catalog.text, pg_catalog.text
+) to service_role;
+
 notify pgrst, 'reload schema';
 
 commit;

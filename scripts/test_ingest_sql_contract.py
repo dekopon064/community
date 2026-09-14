@@ -421,6 +421,57 @@ class IngestSqlContractTests(unittest.TestCase):
 RPC = ROOT / "supabase" / "migrations" / "20260914000000_ingest_public_rpc_adapters.sql"
 RPC_DOWN = ROOT / "supabase" / "rollback" / "20260914000000_ingest_public_rpc_adapters_down.sql"
 
+_WS = re.compile(r"\s+")
+_PRIVATE_GRANT_RE = re.compile(
+    r"grant execute\s+on function\s+(machimoa_review\.[a-z0-9_]+)\s*\((.*?)\)\s+"
+    r"to\s+service_role\s*;",
+    re.IGNORECASE | re.DOTALL,
+)
+_PRIVATE_REVOKE_RE = re.compile(
+    r"revoke all privileges\s+on function\s+(machimoa_review\.[a-z0-9_]+)\s*\((.*?)\)\s+"
+    r"from\s+([^;]+);",
+    re.IGNORECASE | re.DOTALL,
+)
+_REQUIRED_REVOKE_ROLES = frozenset({"public", "anon", "authenticated", "service_role"})
+_FORBIDDEN_PRIVATE_FNS = (
+    "jsonb_has_forbidden_attachment",
+    "set_source_permission",
+    "assert_publish_allowed",
+    "write_publication_lineage",
+    "hard_delete_published_curation_contract",
+    "publish_curation_candidate",
+)
+
+
+def _normalize_fn_sig(name: str, args: str) -> str:
+    types = [
+        _WS.sub(" ", part.strip().lower())
+        for part in args.split(",")
+        if part.strip()
+    ]
+    return f"{name.lower()}({', '.join(types)})"
+
+
+def _private_grant_signatures(sql: str) -> set[str]:
+    return {
+        _normalize_fn_sig(match.group(1), match.group(2))
+        for match in _PRIVATE_GRANT_RE.finditer(sql)
+    }
+
+
+def _private_revoke_signatures(sql: str) -> set[str]:
+    found: set[str] = set()
+    for match in _PRIVATE_REVOKE_RE.finditer(sql):
+        roles = {
+            part.strip().lower()
+            for part in match.group(3).split(",")
+            if part.strip()
+        }
+        if roles != _REQUIRED_REVOKE_ROLES:
+            continue
+        found.add(_normalize_fn_sig(match.group(1), match.group(2)))
+    return found
+
 
 class IngestPublicRpcAdapterContractTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -518,6 +569,34 @@ class IngestPublicRpcAdapterContractTests(unittest.TestCase):
             self.assertLess(lowered.find("begin"), lowered.find("notify pgrst"))
             self.assertLess(lowered.rfind("notify pgrst"), lowered.rfind("commit"))
 
+    def test_private_service_role_acl_matches_00000_grant_set(self) -> None:
+        granted = _private_grant_signatures(self.obs)
+        revoked = _private_revoke_signatures(self.rpc)
+        restored = _private_grant_signatures(self.rpc_down)
+        self.assertEqual(len(granted), 7)
+        self.assertEqual(granted, revoked)
+        self.assertEqual(revoked, restored)
+        names = {sig.split("(", 1)[0] for sig in granted}
+        self.assertIn("machimoa_review.canonical_source_id", names)
+        self.assertEqual(_private_grant_signatures(self.rpc), set())
+        for banned in _FORBIDDEN_PRIVATE_FNS:
+            self.assertTrue(
+                all(banned not in sig for sig in granted | revoked | restored),
+                banned,
+            )
+
+    def test_00002_keeps_public_wrapper_grants_without_schema_table_grants(self) -> None:
+        for sql in (self.rpc, self.rpc_down):
+            lowered = sql.lower()
+            self.assertNotIn("grant usage on schema machimoa_review", lowered)
+            self.assertNotIn("grant select on table", lowered)
+            self.assertNotIn("grant insert on table", lowered)
+            self.assertNotIn("grant update on table", lowered)
+            self.assertNotIn("grant delete on table", lowered)
+            self.assertNotIn("to anon", lowered)
+            self.assertNotIn("to authenticated", lowered)
+            self.assertNotRegex(lowered, r"grant execute\s+on function\s+[^;]+to\s+public")
+
     def test_rollback_drops_public_wrappers_only(self) -> None:
         down = self.rpc_down.lower()
         self.assertIn(
@@ -530,13 +609,15 @@ class IngestPublicRpcAdapterContractTests(unittest.TestCase):
         self.assertIn("drop function if exists public.finish_ingest_run", down)
         self.assertIn("drop function if exists public.claim_processing_jobs", down)
         self.assertIn("drop function if exists public.fail_processing_job", down)
-        self.assertNotIn("machimoa_review.complete_processing_job", down)
-        self.assertNotIn("machimoa_review.finish_ingest_run", down)
-        self.assertNotIn("machimoa_review.fail_processing_job", down)
+        self.assertNotIn("drop function if exists machimoa_review", down)
+        self.assertNotIn("drop function machimoa_review", down)
+        self.assertNotIn("create function machimoa_review", down)
+        self.assertNotIn("create or replace function machimoa_review", down)
         self.assertNotIn("drop table", down)
         self.assertNotIn("delete from machimoa_review.curation_candidates", down)
         self.assertNotIn("delete from public.curations", down)
-        self.assertNotIn("create function machimoa_review", down)
+        self.assertEqual(len(_private_grant_signatures(self.rpc_down)), 7)
+        self.assertEqual(down.count("grant execute on function machimoa_review."), 7)
 
 
 if __name__ == "__main__":
