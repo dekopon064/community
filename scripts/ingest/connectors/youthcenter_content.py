@@ -165,9 +165,10 @@ class YouthcenterContentConnector(BatchConnector):
     bootstrap_max_items = CONTENT_BOOTSTRAP_MAX_ITEMS
     max_pages = CONTENT_MAX_PAGES
     http_budget = CONTENT_HTTP_BUDGET
-    # Fail-closed overlay/streak policy until a content canary re-judges.
-    # Not a claim that Youth API officially guarantees newest-first order.
-    ordering_capability: OrderingCapability = "require_descending"
+    # Processing policy, not an official getContent sort or pagination contract.
+    # Production observation found non-monotonic updated stamps.
+    # Diagnostics stay; untrusted does not block bounded range complete.
+    ordering_capability: OrderingCapability = "untrusted"
 
     def __init__(
         self,

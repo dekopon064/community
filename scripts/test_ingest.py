@@ -1655,7 +1655,7 @@ class ContentResponseSizeTests(unittest.TestCase):
         self.assertEqual(content.bootstrap_max_items, 10)
         self.assertEqual(content.max_pages, 5)
         self.assertEqual(content.http_budget, 15)
-        self.assertEqual(content.ordering_capability, "require_descending")
+        self.assertEqual(content.ordering_capability, "untrusted")
         self.assertEqual(content.http.timeout_seconds, 15)
         self.assertEqual(content.http.max_attempts, 3)
         self.assertEqual(DEFAULT_TIMEOUT_SECONDS, 15)
@@ -2274,12 +2274,12 @@ class OrderingCapabilityDeclarationTests(unittest.TestCase):
         connector = YouthcenterPolicyConnector(api_key_provider=lambda: "unused")
         self.assertEqual(connector.ordering_capability, "untrusted")
 
-    def test_content_is_require_descending(self) -> None:
+    def test_content_is_untrusted(self) -> None:
         self.assertEqual(
-            YouthcenterContentConnector.ordering_capability, "require_descending"
+            YouthcenterContentConnector.ordering_capability, "untrusted"
         )
         connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
-        self.assertEqual(connector.ordering_capability, "require_descending")
+        self.assertEqual(connector.ordering_capability, "untrusted")
 
     def test_fake_connector_is_explicit_require_descending(self) -> None:
         self.assertEqual(FakeConnector.ordering_capability, "require_descending")
@@ -2660,6 +2660,181 @@ class UntrustedRangeTests(unittest.TestCase):
         self.assertEqual(result.stop_reason, "http_500")
         self.assertFalse(result.bootstrap_complete)
         self.assertIn((CANONICAL_POLICY_SOURCE, "u-http-01"), store.items)
+
+
+def _content_untrusted_fake(**kwargs: Any) -> FakeConnector:
+    kwargs.setdefault("source_id", CANONICAL_CONTENT_SOURCE)
+    kwargs.setdefault("ordering_capability", "untrusted")
+    kwargs.setdefault("bootstrap_max_pages", 5)
+    kwargs.setdefault("bootstrap_max_items", 10)
+    return FakeConnector(**kwargs)
+
+
+class ContentUntrustedBootstrapTests(unittest.TestCase):
+    def test_class_and_instance_are_untrusted(self) -> None:
+        self.assertEqual(
+            YouthcenterContentConnector.ordering_capability, "untrusted"
+        )
+        self.assertEqual(
+            YouthcenterContentConnector(api_key_provider=lambda: "unused").ordering_capability,
+            "untrusted",
+        )
+        self.assertEqual(
+            YouthcenterPolicyConnector.ordering_capability, "untrusted"
+        )
+
+    def test_non_monotonic_bootstrap_completes(self) -> None:
+        items = [_descending_target(f"c-u-{i:02d}", i) for i in range(10)]
+        items[5] = _descending_target(
+            "c-u-05", 5, updated="2026-09-15 12:00:00"
+        )
+        store = MemoryIngestStore()
+        result = run_connector(
+            _content_untrusted_fake(batches=_page_batches(items, page_size=2)),
+            store,
+            sleep=NO_SLEEP,
+        )
+        sync = store.sync[CANONICAL_CONTENT_SOURCE]
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertTrue(result.bootstrap_complete)
+        self.assertTrue(sync.bootstrap_complete)
+        self.assertEqual(result.ordering_cli_token(), "non_monotonic_stamp")
+        self.assertIsNotNone(sync.committed_checkpoint)
+        self.assertIsNone(sync.lease_owner)
+        self.assertIsNone(sync.lease_expires_at)
+        self.assertIsNone(sync.active_run_id)
+        self.assertEqual(len(store.items), 10)
+
+    def test_missing_stamp_does_not_block_range_complete(self) -> None:
+        items = [
+            policy_item(
+                f"c-miss-{i:02d}",
+                zip_cd="11680",
+                oper_cd="11680",
+                updated="",
+                created="",
+                title=f"콘텐츠누락{i:02d}",
+            )
+            for i in range(10)
+        ]
+        store = MemoryIngestStore()
+        result = run_connector(
+            _content_untrusted_fake(batches=_page_batches(items, page_size=2)),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertTrue(result.bootstrap_complete)
+        self.assertEqual(result.ordering_cli_token(), "missing_stamp")
+        self.assertNotIn("non_monotonic_stamp", result.ordering_diagnostics)
+
+    def test_compound_diagnostics_keep_range_complete(self) -> None:
+        items = [
+            _descending_target("c-both-00", 0),
+            policy_item(
+                "c-both-01",
+                zip_cd="11680",
+                oper_cd="11680",
+                updated="",
+                created="",
+                title="콘텐츠복합누락",
+            ),
+            _descending_target("c-both-02", 2, updated="2026-09-20 12:00:00"),
+        ]
+        store = MemoryIngestStore()
+        result = run_connector(
+            _content_untrusted_fake(
+                batches=_page_batches(items, page_size=2),
+                bootstrap_max_items=3,
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertTrue(result.bootstrap_complete)
+        self.assertEqual(
+            result.ordering_cli_token(), "missing_stamp,non_monotonic_stamp"
+        )
+        blob = result.ordering_cli_token()
+        self.assertNotIn("https://", blob)
+        self.assertNotIn("콘텐츠복합누락", blob)
+        self.assertNotIn("c-both-01", blob)
+
+    def test_non_bootstrap_does_not_use_streak(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_CONTENT_SOURCE].bootstrap_complete = True
+        item = _descending_target("c-streak-01", 0)
+        batches = [
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(page + 1),
+                natural_end=False,
+            )
+            for page in range(1, 6)
+        ]
+        result = run_connector(
+            _content_untrusted_fake(batches=batches, max_pages=5),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertNotEqual(result.stop_reason, "streak_complete")
+        self.assertEqual(result.stop_reason, "configured_range_complete")
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.batches_ok, 5)
+        self.assertTrue(store.sync[CANONICAL_CONTENT_SOURCE].bootstrap_complete)
+
+    def test_http_oversized_and_parse_still_fail(self) -> None:
+        http_store = MemoryIngestStore()
+        first = _descending_target("c-http-01", 0)
+        http_result = run_connector(
+            _content_untrusted_fake(
+                batches=[
+                    BatchResult(
+                        items=(first,),
+                        next_checkpoint=Checkpoint.for_rest_page(2),
+                        natural_end=False,
+                    )
+                ],
+                fetch_error=HttpStatusError(500),
+                error_on=2,
+            ),
+            http_store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(http_result.status, "incomplete")
+        self.assertEqual(http_result.stop_reason, "http_500")
+        self.assertFalse(http_result.bootstrap_complete)
+
+        oversized_store = MemoryIngestStore()
+        oversized = run_connector(
+            _content_untrusted_fake(
+                batches=[],
+                fetch_error=ResponseTooLarge(),
+                error_on=1,
+            ),
+            oversized_store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(oversized.status, "failed")
+        self.assertEqual(oversized.stop_reason, "response_too_large")
+        self.assertFalse(oversized.bootstrap_complete)
+
+        parse_store = MemoryIngestStore()
+        parsed = run_connector(
+            _content_untrusted_fake(
+                batches=[],
+                fetch_error=RuntimeError("youth_content_list_invalid"),
+                error_on=1,
+            ),
+            parse_store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(parsed.status, "failed")
+        self.assertEqual(parsed.stop_reason, "rpc_error")
+        self.assertFalse(parsed.bootstrap_complete)
 
 
 def _seed_synthetic_lineage(store: MemoryIngestStore) -> dict[str, str]:
