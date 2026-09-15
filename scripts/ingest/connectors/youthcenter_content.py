@@ -38,6 +38,7 @@ from ingest.source_identity import (
 )
 
 CONTENT_LIST_URL = "https://www.youthcenter.go.kr/go/ythip/getContent"
+CONTENT_API_KEY_ENV = "YOUTH_CONTENT_API_KEY"
 CONTENT_PAGE_SIZE = 2
 CONTENT_BOOTSTRAP_MAX_PAGES = 5
 CONTENT_BOOTSTRAP_MAX_ITEMS = 10
@@ -287,9 +288,9 @@ class YouthcenterContentConnector(BatchConnector):
     def _api_key(self) -> str:
         if self._api_key_provider is not None:
             return self._api_key_provider()
-        key = os.environ.get("YOUTH_API_KEY")
+        key = os.environ.get(CONTENT_API_KEY_ENV)
         if not key:
-            raise RuntimeError("youth_api_key_missing")
+            raise RuntimeError("youth_content_api_key_missing")
         return key
 
 

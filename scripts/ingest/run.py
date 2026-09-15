@@ -32,14 +32,15 @@ def build_youthcenter_connectors(
     *,
     policy_http: HttpClient | None = None,
     content_http: HttpClient | None = None,
-    api_key_provider: Callable[[], str] | None = None,
+    policy_api_key_provider: Callable[[], str] | None = None,
+    content_api_key_provider: Callable[[], str] | None = None,
 ) -> list[SourceConnector]:
     return [
         YouthcenterPolicyConnector(
-            http=policy_http, api_key_provider=api_key_provider
+            http=policy_http, api_key_provider=policy_api_key_provider
         ),
         YouthcenterContentConnector(
-            http=content_http, api_key_provider=api_key_provider
+            http=content_http, api_key_provider=content_api_key_provider
         ),
     ]
 

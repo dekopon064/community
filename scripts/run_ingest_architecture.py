@@ -14,7 +14,10 @@ from ingest.ai_worker import (
     AI_SKIPPED_SOURCE_INCOMPLETE,
     AI_STATE_UNKNOWN,
 )
-from ingest.connectors.youthcenter_content import YouthcenterContentConnector
+from ingest.connectors.youthcenter_content import (
+    CONTENT_API_KEY_ENV,
+    YouthcenterContentConnector,
+)
 from ingest.connectors.youthcenter_policy import YouthcenterPolicyConnector
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout, map_rpc_exception
 from ingest.run import IngestArchitectureResult, run_ingest_architecture
@@ -23,8 +26,12 @@ from ingest.supabase_store import create_ingest_client
 from ingest.supabase_store import SupabaseIngestStore
 
 SOURCE_CHOICES = (CANONICAL_POLICY_SOURCE, CANONICAL_CONTENT_SOURCE)
-REQUIRED_EXECUTE_ENV = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "YOUTH_API_KEY")
+REQUIRED_SUPABASE_ENV = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
+POLICY_API_KEY_ENV = "YOUTH_API_KEY"
 REQUIRED_AI_ENV = ("GEMINI_API_KEY",)
+MISSING_ENV_MESSAGE = "missing required environment variables"
+MISSING_POLICY_KEY_MESSAGE = "missing_youth_policy_api_key"
+MISSING_CONTENT_KEY_MESSAGE = "missing_youth_content_api_key"
 EXECUTION_FAILED_MESSAGE = "ingest execution failed"
 
 
@@ -116,7 +123,24 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
 
 
 def _youth_api_key() -> str:
-    return os.environ["YOUTH_API_KEY"]
+    return os.environ[POLICY_API_KEY_ENV]
+
+
+def _youth_content_api_key() -> str:
+    return os.environ[CONTENT_API_KEY_ENV]
+
+
+def _missing_execute_message(source: str, *, run_ai: bool) -> str | None:
+    if _missing_env(REQUIRED_SUPABASE_ENV):
+        return MISSING_ENV_MESSAGE
+    if source == CANONICAL_POLICY_SOURCE:
+        if _missing_env((POLICY_API_KEY_ENV,)):
+            return MISSING_POLICY_KEY_MESSAGE
+    elif _missing_env((CONTENT_API_KEY_ENV,)):
+        return MISSING_CONTENT_KEY_MESSAGE
+    if run_ai and _missing_env(REQUIRED_AI_ENV):
+        return MISSING_ENV_MESSAGE
+    return None
 
 
 def _load_legacy_ai_helpers() -> dict[str, Any]:
@@ -172,11 +196,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    required = list(REQUIRED_EXECUTE_ENV)
-    if args.run_ai:
-        required.extend(REQUIRED_AI_ENV)
-    if _missing_env(required):
-        print("missing required environment variables", file=sys.stderr)
+    missing = _missing_execute_message(args.source, run_ai=args.run_ai)
+    if missing is not None:
+        print(missing, file=sys.stderr)
         return 1
 
     try:
@@ -188,7 +210,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.source == CANONICAL_POLICY_SOURCE:
             connector = YouthcenterPolicyConnector(api_key_provider=_youth_api_key)
         else:
-            connector = YouthcenterContentConnector(api_key_provider=_youth_api_key)
+            connector = YouthcenterContentConnector(
+                api_key_provider=_youth_content_api_key
+            )
 
         ai_helpers: dict[str, Any] = {}
         if args.run_ai:

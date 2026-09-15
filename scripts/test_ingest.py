@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import pathlib
 import sys
 import time
@@ -13,6 +14,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import requests
 
@@ -29,6 +31,7 @@ from ingest.attachments import (
     extract_sanitized_source_items,
 )
 from ingest.connectors.youthcenter_content import (
+    CONTENT_API_KEY_ENV,
     CONTENT_PAGE_SIZE,
     YouthcenterContentConnector,
     content_job_and_flags,
@@ -1506,6 +1509,83 @@ class ConnectorRequestAndAttachmentTests(unittest.TestCase):
         connector.fetch_batch(None)
         self.assertEqual(captured["params"]["pageSize"], POLICY_PAGE_SIZE)
 
+
+POLICY_KEY_MARKER = "policy-fixture-key-DoNotLog"
+CONTENT_KEY_MARKER = "content-fixture-key-DoNotLog"
+
+
+class ContentCredentialSeparationTests(unittest.TestCase):
+    def test_missing_content_key_does_not_fallback_or_call_http(self) -> None:
+        calls = {"count": 0}
+
+        def transport(*_args: Any, **_kwargs: Any) -> FakeStreamResponse:
+            calls["count"] += 1
+            raise AssertionError("youth_api_called")
+
+        http = HttpClient(budget=15, sleep=NO_SLEEP, transport=transport)
+        with patch.dict(os.environ, {"YOUTH_API_KEY": POLICY_KEY_MARKER}, clear=True):
+            connector = YouthcenterContentConnector(http=http)
+            with self.assertRaises(RuntimeError) as caught:
+                connector.fetch_batch(None)
+        self.assertEqual(str(caught.exception), "youth_content_api_key_missing")
+        self.assertEqual(calls["count"], 0)
+        visible = str(caught.exception)
+        self.assertNotIn(POLICY_KEY_MARKER, visible)
+        self.assertNotIn("apiKeyNm", visible)
+        self.assertNotIn("YOUTH_API_KEY", visible)
+
+    def test_content_env_key_is_sent_not_policy_key(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def transport(_url: str, **kwargs: Any) -> FakeStreamResponse:
+            captured["params"] = dict(kwargs.get("params") or {})
+            return FakeStreamResponse(
+                200, json_payload={"result": {"youthPolicyList": []}}
+            )
+
+        http = HttpClient(budget=15, sleep=NO_SLEEP, transport=transport)
+        env = {
+            "YOUTH_API_KEY": POLICY_KEY_MARKER,
+            CONTENT_API_KEY_ENV: CONTENT_KEY_MARKER,
+        }
+        with patch.dict(os.environ, env, clear=True):
+            connector = YouthcenterContentConnector(http=http)
+            connector.fetch_batch(None)
+        self.assertEqual(captured["params"]["apiKeyNm"], CONTENT_KEY_MARKER)
+        self.assertNotEqual(captured["params"]["apiKeyNm"], POLICY_KEY_MARKER)
+
+    def test_builder_providers_are_not_crossed(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def policy_transport(_url: str, **kwargs: Any) -> FakeStreamResponse:
+            captured["policy"] = dict(kwargs.get("params") or {})
+            return FakeStreamResponse(
+                200, json_payload={"result": {"youthPolicyList": []}}
+            )
+
+        def content_transport(_url: str, **kwargs: Any) -> FakeStreamResponse:
+            captured["content"] = dict(kwargs.get("params") or {})
+            return FakeStreamResponse(
+                200, json_payload={"result": {"youthPolicyList": []}}
+            )
+
+        policy, content = build_youthcenter_connectors(
+            policy_http=HttpClient(
+                budget=30, sleep=NO_SLEEP, transport=policy_transport
+            ),
+            content_http=HttpClient(
+                budget=15, sleep=NO_SLEEP, transport=content_transport
+            ),
+            policy_api_key_provider=lambda: POLICY_KEY_MARKER,
+            content_api_key_provider=lambda: CONTENT_KEY_MARKER,
+        )
+        policy.fetch_batch(None)
+        content.fetch_batch(None)
+        self.assertEqual(captured["policy"]["apiKeyNm"], POLICY_KEY_MARKER)
+        self.assertEqual(captured["content"]["apiKeyNm"], CONTENT_KEY_MARKER)
+
+
+class ConnectorRequestAndAttachmentFollowupTests(unittest.TestCase):
     def test_fetch_batch_drops_atchfile_immediately_without_mutating_input(self) -> None:
         original = load_content()
         original["atchFile"] = ATCH_MARKER
@@ -1735,7 +1815,10 @@ class PublicationSnapshotTests(unittest.TestCase):
 
 class DefaultConnectorSleeperTests(unittest.TestCase):
     def test_default_connectors_hold_production_sleeper(self) -> None:
-        policy, content = build_youthcenter_connectors(api_key_provider=lambda: "x")
+        policy, content = build_youthcenter_connectors(
+            policy_api_key_provider=lambda: "x",
+            content_api_key_provider=lambda: "y",
+        )
         self.assertIs(policy.http.sleep, PRODUCTION_SLEEP)
         self.assertIs(content.http.sleep, PRODUCTION_SLEEP)
 

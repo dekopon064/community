@@ -306,6 +306,8 @@ class CliArgumentTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("python scripts/fetch_and_save.py", workflow)
         self.assertNotIn("run_ingest_architecture.py", workflow)
+        self.assertIn("YOUTH_API_KEY", workflow)
+        self.assertNotIn("YOUTH_CONTENT_API_KEY", workflow)
 
 
 SECRET_MARKER = "svc-secret-marker-DoNotLog"
@@ -615,6 +617,172 @@ class CliInvalidCapabilityTests(unittest.TestCase):
         self.assertEqual(spy.get_source_calls, 0)
         self.assertEqual(spy.start_calls, 0)
         self.assertNotIn("guaranteed_descending", stdout + stderr)
+
+
+POLICY_KEY_MARKER = "cli-policy-key-marker-DoNotLog"
+CONTENT_KEY_MARKER = "cli-content-key-marker-DoNotLog"
+CONTENT_EXECUTE_ARGV = ["--source", CANONICAL_CONTENT_SOURCE, "--execute"]
+CONTENT_COMPLETE = SourceRunResult(
+    CANONICAL_CONTENT_SOURCE,
+    status="complete",
+    stop_reason="empty_batch",
+    batches_ok=1,
+    http_request_count=1,
+    bootstrap_complete=True,
+)
+
+
+class CliCredentialSeparationTests(unittest.TestCase):
+    BASE_ENV = {
+        "SUPABASE_URL": "https://example.invalid",
+        "SUPABASE_SERVICE_KEY": "local-test-key",
+    }
+
+    def _run(
+        self,
+        argv: list[str],
+        env: dict[str, str],
+    ) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            with patch.dict(os.environ, env, clear=True):
+                code = cli.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def _assert_secret_safe(self, stdout: str, stderr: str) -> None:
+        blob = stdout + stderr
+        self.assertNotIn(POLICY_KEY_MARKER, blob)
+        self.assertNotIn(CONTENT_KEY_MARKER, blob)
+        self.assertNotIn("apiKeyNm", blob)
+        self.assertNotIn("https://www.youthcenter.go.kr", blob)
+        self.assertNotIn("youthPolicyList", blob)
+        self.assertNotIn("Traceback", blob)
+
+    def test_policy_execute_uses_policy_key_without_content_key(self) -> None:
+        env = {**self.BASE_ENV, "YOUTH_API_KEY": POLICY_KEY_MARKER}
+        captured: dict[str, str] = {}
+
+        def capture_policy(*_args: object, **kwargs: object) -> object:
+            provider = kwargs.get("api_key_provider")
+            assert callable(provider)
+            captured["value"] = provider()
+            return object()
+
+        with patch(
+            "run_ingest_architecture.create_ingest_client",
+            return_value=SimpleNamespace(),
+        ) as create:
+            with patch("run_ingest_architecture.SupabaseIngestStore") as store:
+                with patch(
+                    "run_ingest_architecture.YouthcenterPolicyConnector",
+                    side_effect=capture_policy,
+                ):
+                    with patch(
+                        "run_ingest_architecture.YouthcenterContentConnector"
+                    ) as content:
+                        with patch(
+                            "run_ingest_architecture.run_ingest_architecture",
+                            return_value=_result(),
+                        ) as run:
+                            code, stdout, stderr = self._run(EXECUTE_ARGV, env)
+        self.assertEqual(code, 0)
+        create.assert_called_once()
+        store.assert_called_once()
+        run.assert_called_once()
+        content.assert_not_called()
+        self.assertEqual(captured["value"], POLICY_KEY_MARKER)
+        self.assertIn("ingest source=", stdout)
+        self.assertNotIn("ingest ai=", stdout)
+        self._assert_secret_safe(stdout, stderr)
+
+    def test_content_policy_key_only_fails_before_client(self) -> None:
+        env = {**self.BASE_ENV, "YOUTH_API_KEY": POLICY_KEY_MARKER}
+        with patch("run_ingest_architecture.create_ingest_client") as create:
+            with patch("run_ingest_architecture.SupabaseIngestStore") as store:
+                with patch(
+                    "run_ingest_architecture.YouthcenterContentConnector"
+                ) as content:
+                    with patch(
+                        "run_ingest_architecture.YouthcenterPolicyConnector"
+                    ) as policy:
+                        with patch(
+                            "run_ingest_architecture.run_ingest_architecture"
+                        ) as run:
+                            code, stdout, stderr = self._run(
+                                CONTENT_EXECUTE_ARGV, env
+                            )
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr.strip(), cli.MISSING_CONTENT_KEY_MESSAGE)
+        self.assertEqual(stdout, "")
+        create.assert_not_called()
+        store.assert_not_called()
+        content.assert_not_called()
+        policy.assert_not_called()
+        run.assert_not_called()
+        self._assert_secret_safe(stdout, stderr)
+
+    def test_content_key_without_policy_key_configures_content_provider(self) -> None:
+        env = {**self.BASE_ENV, "YOUTH_CONTENT_API_KEY": CONTENT_KEY_MARKER}
+        captured: dict[str, str] = {}
+
+        def capture_content(*_args: object, **kwargs: object) -> object:
+            provider = kwargs.get("api_key_provider")
+            assert callable(provider)
+            captured["value"] = provider()
+            return object()
+
+        with patch(
+            "run_ingest_architecture.create_ingest_client",
+            return_value=SimpleNamespace(),
+        ) as create:
+            with patch("run_ingest_architecture.SupabaseIngestStore") as store:
+                with patch(
+                    "run_ingest_architecture.YouthcenterContentConnector",
+                    side_effect=capture_content,
+                ):
+                    with patch(
+                        "run_ingest_architecture.YouthcenterPolicyConnector"
+                    ) as policy:
+                        with patch(
+                            "run_ingest_architecture.run_ingest_architecture",
+                            return_value=_result(source=CONTENT_COMPLETE),
+                        ) as run:
+                            code, stdout, stderr = self._run(
+                                CONTENT_EXECUTE_ARGV, env
+                            )
+        self.assertEqual(code, 0)
+        create.assert_called_once()
+        store.assert_called_once()
+        run.assert_called_once()
+        policy.assert_not_called()
+        self.assertEqual(captured["value"], CONTENT_KEY_MARKER)
+        self.assertIn("source=youthcenter_content", stdout)
+        self.assertNotIn("ingest ai=", stdout)
+        self._assert_secret_safe(stdout, stderr)
+
+    def test_missing_key_tokens_are_distinct_and_secret_safe(self) -> None:
+        with patch("run_ingest_architecture.create_ingest_client") as create:
+            with patch("run_ingest_architecture.SupabaseIngestStore") as store:
+                with patch("run_ingest_architecture.run_ingest_architecture") as run:
+                    policy_code, policy_out, policy_err = self._run(
+                        EXECUTE_ARGV, dict(self.BASE_ENV)
+                    )
+                    content_code, content_out, content_err = self._run(
+                        CONTENT_EXECUTE_ARGV, dict(self.BASE_ENV)
+                    )
+        self.assertEqual(policy_code, 1)
+        self.assertEqual(content_code, 1)
+        self.assertEqual(policy_err.strip(), cli.MISSING_POLICY_KEY_MESSAGE)
+        self.assertEqual(content_err.strip(), cli.MISSING_CONTENT_KEY_MESSAGE)
+        self.assertNotEqual(policy_err.strip(), content_err.strip())
+        self.assertEqual(policy_out, "")
+        self.assertEqual(content_out, "")
+        create.assert_not_called()
+        store.assert_not_called()
+        run.assert_not_called()
+        self._assert_secret_safe(policy_out, policy_err)
+        self._assert_secret_safe(content_out, content_err)
 
 
 if __name__ == "__main__":
