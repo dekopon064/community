@@ -32,6 +32,11 @@ from ingest.attachments import (
 )
 from ingest.connectors.youthcenter_content import (
     CONTENT_API_KEY_ENV,
+    CONTENT_BOOTSTRAP_MAX_ITEMS,
+    CONTENT_BOOTSTRAP_MAX_PAGES,
+    CONTENT_HTTP_BUDGET,
+    CONTENT_MAX_PAGES,
+    CONTENT_MAX_RESPONSE_BYTES,
     CONTENT_PAGE_SIZE,
     YouthcenterContentConnector,
     content_job_and_flags,
@@ -48,10 +53,13 @@ from ingest.constants import (
 )
 from ingest.dates import parse_source_datetime
 from ingest.http_client import (
+    DEFAULT_MAX_RESPONSE_BYTES,
+    DEFAULT_TIMEOUT_SECONDS,
     HttpBudgetExhausted,
     HttpClient,
     HttpRequestFailed,
     HttpStatusError,
+    MAX_ATTEMPTS,
     PRODUCTION_SLEEP,
     RETRYABLE_STATUSES,
     ResponseTooLarge,
@@ -84,6 +92,47 @@ ATCH_SNIPPET = "data:text/plain;base64,QUFBQQ=="
 ATCH_MARKER = "ATCHFILE_MARKER_x7kQ2n"
 HTTP_KEY_MARKER = "ingest-http-marker-K9q2Vx7LmN4p"
 NO_SLEEP = lambda _seconds: None
+OBSERVED_CONTENT_PROBE_BYTES = 8_060_928
+
+
+def _ascii_json_of_size(n: int) -> bytes:
+    prefix = b'{"k":"'
+    suffix = b'"}'
+    pad = n - len(prefix) - len(suffix)
+    if pad < 0:
+        raise AssertionError("synthetic_json_too_small")
+    return prefix + (b"a" * pad) + suffix
+
+
+def _content_list_json_bytes(target: int) -> bytes:
+    seed = ATCH_MARKER
+
+    def encode(atch: str) -> bytes:
+        payload = {
+            "result": {
+                "youthPolicyList": [
+                    {
+                        "bbsSn": "bbs-1",
+                        "pstSn": "pst-1",
+                        "pstTtl": "title",
+                        "pstWholCn": "body-text",
+                        "pstSeNm": "cat",
+                        "atchFile": atch,
+                    }
+                ]
+            }
+        }
+        return json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode(
+            "ascii"
+        )
+
+    extra = target - len(encode(seed))
+    if extra < 0:
+        raise AssertionError("synthetic_content_json_too_small")
+    raw = encode(seed + ("x" * extra))
+    if len(raw) != target:
+        raise AssertionError("synthetic_content_json_size_mismatch")
+    return raw
 
 
 class FakeStreamResponse:
@@ -1583,6 +1632,178 @@ class ContentCredentialSeparationTests(unittest.TestCase):
         content.fetch_batch(None)
         self.assertEqual(captured["policy"]["apiKeyNm"], POLICY_KEY_MARKER)
         self.assertEqual(captured["content"]["apiKeyNm"], CONTENT_KEY_MARKER)
+
+
+class ContentResponseSizeTests(unittest.TestCase):
+    def test_content_cap_and_invariants_do_not_change_policy_http(self) -> None:
+        content = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        policy = YouthcenterPolicyConnector(api_key_provider=lambda: "unused")
+        generic = HttpClient(budget=1)
+        self.assertEqual(CONTENT_MAX_RESPONSE_BYTES, 16_000_000)
+        self.assertEqual(content.http.max_response_bytes, 16_000_000)
+        self.assertEqual(content.http.max_response_bytes, CONTENT_MAX_RESPONSE_BYTES)
+        self.assertEqual(DEFAULT_MAX_RESPONSE_BYTES, 8_000_000)
+        self.assertEqual(policy.http.max_response_bytes, 8_000_000)
+        self.assertEqual(generic.max_response_bytes, 8_000_000)
+        self.assertEqual(CONTENT_PAGE_SIZE, 2)
+        self.assertEqual(CONTENT_BOOTSTRAP_MAX_PAGES, 5)
+        self.assertEqual(CONTENT_BOOTSTRAP_MAX_ITEMS, 10)
+        self.assertEqual(CONTENT_MAX_PAGES, 5)
+        self.assertEqual(CONTENT_HTTP_BUDGET, 15)
+        self.assertEqual(content.page_size, 2)
+        self.assertEqual(content.bootstrap_max_pages, 5)
+        self.assertEqual(content.bootstrap_max_items, 10)
+        self.assertEqual(content.max_pages, 5)
+        self.assertEqual(content.http_budget, 15)
+        self.assertEqual(content.ordering_capability, "require_descending")
+        self.assertEqual(content.http.timeout_seconds, 15)
+        self.assertEqual(content.http.max_attempts, 3)
+        self.assertEqual(DEFAULT_TIMEOUT_SECONDS, 15)
+        self.assertEqual(MAX_ATTEMPTS, 3)
+        self.assertEqual(policy.http.timeout_seconds, DEFAULT_TIMEOUT_SECONDS)
+        self.assertEqual(policy.http.max_attempts, MAX_ATTEMPTS)
+
+    def test_content_cap_allows_one_byte_under_and_exact_limit(self) -> None:
+        under = _ascii_json_of_size(CONTENT_MAX_RESPONSE_BYTES - 1)
+        exact = _ascii_json_of_size(CONTENT_MAX_RESPONSE_BYTES)
+
+        def transport_under(*_a: Any, **_k: Any) -> FakeStreamResponse:
+            return FakeStreamResponse(200, chunks=[under])
+
+        def transport_exact(*_a: Any, **_k: Any) -> FakeStreamResponse:
+            return FakeStreamResponse(200, chunks=[exact])
+
+        under_client = HttpClient(
+            budget=5,
+            max_response_bytes=CONTENT_MAX_RESPONSE_BYTES,
+            sleep=NO_SLEEP,
+            transport=transport_under,
+        )
+        exact_client = HttpClient(
+            budget=5,
+            max_response_bytes=CONTENT_MAX_RESPONSE_BYTES,
+            sleep=NO_SLEEP,
+            transport=transport_exact,
+        )
+        payload_under, status_under, size_under = under_client.get_json(
+            "https://example.test/x"
+        )
+        payload_exact, status_exact, size_exact = exact_client.get_json(
+            "https://example.test/x"
+        )
+        self.assertEqual(status_under, 200)
+        self.assertEqual(status_exact, 200)
+        self.assertEqual(size_under, CONTENT_MAX_RESPONSE_BYTES - 1)
+        self.assertEqual(size_exact, CONTENT_MAX_RESPONSE_BYTES)
+        self.assertIsInstance(payload_under, dict)
+        self.assertIsInstance(payload_exact, dict)
+
+    def test_content_length_over_cap_does_not_stream_or_parse(self) -> None:
+        response = FakeStreamResponse(
+            200,
+            headers={"Content-Length": str(CONTENT_MAX_RESPONSE_BYTES + 1)},
+            chunks=[ATCH_MARKER.encode("ascii")],
+        )
+        client = HttpClient(
+            budget=5,
+            max_response_bytes=CONTENT_MAX_RESPONSE_BYTES,
+            sleep=NO_SLEEP,
+            transport=lambda *_a, **_k: response,
+        )
+        with patch("ingest.http_client.json.loads") as loads:
+            with self.assertRaises(ResponseTooLarge) as ctx:
+                client.get_json("https://example.test/x")
+            loads.assert_not_called()
+        self.assertEqual(response.chunk_reads, 0)
+        self.assertTrue(response.closed)
+        self.assertEqual(str(ctx.exception), "response_too_large")
+        self.assertNotIn(ATCH_MARKER, str(ctx.exception))
+        self.assertEqual(client.request_count, 1)
+
+    def test_streaming_over_cap_does_not_parse_json(self) -> None:
+        response = FakeStreamResponse(
+            200,
+            headers={},
+            chunks=[
+                b"a" * CONTENT_MAX_RESPONSE_BYTES,
+                ATCH_MARKER.encode("ascii"),
+            ],
+        )
+        client = HttpClient(
+            budget=5,
+            max_response_bytes=CONTENT_MAX_RESPONSE_BYTES,
+            sleep=NO_SLEEP,
+            transport=lambda *_a, **_k: response,
+        )
+        with patch("ingest.http_client.json.loads") as loads:
+            with self.assertRaises(ResponseTooLarge) as ctx:
+                client.get_json("https://example.test/x")
+            loads.assert_not_called()
+        self.assertEqual(response.chunk_reads, 2)
+        self.assertTrue(response.closed)
+        self.assertEqual(str(ctx.exception), "response_too_large")
+        self.assertNotIn(ATCH_MARKER, str(ctx.exception))
+        self.assertNotIn(ATCH_MARKER, repr(ctx.exception))
+        self.assertEqual(client.request_count, 1)
+
+    def test_one_byte_over_cap_is_blocked_before_json(self) -> None:
+        response = FakeStreamResponse(
+            200,
+            headers={},
+            chunks=[b"a" * (CONTENT_MAX_RESPONSE_BYTES + 1)],
+        )
+        client = HttpClient(
+            budget=5,
+            max_response_bytes=CONTENT_MAX_RESPONSE_BYTES,
+            sleep=NO_SLEEP,
+            transport=lambda *_a, **_k: response,
+        )
+        with patch("ingest.http_client.json.loads") as loads:
+            with self.assertRaises(ResponseTooLarge):
+                client.get_json("https://example.test/x")
+            loads.assert_not_called()
+        self.assertEqual(response.chunk_reads, 1)
+        self.assertTrue(response.closed)
+        self.assertEqual(client.request_count, 1)
+
+    def test_observed_probe_size_parses_and_drops_attachment(self) -> None:
+        raw = _content_list_json_bytes(OBSERVED_CONTENT_PROBE_BYTES)
+        self.assertEqual(len(raw), OBSERVED_CONTENT_PROBE_BYTES)
+
+        def transport(*_a: Any, **_k: Any) -> FakeStreamResponse:
+            return FakeStreamResponse(200, chunks=[raw])
+
+        http = HttpClient(
+            budget=CONTENT_HTTP_BUDGET,
+            max_response_bytes=CONTENT_MAX_RESPONSE_BYTES,
+            sleep=NO_SLEEP,
+            transport=transport,
+        )
+        connector = YouthcenterContentConnector(
+            http=http, api_key_provider=lambda: "unused-key"
+        )
+        batch = connector.fetch_batch(None)
+        self.assertEqual(len(batch.items), 1)
+        item = batch.items[0]
+        self.assertNotIn("atchFile", item)
+        self.assertFalse(contains_forbidden_attachment_key(item))
+        self.assertTrue(item["attachment_present"])
+        dumped_item = json.dumps(item, ensure_ascii=True)
+        self.assertNotIn(ATCH_MARKER, dumped_item)
+
+        record = connector.to_observation(
+            item, permission_status="testing_only", enabled=True
+        )
+        normalized = record.normalized_payload or {}
+        dumped_normalized = json.dumps(normalized, ensure_ascii=True)
+        dumped_rpc = json.dumps(record.to_rpc_item(), ensure_ascii=True)
+        self.assertNotIn(ATCH_MARKER, dumped_normalized)
+        self.assertNotIn(ATCH_MARKER, dumped_rpc)
+        self.assertNotIn("atchFile", dumped_normalized)
+        self.assertNotIn("atchFile", dumped_rpc)
+        self.assertNotIn(ATCH_MARKER, record.revision_hash)
+        self.assertFalse(contains_forbidden_attachment_key(normalized))
+        self.assertEqual(record.external_key, "bbs-1:pst-1")
 
 
 class ConnectorRequestAndAttachmentFollowupTests(unittest.TestCase):
