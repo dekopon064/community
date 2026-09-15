@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from ingest.models import BatchResult, Checkpoint, ObservationRecord, StartMode
+from ingest.models import (
+    BatchResult,
+    Checkpoint,
+    ObservationRecord,
+    OrderingCapability,
+    StartMode,
+)
 
 
 class BatchConnector:
@@ -19,6 +25,8 @@ class BatchConnector:
     http_budget: int
     streak_needed: int = 3
     batch_delay_seconds: float = 1.0
+    # Subclasses must set this. There is no implicit default.
+    ordering_capability: OrderingCapability
 
     def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:
         raise NotImplementedError

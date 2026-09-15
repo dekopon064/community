@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Protocol
 
 StartMode = Literal["fresh_from_origin", "resume_committed"]
+# Orchestrator processing policy, not an official source sort guarantee.
+OrderingCapability = Literal["require_descending", "untrusted"]
+OrderingDiagnostic = Literal["missing_stamp", "non_monotonic_stamp"]
+ORDERING_CAPABILITIES: frozenset[str] = frozenset(
+    {"require_descending", "untrusted"}
+)
+ORDERING_DIAGNOSTIC_ORDER: tuple[str, ...] = (
+    "missing_stamp",
+    "non_monotonic_stamp",
+)
 Disposition = Literal[
     "target",
     "non_target",
@@ -193,6 +203,8 @@ class SourceConnector(Protocol):
     http_budget: int
     streak_needed: int
     batch_delay_seconds: float
+    # Required. Missing or unknown values fail closed before ingest I/O.
+    ordering_capability: OrderingCapability
 
     def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:
         ...

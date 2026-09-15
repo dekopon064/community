@@ -24,6 +24,7 @@ from ingest.ai_worker import (
 from ingest.orchestrator import SourceRunResult
 from ingest.run import IngestArchitectureResult
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
+from ingest.store import MemoryIngestStore
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "daily-pipeline.yml"
@@ -496,6 +497,124 @@ class CliExecutionBoundaryTests(unittest.TestCase):
         self.assertIn("ingest exit=0", stdout)
         self.assertEqual(stderr, "")
         self.assertEqual(run.call_count, 1)
+        self.assertIn("ordering=ok", stdout)
+
+
+class CliOrderingSummaryTests(unittest.TestCase):
+    def test_configured_range_complete_is_success(self) -> None:
+        source = SourceRunResult(
+            CANONICAL_POLICY_SOURCE,
+            status="complete",
+            stop_reason="configured_range_complete",
+            batches_ok=10,
+            http_request_count=10,
+            bootstrap_complete=True,
+        )
+        self.assertEqual(cli.cli_exit_code(_result(source=source), run_ai=False), 0)
+
+    def test_ordering_tokens_are_deterministic(self) -> None:
+        cases = [
+            (frozenset(), "ordering=ok"),
+            (frozenset({"missing_stamp"}), "ordering=missing_stamp"),
+            (frozenset({"non_monotonic_stamp"}), "ordering=non_monotonic_stamp"),
+            (
+                frozenset({"non_monotonic_stamp", "missing_stamp"}),
+                "ordering=missing_stamp,non_monotonic_stamp",
+            ),
+        ]
+        for diagnostics, token in cases:
+            source = SourceRunResult(
+                CANONICAL_POLICY_SOURCE,
+                status="complete",
+                stop_reason="bootstrap_range_complete",
+                batches_ok=5,
+                http_request_count=5,
+                bootstrap_complete=True,
+                ordering_diagnostics=diagnostics,
+            )
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                cli._print_summary(_result(source=source), run_ai=False, exit_code=0)
+            text = stdout.getvalue()
+            self.assertIn(token, text)
+            self.assertNotIn(" ", token.split("=", 1)[1].replace(",", ""))
+            for marker in (SECRET_MARKER, URL_QUERY_MARKER, PAYLOAD_MARKER):
+                self.assertNotIn(marker, text)
+            self.assertNotIn("plcyNo", text)
+            self.assertNotIn("https://", text)
+
+
+class _SpyMemoryStore(MemoryIngestStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.get_source_calls = 0
+        self.start_calls = 0
+
+    def get_source(self, source_id: str):  # type: ignore[no-untyped-def]
+        self.get_source_calls += 1
+        return super().get_source(source_id)
+
+    def start_ingest_run(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self.start_calls += 1
+        return super().start_ingest_run(*args, **kwargs)
+
+
+class _MissingOrderingConnector:
+    canonical_source_id = CANONICAL_POLICY_SOURCE
+
+    def fetch_batch(self, checkpoint):  # type: ignore[no-untyped-def]
+        raise AssertionError("youth_api_called")
+
+
+class _InvalidOrderingConnector:
+    canonical_source_id = CANONICAL_POLICY_SOURCE
+    ordering_capability = "guaranteed_descending"
+
+    def fetch_batch(self, checkpoint):  # type: ignore[no-untyped-def]
+        raise AssertionError("youth_api_called")
+
+
+class CliInvalidCapabilityTests(unittest.TestCase):
+    def _run_with_connector(self, connector: object) -> tuple[int, str, str, _SpyMemoryStore]:
+        spy = _SpyMemoryStore()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            with patch.dict(os.environ, EXECUTE_ENV, clear=True):
+                with patch(
+                    "run_ingest_architecture.create_ingest_client",
+                    return_value=SimpleNamespace(),
+                ):
+                    with patch(
+                        "run_ingest_architecture.SupabaseIngestStore",
+                        return_value=spy,
+                    ):
+                        with patch(
+                            "run_ingest_architecture.YouthcenterPolicyConnector",
+                            return_value=connector,
+                        ):
+                            code = cli.main(EXECUTE_ARGV)
+        return code, stdout.getvalue(), stderr.getvalue(), spy
+
+    def test_missing_capability_is_secret_safe_cli_failure(self) -> None:
+        code, stdout, stderr, spy = self._run_with_connector(_MissingOrderingConnector())
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr.strip(), cli.EXECUTION_FAILED_MESSAGE)
+        self.assertEqual(stdout, "")
+        self.assertNotIn("Traceback", stdout + stderr)
+        self.assertEqual(spy.get_source_calls, 0)
+        self.assertEqual(spy.start_calls, 0)
+        for marker in (SECRET_MARKER, URL_QUERY_MARKER, PAYLOAD_MARKER):
+            self.assertNotIn(marker, stdout + stderr)
+
+    def test_invalid_capability_is_secret_safe_cli_failure(self) -> None:
+        code, stdout, stderr, spy = self._run_with_connector(_InvalidOrderingConnector())
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr.strip(), cli.EXECUTION_FAILED_MESSAGE)
+        self.assertEqual(stdout, "")
+        self.assertEqual(spy.get_source_calls, 0)
+        self.assertEqual(spy.start_calls, 0)
+        self.assertNotIn("guaranteed_descending", stdout + stderr)
 
 
 if __name__ == "__main__":

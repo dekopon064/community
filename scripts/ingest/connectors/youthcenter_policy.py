@@ -23,6 +23,7 @@ from ingest.models import (
     Checkpoint,
     JobPlan,
     ObservationRecord,
+    OrderingCapability,
 )
 from ingest.region import classify_policy_disposition
 from ingest.sanitize import html_to_plain_text, is_http_url
@@ -163,6 +164,7 @@ class YouthcenterPolicyConnector(BatchConnector):
     bootstrap_max_items = POLICY_BOOTSTRAP_MAX_ITEMS
     max_pages = POLICY_MAX_PAGES
     http_budget = POLICY_HTTP_BUDGET
+    ordering_capability: OrderingCapability = "untrusted"
 
     def __init__(
         self,

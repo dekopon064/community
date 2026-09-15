@@ -11,10 +11,12 @@ from ingest.http_client import (
     ResponseTooLarge,
 )
 from ingest.models import (
-    BatchResult,
     Checkpoint,
     ObservationRecord,
     ObservationResult,
+    ORDERING_CAPABILITIES,
+    ORDERING_DIAGNOSTIC_ORDER,
+    OrderingCapability,
     SourceConnector,
     StartMode,
 )
@@ -30,6 +32,39 @@ SleepFn = Callable[[float], None]
 BOOTSTRAP_COMPLETE_REASONS = frozenset(
     {"bootstrap_range_complete", "empty_batch", "short_batch"}
 )
+ORDERING_OVERLAY_EXEMPT_REASONS = frozenset(
+    {
+        "empty_batch",
+        "short_batch",
+        "lease_lost",
+        "http_budget_exhausted",
+        "response_too_large",
+    }
+)
+
+
+class InvalidOrderingCapability(RuntimeError):
+    """Missing or unsupported ordering_capability. Do not coerce the value."""
+
+    def __init__(self) -> None:
+        super().__init__("invalid_ordering_capability")
+
+
+def require_ordering_capability(connector: object) -> OrderingCapability:
+    try:
+        value = connector.ordering_capability
+    except AttributeError:
+        raise InvalidOrderingCapability() from None
+    if value not in ORDERING_CAPABILITIES:
+        raise InvalidOrderingCapability()
+    return value  # type: ignore[return-value]
+
+
+def format_ordering_cli_token(diagnostics: Iterable[str]) -> str:
+    parts = [name for name in ORDERING_DIAGNOSTIC_ORDER if name in set(diagnostics)]
+    if not parts:
+        return "ok"
+    return ",".join(parts)
 
 
 class SourceRunResult:
@@ -43,6 +78,7 @@ class SourceRunResult:
         http_request_count: int,
         bootstrap_complete: bool,
         skipped: bool = False,
+        ordering_diagnostics: frozenset[str] = frozenset(),
     ) -> None:
         self.source_id = source_id
         self.status = status
@@ -51,6 +87,10 @@ class SourceRunResult:
         self.http_request_count = http_request_count
         self.bootstrap_complete = bootstrap_complete
         self.skipped = skipped
+        self.ordering_diagnostics = frozenset(ordering_diagnostics)
+
+    def ordering_cli_token(self) -> str:
+        return format_ordering_cli_token(self.ordering_diagnostics)
 
 
 def record_sort_stamp(record: ObservationRecord) -> str | None:
@@ -64,18 +104,18 @@ def record_sort_stamp(record: ObservationRecord) -> str | None:
 def ordering_anomaly_in_records(
     records: Sequence[ObservationRecord],
     previous: str | None = None,
-) -> tuple[bool, str | None]:
-    anomaly = False
+) -> tuple[bool, str | None, frozenset[str]]:
+    found: set[str] = set()
     last = previous
     for record in records:
         stamp = record_sort_stamp(record)
         if stamp is None:
-            anomaly = True
+            found.add("missing_stamp")
             continue
         if last is not None and stamp > last:
-            anomaly = True
+            found.add("non_monotonic_stamp")
         last = stamp
-    return anomaly, last
+    return bool(found), last, frozenset(found)
 
 
 def streak_delta(results: Sequence[ObservationResult]) -> int | None:
@@ -103,6 +143,7 @@ def run_connector(
     enabled: bool | None = None,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
 ) -> SourceRunResult:
+    capability = require_ordering_capability(connector)
     source_id = connector.canonical_source_id
     source_row = store.get_source(source_id)
     enabled_flag = source_row["enabled"] if enabled is None else enabled
@@ -142,6 +183,7 @@ def run_connector(
     streak = 0
     anomaly = False
     last_stamp: str | None = None
+    ordering_diagnostics: set[str] = set()
     batches_ok = 0
     pages_fetched = 0
     items_committed = 0
@@ -186,9 +228,10 @@ def run_connector(
                 )
                 if record.external_key:
                     records.append(record)
-            found_anomaly, last_stamp = ordering_anomaly_in_records(
+            found_anomaly, last_stamp, batch_diagnostics = ordering_anomaly_in_records(
                 records, last_stamp
             )
+            ordering_diagnostics.update(batch_diagnostics)
             if found_anomaly:
                 anomaly = True
 
@@ -220,7 +263,7 @@ def run_connector(
             items_committed += len(records)
             checkpoint = batch.next_checkpoint
 
-            if not anomaly:
+            if capability == "require_descending" and not anomaly:
                 delta = streak_delta(results)
                 if delta is None:
                     streak = 0
@@ -246,7 +289,8 @@ def run_connector(
                 break
 
             if (
-                not bootstrap
+                capability == "require_descending"
+                and not bootstrap
                 and not anomaly
                 and streak >= connector.streak_needed
             ):
@@ -260,24 +304,24 @@ def run_connector(
                 mark_bootstrap_complete = bootstrap
                 break
         else:
-            if anomaly:
-                status = "incomplete"
-                stop_reason = "ordering_anomaly"
-            elif bootstrap and batches_ok > 0:
+            if bootstrap and batches_ok > 0:
                 status = "complete"
                 stop_reason = "bootstrap_range_complete"
                 mark_bootstrap_complete = True
+            elif capability == "untrusted" and batches_ok > 0:
+                # Configured observation range finished. Not full source coverage.
+                # Store last_success_at, if updated, is this range's success time.
+                status = "complete"
+                stop_reason = "configured_range_complete"
             else:
                 status = "incomplete" if batches_ok else "failed"
                 stop_reason = "max_pages"
 
-        if anomaly and stop_reason not in {
-            "empty_batch",
-            "short_batch",
-            "lease_lost",
-            "http_budget_exhausted",
-            "response_too_large",
-        }:
+        if (
+            capability == "require_descending"
+            and anomaly
+            and stop_reason not in ORDERING_OVERLAY_EXEMPT_REASONS
+        ):
             status = "incomplete"
             stop_reason = "ordering_anomaly"
             mark_bootstrap_complete = False
@@ -318,6 +362,7 @@ def run_connector(
             batches_ok=batches_ok,
             http_request_count=_http_count(connector),
             bootstrap_complete=False,
+            ordering_diagnostics=frozenset(ordering_diagnostics),
         )
 
     result_status = finish_result.status
@@ -330,6 +375,7 @@ def run_connector(
             batches_ok=batches_ok,
             http_request_count=_http_count(connector),
             bootstrap_complete=False,
+            ordering_diagnostics=frozenset(ordering_diagnostics),
         )
     return SourceRunResult(
         source_id,
@@ -342,6 +388,7 @@ def run_connector(
             and result_status == "complete"
             and result_reason in BOOTSTRAP_COMPLETE_REASONS
         ),
+        ordering_diagnostics=frozenset(ordering_diagnostics),
     )
 
 
@@ -355,6 +402,8 @@ def run_ingest(
     for connector in connectors:
         try:
             results.append(run_connector(connector, store, sleep=sleep))
+        except InvalidOrderingCapability:
+            raise
         except Exception:
             results.append(
                 SourceRunResult(

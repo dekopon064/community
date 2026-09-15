@@ -54,7 +54,13 @@ from ingest.http_client import (
     ResponseTooLarge,
 )
 from ingest.models import BatchResult, Checkpoint, FinishRunResult, ObservationRecord
-from ingest.orchestrator import run_connector, run_ingest
+from ingest.orchestrator import (
+    BOOTSTRAP_COMPLETE_REASONS,
+    InvalidOrderingCapability,
+    format_ordering_cli_token,
+    run_connector,
+    run_ingest,
+)
 from ingest.region import classify_eligibility, classify_policy_disposition
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.run import build_youthcenter_connectors, run_ingest_architecture
@@ -136,6 +142,7 @@ class FakeConnector:
     http_budget = 30
     streak_needed = 3
     batch_delay_seconds = 1.0
+    ordering_capability = "require_descending"
 
     def __init__(
         self,
@@ -146,7 +153,9 @@ class FakeConnector:
         http_budget: int = 30,
         max_pages: int = 10,
         bootstrap_max_pages: int = 5,
+        bootstrap_max_items: int = 25,
         source_id: str = CANONICAL_POLICY_SOURCE,
+        ordering_capability: str = "require_descending",
     ) -> None:
         self.batches = list(batches or [])
         self.fetch_error = fetch_error
@@ -156,7 +165,9 @@ class FakeConnector:
         self.http_budget = http_budget
         self.max_pages = max_pages
         self.bootstrap_max_pages = bootstrap_max_pages
+        self.bootstrap_max_items = bootstrap_max_items
         self.canonical_source_id = source_id
+        self.ordering_capability = ordering_capability
         self.calls = 0
         self.http = SimpleNamespace(request_count=0)
 
@@ -214,6 +225,73 @@ def observation_for(item: dict[str, Any]) -> ObservationRecord:
     return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
         item, permission_status="testing_only", enabled=True
     )
+
+
+def _page_batches(
+    items: list[dict[str, Any]],
+    *,
+    page_size: int = 5,
+    natural_end: bool = False,
+) -> list[BatchResult]:
+    batches: list[BatchResult] = []
+    page = 1
+    for start in range(0, len(items), page_size):
+        chunk = items[start : start + page_size]
+        last = start + page_size >= len(items)
+        batches.append(
+            BatchResult(
+                items=tuple(chunk),
+                next_checkpoint=(
+                    None
+                    if last and natural_end
+                    else Checkpoint.for_rest_page(page + 1)
+                ),
+                natural_end=last and natural_end,
+            )
+        )
+        page += 1
+    return batches
+
+
+def _descending_target(key: str, rank: int, **extra: Any) -> dict[str, Any]:
+    day = max(1, 28 - rank)
+    extra.setdefault("updated", f"2026-08-{day:02d} 12:00:00")
+    extra.setdefault("created", "2026-08-01 12:00:00")
+    extra.setdefault("title", f"합성정책{rank:02d}")
+    return policy_item(key, zip_cd="11680", oper_cd="11680", **extra)
+
+
+def _hide_ordering_capability(inner: FakeConnector) -> Any:
+    class Hidden:
+        def __init__(self, wrapped: FakeConnector) -> None:
+            object.__setattr__(self, "_wrapped", wrapped)
+
+        def __getattr__(self, name: str) -> Any:
+            if name == "ordering_capability":
+                raise AttributeError(name)
+            return getattr(self._wrapped, name)
+
+    return Hidden(inner)
+
+
+class _SpyStore(MemoryIngestStore):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.get_source_calls = 0
+        self.start_calls = 0
+        self.upsert_calls = 0
+
+    def get_source(self, source_id: str) -> dict[str, Any]:
+        self.get_source_calls += 1
+        return super().get_source(source_id)
+
+    def start_ingest_run(self, *args: Any, **kwargs: Any) -> Any:
+        self.start_calls += 1
+        return super().start_ingest_run(*args, **kwargs)
+
+    def upsert_source_observations(self, *args: Any, **kwargs: Any) -> Any:
+        self.upsert_calls += 1
+        return super().upsert_source_observations(*args, **kwargs)
 
 
 def _ai_deps(**overrides: Any) -> dict[str, Any]:
@@ -1882,6 +1960,618 @@ class SourceCompleteAiGateTests(unittest.TestCase):
         self.assertEqual(result.ai.status, AI_SKIPPED_SOURCE_INCOMPLETE)
         self.assertEqual(result.ai.claimed, 0)
         self.assertEqual(store.claim_calls, 0)
+
+
+class OrderingCapabilityDeclarationTests(unittest.TestCase):
+    def test_policy_is_untrusted(self) -> None:
+        self.assertEqual(
+            YouthcenterPolicyConnector.ordering_capability, "untrusted"
+        )
+        connector = YouthcenterPolicyConnector(api_key_provider=lambda: "unused")
+        self.assertEqual(connector.ordering_capability, "untrusted")
+
+    def test_content_is_require_descending(self) -> None:
+        self.assertEqual(
+            YouthcenterContentConnector.ordering_capability, "require_descending"
+        )
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        self.assertEqual(connector.ordering_capability, "require_descending")
+
+    def test_fake_connector_is_explicit_require_descending(self) -> None:
+        self.assertEqual(FakeConnector.ordering_capability, "require_descending")
+        self.assertEqual(FakeConnector().ordering_capability, "require_descending")
+
+    def test_configured_range_complete_is_not_bootstrap_reason(self) -> None:
+        self.assertNotIn("configured_range_complete", BOOTSTRAP_COMPLETE_REASONS)
+
+
+class InvalidOrderingCapabilityTests(unittest.TestCase):
+    def test_missing_capability_fails_before_store_or_fetch(self) -> None:
+        store = _SpyStore()
+        inner = FakeConnector(
+            batches=_page_batches([_descending_target("cap-miss-01", 0)])
+        )
+        connector = _hide_ordering_capability(inner)
+        with self.assertRaises(InvalidOrderingCapability) as caught:
+            run_connector(connector, store, sleep=NO_SLEEP)
+        self.assertEqual(str(caught.exception), "invalid_ordering_capability")
+        self.assertEqual(store.get_source_calls, 0)
+        self.assertEqual(store.start_calls, 0)
+        self.assertEqual(store.upsert_calls, 0)
+        self.assertEqual(inner.calls, 0)
+        self.assertEqual(store.items, {})
+        self.assertEqual(store.jobs, {})
+
+    def test_invalid_capability_fails_before_store_or_fetch(self) -> None:
+        store = _SpyStore()
+        connector = FakeConnector(
+            batches=_page_batches([_descending_target("cap-bad-01", 0)]),
+            ordering_capability="guaranteed_descending",
+        )
+        with self.assertRaises(InvalidOrderingCapability):
+            run_connector(connector, store, sleep=NO_SLEEP)
+        self.assertEqual(store.get_source_calls, 0)
+        self.assertEqual(store.start_calls, 0)
+        self.assertEqual(store.upsert_calls, 0)
+        self.assertEqual(connector.calls, 0)
+
+    def test_none_and_empty_capability_are_not_coerced(self) -> None:
+        for value in (None, ""):
+            store = _SpyStore()
+            connector = FakeConnector(
+                batches=_page_batches([_descending_target("cap-empty-01", 0)]),
+                ordering_capability=value,  # type: ignore[arg-type]
+            )
+            with self.assertRaises(InvalidOrderingCapability):
+                run_connector(connector, store, sleep=NO_SLEEP)
+            self.assertEqual(store.get_source_calls, 0)
+            self.assertEqual(store.start_calls, 0)
+            self.assertEqual(connector.calls, 0)
+
+    def test_run_ingest_does_not_isolate_invalid_capability(self) -> None:
+        store = _SpyStore()
+        connector = FakeConnector(ordering_capability="trusted")
+        with self.assertRaises(InvalidOrderingCapability):
+            run_ingest([connector], store, sleep=NO_SLEEP)
+        self.assertEqual(store.get_source_calls, 0)
+        self.assertEqual(store.start_calls, 0)
+
+
+class OrderingDiagnosticTests(unittest.TestCase):
+    def test_cli_token_four_states(self) -> None:
+        self.assertEqual(format_ordering_cli_token(frozenset()), "ok")
+        self.assertEqual(
+            format_ordering_cli_token(frozenset({"missing_stamp"})), "missing_stamp"
+        )
+        self.assertEqual(
+            format_ordering_cli_token(frozenset({"non_monotonic_stamp"})),
+            "non_monotonic_stamp",
+        )
+        self.assertEqual(
+            format_ordering_cli_token(
+                frozenset({"non_monotonic_stamp", "missing_stamp"})
+            ),
+            "missing_stamp,non_monotonic_stamp",
+        )
+
+    def test_ok_descending_bootstrap(self) -> None:
+        items = [_descending_target(f"ok-{i:02d}", i) for i in range(25)]
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(batches=_page_batches(items), ordering_capability="untrusted"),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.ordering_cli_token(), "ok")
+        self.assertEqual(result.ordering_diagnostics, frozenset())
+
+    def test_missing_stamp_only(self) -> None:
+        items = [
+            policy_item(
+                f"miss-{i:02d}",
+                zip_cd="11680",
+                oper_cd="11680",
+                updated="",
+                created="",
+                title=f"누락{i:02d}",
+            )
+            for i in range(5)
+        ]
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items, page_size=5, natural_end=True),
+                ordering_capability="untrusted",
+                bootstrap_max_items=5,
+                bootstrap_max_pages=1,
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.ordering_cli_token(), "missing_stamp")
+        self.assertNotIn("non_monotonic_stamp", result.ordering_diagnostics)
+
+    def test_unparsed_stamp_is_missing_stamp(self) -> None:
+        items = [
+            policy_item(
+                "unparsed-01",
+                zip_cd="11680",
+                oper_cd="11680",
+                updated="not-a-date",
+                created="also-bad",
+                title="합성언파스드",
+            )
+        ]
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items, page_size=1, natural_end=True),
+                ordering_capability="untrusted",
+                bootstrap_max_items=1,
+                bootstrap_max_pages=1,
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.ordering_cli_token(), "missing_stamp")
+        self.assertIn((CANONICAL_POLICY_SOURCE, "unparsed-01"), store.items)
+
+    def test_non_monotonic_stamp_only(self) -> None:
+        items = [_descending_target(f"mono-{i:02d}", i) for i in range(10)]
+        items[5] = _descending_target(
+            "mono-05", 5, updated="2026-09-15 12:00:00"
+        )
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items),
+                ordering_capability="untrusted",
+                bootstrap_max_items=10,
+                bootstrap_max_pages=2,
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.ordering_cli_token(), "non_monotonic_stamp")
+
+    def test_compound_missing_and_non_monotonic(self) -> None:
+        items = [
+            _descending_target("both-00", 0),
+            policy_item(
+                "both-01",
+                zip_cd="11680",
+                oper_cd="11680",
+                updated="",
+                created="",
+                title="합성누락",
+            ),
+            _descending_target("both-02", 2, updated="2026-09-20 12:00:00"),
+        ]
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items, page_size=3, natural_end=True),
+                ordering_capability="untrusted",
+                bootstrap_max_items=3,
+                bootstrap_max_pages=1,
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(
+            result.ordering_cli_token(), "missing_stamp,non_monotonic_stamp"
+        )
+        self.assertEqual(result.status, "complete")
+        blob = result.ordering_cli_token()
+        self.assertNotIn("https://", blob)
+        self.assertNotIn("합성누락", blob)
+        self.assertNotIn("both-01", blob)
+
+
+class RequireDescendingBehaviorTests(unittest.TestCase):
+    def test_strict_descending_bootstrap_completes(self) -> None:
+        items = [_descending_target(f"strict-ok-{i:02d}", i) for i in range(25)]
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(batches=_page_batches(items)),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertTrue(result.bootstrap_complete)
+        self.assertTrue(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        self.assertEqual(result.ordering_cli_token(), "ok")
+
+    def test_strict_non_monotonic_bootstrap_is_incomplete(self) -> None:
+        items = [_descending_target(f"strict-bad-{i:02d}", i) for i in range(25)]
+        items[10] = _descending_target(
+            "strict-bad-10", 10, updated="2026-09-15 12:00:00"
+        )
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(batches=_page_batches(items)),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(result.stop_reason, "ordering_anomaly")
+        self.assertFalse(result.bootstrap_complete)
+        self.assertFalse(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        self.assertEqual(result.ordering_cli_token(), "non_monotonic_stamp")
+        self.assertEqual(len(store.items), 25)
+
+    def test_content_source_keeps_fail_closed_overlay(self) -> None:
+        items = [_descending_target(f"content-bad-{i:02d}", i) for i in range(10)]
+        items[5] = _descending_target(
+            "content-bad-05", 5, updated="2026-09-15 12:00:00"
+        )
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items, page_size=2),
+                source_id=CANONICAL_CONTENT_SOURCE,
+                ordering_capability="require_descending",
+                bootstrap_max_pages=5,
+                bootstrap_max_items=10,
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(result.stop_reason, "ordering_anomaly")
+        self.assertFalse(result.bootstrap_complete)
+        self.assertFalse(store.sync[CANONICAL_CONTENT_SOURCE].bootstrap_complete)
+
+
+class UntrustedRangeTests(unittest.TestCase):
+    def test_untrusted_non_monotonic_bootstrap_completes(self) -> None:
+        items = [_descending_target(f"u-boot-{i:02d}", i) for i in range(25)]
+        items[10] = _descending_target(
+            "u-boot-10", 10, updated="2026-09-15 12:00:00"
+        )
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items), ordering_capability="untrusted"
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertTrue(result.bootstrap_complete)
+        self.assertTrue(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        self.assertEqual(result.ordering_cli_token(), "non_monotonic_stamp")
+        self.assertEqual(len(store.items), 25)
+        self.assertIsNotNone(store.sync[CANONICAL_POLICY_SOURCE].last_success_at)
+
+    def test_untrusted_missing_stamp_bootstrap_completes(self) -> None:
+        items = [
+            policy_item(
+                f"u-miss-{i:02d}",
+                zip_cd="11680",
+                oper_cd="11680",
+                updated="",
+                created="",
+                title=f"미싱{i:02d}",
+            )
+            for i in range(25)
+        ]
+        store = MemoryIngestStore()
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items), ordering_capability="untrusted"
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertTrue(result.bootstrap_complete)
+        self.assertEqual(result.ordering_cli_token(), "missing_stamp")
+
+    def test_untrusted_general_does_not_use_streak(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        item = _descending_target("u-streak-01", 0)
+        batches = [
+            BatchResult(
+                items=(item,),
+                next_checkpoint=Checkpoint.for_rest_page(page + 1),
+                natural_end=False,
+            )
+            for page in range(1, 11)
+        ]
+        result = run_connector(
+            FakeConnector(
+                batches=batches, max_pages=10, ordering_capability="untrusted"
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertNotEqual(result.stop_reason, "streak_complete")
+        self.assertEqual(result.stop_reason, "configured_range_complete")
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.batches_ok, 10)
+        self.assertTrue(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+
+    def test_untrusted_empty_and_short_natural_end(self) -> None:
+        empty_store = MemoryIngestStore()
+        empty = run_connector(
+            FakeConnector(
+                batches=[BatchResult(items=(), next_checkpoint=None, natural_end=True)],
+                ordering_capability="untrusted",
+            ),
+            empty_store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(empty.status, "complete")
+        self.assertEqual(empty.stop_reason, "empty_batch")
+        self.assertTrue(empty.bootstrap_complete)
+        self.assertEqual(empty.ordering_cli_token(), "ok")
+
+        short_store = MemoryIngestStore()
+        short_item = _descending_target("u-short-01", 0)
+        short = run_connector(
+            FakeConnector(
+                batches=[
+                    BatchResult(
+                        items=(short_item,),
+                        next_checkpoint=None,
+                        natural_end=True,
+                    )
+                ],
+                ordering_capability="untrusted",
+            ),
+            short_store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(short.status, "complete")
+        self.assertEqual(short.stop_reason, "short_batch")
+        self.assertTrue(short.bootstrap_complete)
+
+    def test_untrusted_http_failure_keeps_existing_contract(self) -> None:
+        store = MemoryIngestStore()
+        item = _descending_target("u-http-01", 0)
+        connector = FakeConnector(
+            batches=[
+                BatchResult(
+                    items=(item,),
+                    next_checkpoint=Checkpoint.for_rest_page(2),
+                    natural_end=False,
+                )
+            ],
+            fetch_error=HttpStatusError(500),
+            error_on=2,
+            ordering_capability="untrusted",
+        )
+        result = run_connector(connector, store, sleep=NO_SLEEP)
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(result.stop_reason, "http_500")
+        self.assertFalse(result.bootstrap_complete)
+        self.assertIn((CANONICAL_POLICY_SOURCE, "u-http-01"), store.items)
+
+
+def _seed_synthetic_lineage(store: MemoryIngestStore) -> dict[str, str]:
+    items: list[dict[str, Any]] = []
+    for i in range(3):
+        items.append(
+            policy_item(
+                f"seed-target-{i:02d}",
+                zip_cd="11680",
+                oper_cd="11680",
+                title=f"시드타겟{i:02d}",
+            )
+        )
+    for i in range(9):
+        items.append(
+            policy_item(
+                f"seed-review-{i:02d}",
+                zip_cd="50110",
+                oper_cd="11680",
+                title=f"시드리뷰{i:02d}",
+            )
+        )
+    for i in range(13):
+        items.append(
+            policy_item(
+                f"seed-nontarget-{i:02d}",
+                zip_cd="50110",
+                oper_cd="50110",
+                title=f"시드비대상{i:02d}",
+            )
+        )
+    started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+    store.upsert_source_observations(
+        CANONICAL_POLICY_SOURCE,
+        started.run_id,
+        [observation_for(item) for item in items],
+        Checkpoint.for_rest_page(6),
+    )
+    store.finish_ingest_run(
+        started.run_id,
+        status="incomplete",
+        stop_reason="ordering_anomaly",
+        http_request_count=5,
+        bootstrap_complete=False,
+    )
+    self_jobs = {job_id: job.status for job_id, job in store.jobs.items()}
+    return self_jobs
+
+
+class RecanaryLineageTests(unittest.TestCase):
+    def test_all_unchanged_keeps_items_and_queued_jobs(self) -> None:
+        store = ClaimCountingStore()
+        job_snapshot = _seed_synthetic_lineage(store)
+        self.assertEqual(len(store.items), 25)
+        self.assertEqual(len(store.jobs), 12)
+        self.assertFalse(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        items = []
+        for i in range(3):
+            items.append(
+                policy_item(
+                    f"seed-target-{i:02d}",
+                    zip_cd="11680",
+                    oper_cd="11680",
+                    title=f"시드타겟{i:02d}",
+                )
+            )
+        for i in range(9):
+            items.append(
+                policy_item(
+                    f"seed-review-{i:02d}",
+                    zip_cd="50110",
+                    oper_cd="11680",
+                    title=f"시드리뷰{i:02d}",
+                )
+            )
+        for i in range(13):
+            items.append(
+                policy_item(
+                    f"seed-nontarget-{i:02d}",
+                    zip_cd="50110",
+                    oper_cd="50110",
+                    title=f"시드비대상{i:02d}",
+                )
+            )
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items), ordering_capability="untrusted"
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertEqual(len(store.items), 25)
+        self.assertEqual(len(store.jobs), 12)
+        self.assertEqual(
+            {job_id: job.status for job_id, job in store.jobs.items()},
+            job_snapshot,
+        )
+        self.assertTrue(all(status == "queued" for status in job_snapshot.values()))
+        self.assertEqual(store.claim_calls, 0)
+
+    def test_some_changed_adds_revision_jobs_only(self) -> None:
+        store = ClaimCountingStore()
+        job_snapshot = _seed_synthetic_lineage(store)
+        items = []
+        for i in range(3):
+            title = f"시드타겟{i:02d}-변경" if i == 0 else f"시드타겟{i:02d}"
+            items.append(
+                policy_item(
+                    f"seed-target-{i:02d}",
+                    zip_cd="11680",
+                    oper_cd="11680",
+                    title=title,
+                )
+            )
+        for i in range(9):
+            items.append(
+                policy_item(
+                    f"seed-review-{i:02d}",
+                    zip_cd="50110",
+                    oper_cd="11680",
+                    title=f"시드리뷰{i:02d}",
+                )
+            )
+        for i in range(13):
+            items.append(
+                policy_item(
+                    f"seed-nontarget-{i:02d}",
+                    zip_cd="50110",
+                    oper_cd="50110",
+                    title=f"시드비대상{i:02d}",
+                )
+            )
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(items), ordering_capability="untrusted"
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(len(store.items), 25)
+        self.assertEqual(len(store.jobs), 13)
+        for job_id, status in job_snapshot.items():
+            self.assertEqual(store.jobs[job_id].status, status)
+            self.assertEqual(store.jobs[job_id].status, "queued")
+        self.assertEqual(store.claim_calls, 0)
+
+    def test_all_new_and_plus_25_bounds(self) -> None:
+        store = ClaimCountingStore()
+        job_snapshot = _seed_synthetic_lineage(store)
+        new_items = [_descending_target(f"recanary-new-{i:02d}", i) for i in range(25)]
+        result = run_connector(
+            FakeConnector(
+                batches=_page_batches(new_items), ordering_capability="untrusted"
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "bootstrap_range_complete")
+        self.assertEqual(len(store.items), 50)
+        self.assertEqual(len(store.jobs), 37)
+        for job_id, status in job_snapshot.items():
+            self.assertEqual(store.jobs[job_id].status, status)
+        unique_keys = {
+            (job.source_item_id, job.revision_hash, job.processing_stage)
+            for job in store.jobs.values()
+        }
+        self.assertEqual(len(unique_keys), len(store.jobs))
+        self.assertEqual(store.claim_calls, 0)
+        claimed = [
+            job for job in store.jobs.values() if job.status in {"claimed", "completed", "failed"}
+        ]
+        self.assertEqual(claimed, [])
+
+    def test_duplicate_stage_hash_does_not_add_job(self) -> None:
+        store = MemoryIngestStore()
+        job_snapshot = _seed_synthetic_lineage(store)
+        items = []
+        for i in range(3):
+            items.append(
+                policy_item(
+                    f"seed-target-{i:02d}",
+                    zip_cd="11680",
+                    oper_cd="11680",
+                    title=f"시드타겟{i:02d}",
+                )
+            )
+        for i in range(9):
+            items.append(
+                policy_item(
+                    f"seed-review-{i:02d}",
+                    zip_cd="50110",
+                    oper_cd="11680",
+                    title=f"시드리뷰{i:02d}",
+                )
+            )
+        for i in range(13):
+            items.append(
+                policy_item(
+                    f"seed-nontarget-{i:02d}",
+                    zip_cd="50110",
+                    oper_cd="50110",
+                    title=f"시드비대상{i:02d}",
+                )
+            )
+        run_connector(
+            FakeConnector(
+                batches=_page_batches(items), ordering_capability="untrusted"
+            ),
+            store,
+            sleep=NO_SLEEP,
+        )
+        self.assertEqual(len(store.jobs), len(job_snapshot))
 
 
 if __name__ == "__main__":

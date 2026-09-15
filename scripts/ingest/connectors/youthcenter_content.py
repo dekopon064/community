@@ -23,6 +23,7 @@ from ingest.models import (
     Checkpoint,
     JobPlan,
     ObservationRecord,
+    OrderingCapability,
     RelationshipPlan,
 )
 from ingest.sanitize import body_is_usable, extract_http_urls, html_to_plain_text, is_http_url
@@ -163,6 +164,9 @@ class YouthcenterContentConnector(BatchConnector):
     bootstrap_max_items = CONTENT_BOOTSTRAP_MAX_ITEMS
     max_pages = CONTENT_MAX_PAGES
     http_budget = CONTENT_HTTP_BUDGET
+    # Fail-closed overlay/streak policy until a content canary re-judges.
+    # Not a claim that Youth API officially guarantees newest-first order.
+    ordering_capability: OrderingCapability = "require_descending"
 
     def __init__(
         self,
