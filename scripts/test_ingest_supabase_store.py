@@ -654,6 +654,26 @@ class StrictClaimParseTests(unittest.TestCase):
         )
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0].processing_stage, "ai_enrichment")
+        self.assertEqual(client.calls[0][0], CLAIM_PROCESSING_JOBS)
+        self.assertEqual(client.calls[0][1]["p_lease_seconds"], 600)
+
+    def test_default_claim_sends_job_lease_600(self) -> None:
+        client = FakeClient({CLAIM_PROCESSING_JOBS: lambda _p: []})
+        SupabaseIngestStore(client).claim_processing_jobs(
+            "ai_enrichment", worker_id="w"
+        )
+        self.assertEqual(client.calls[0][0], CLAIM_PROCESSING_JOBS)
+        params = client.calls[0][1]
+        self.assertEqual(params["p_lease_seconds"], 600)
+        self.assertEqual(params["p_stage"], "ai_enrichment")
+        self.assertEqual(params["p_worker_id"], "w")
+
+    def test_explicit_claim_lease_override_is_kept(self) -> None:
+        client = FakeClient({CLAIM_PROCESSING_JOBS: lambda _p: []})
+        SupabaseIngestStore(client).claim_processing_jobs(
+            "ai_enrichment", worker_id="w", lease_seconds=120
+        )
+        self.assertEqual(client.calls[0][1]["p_lease_seconds"], 120)
 
     def test_malformed_claim_is_not_a_job(self) -> None:
         cases = (

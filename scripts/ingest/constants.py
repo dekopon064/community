@@ -8,7 +8,7 @@ from __future__ import annotations
 DEFAULT_LEASE_SECONDS = 120
 LEASE_SECONDS_MIN = 30
 LEASE_SECONDS_MAX = 3600
-DEFAULT_JOB_LEASE_SECONDS = 300
+DEFAULT_JOB_LEASE_SECONDS = 600
 AI_CLAIM_LIMIT = 10
 # 첫 실패와 재시도를 포함한 AI processing 총 시도 횟수.
 # SQL fail_processing_job의 v_ai_max_attempts와 같아야 한다.

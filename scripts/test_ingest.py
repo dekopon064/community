@@ -47,6 +47,7 @@ from ingest.connectors.youthcenter_policy import (
 )
 from ingest.constants import (
     AI_MAX_ATTEMPTS,
+    DEFAULT_JOB_LEASE_SECONDS,
     DEFAULT_LEASE_SECONDS,
     LEASE_SECONDS_MAX,
     LEASE_SECONDS_MIN,
@@ -1881,6 +1882,33 @@ class LeaseAndPermissionTests(unittest.TestCase):
         self.assertEqual(
             sync.lease_expires_at,
             clock.now + timedelta(seconds=DEFAULT_LEASE_SECONDS),
+        )
+
+    def test_default_job_claim_lease_is_600(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        _seed_ai_jobs(store, 1)
+        claimed = store.claim_processing_jobs("ai_enrichment", worker_id="w")
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(DEFAULT_JOB_LEASE_SECONDS, 600)
+        self.assertEqual(DEFAULT_LEASE_SECONDS, 120)
+        job = store.jobs[claimed[0].job_id]
+        self.assertEqual(
+            job.claim_lease_until,
+            clock.now + timedelta(seconds=DEFAULT_JOB_LEASE_SECONDS),
+        )
+
+    def test_explicit_job_claim_lease_override_is_kept(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        _seed_ai_jobs(store, 1)
+        claimed = store.claim_processing_jobs(
+            "ai_enrichment", worker_id="w", lease_seconds=300
+        )
+        job = store.jobs[claimed[0].job_id]
+        self.assertEqual(
+            job.claim_lease_until,
+            clock.now + timedelta(seconds=300),
         )
 
     def test_custom_ttl_is_reused_on_batch_renew(self) -> None:

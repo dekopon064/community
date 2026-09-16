@@ -10,13 +10,15 @@ from ingest.ai_worker import (
     AI_NO_JOBS,
     AI_PROCESSED,
     AI_STATE_UNKNOWN,
+    WORKER_ID,
     process_ai_jobs,
 )
+from ingest.constants import DEFAULT_JOB_LEASE_SECONDS
 from ingest.connectors.youthcenter_policy import YouthcenterPolicyConnector
 from ingest.models import Checkpoint, ObservationRecord
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.source_identity import CANONICAL_POLICY_SOURCE
-from ingest.store import MemoryIngestStore
+from ingest.store import AI_CLAIM_LIMIT, MemoryIngestStore
 
 SECRET_MARKER = "svc-secret-marker-DoNotLog"
 URL_QUERY_MARKER = "apiKeyNm=secret-query-marker"
@@ -77,11 +79,13 @@ class SpyStore(MemoryIngestStore):
         self.complete_calls: list[str] = []
         self.fail_calls: list[str] = []
         self.claim_calls = 0
+        self.claim_kwargs: list[dict[str, Any]] = []
         self.complete_error: Exception | None = None
         self.fail_error: Exception | None = None
 
     def claim_processing_jobs(self, *args: Any, **kwargs: Any) -> Any:
         self.claim_calls += 1
+        self.claim_kwargs.append(dict(kwargs))
         return super().claim_processing_jobs(*args, **kwargs)
 
     def complete_processing_job(self, job_id: str, *, worker_id: str) -> None:
@@ -287,6 +291,20 @@ class AiNoJobsAndPayloadTests(unittest.TestCase):
         self.assertEqual(result.status, AI_STATE_UNKNOWN)
         self.assertEqual(len(store.complete_calls), 0)
         self.assertEqual(len(store.fail_calls), 0)
+
+    def test_claim_passes_default_job_lease_600(self) -> None:
+        store = SpyStore()
+        _seed(store, 1)
+        result = process_ai_jobs(store, **_ai_deps())
+        self.assertEqual(result.status, AI_PROCESSED)
+        self.assertEqual(len(store.claim_kwargs), 1)
+        kwargs = store.claim_kwargs[0]
+        self.assertEqual(kwargs["lease_seconds"], 600)
+        self.assertEqual(kwargs["lease_seconds"], DEFAULT_JOB_LEASE_SECONDS)
+        self.assertEqual(kwargs["worker_id"], WORKER_ID)
+        self.assertEqual(kwargs["limit"], AI_CLAIM_LIMIT)
+        job = next(iter(store.jobs.values()))
+        self.assertEqual(job.status, "completed")
 
 
 if __name__ == "__main__":
