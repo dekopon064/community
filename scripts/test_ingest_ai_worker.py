@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from typing import Any
 
 from ingest.ai_errors import AiJobError
@@ -15,7 +16,7 @@ from ingest.ai_worker import (
 )
 from ingest.constants import DEFAULT_JOB_LEASE_SECONDS
 from ingest.connectors.youthcenter_policy import YouthcenterPolicyConnector
-from ingest.models import Checkpoint, ObservationRecord
+from ingest.models import Checkpoint, JobPlan, ObservationRecord
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.source_identity import CANONICAL_POLICY_SOURCE
 from ingest.store import AI_CLAIM_LIMIT, MemoryIngestStore
@@ -45,9 +46,10 @@ def _policy_item(plcy_no: str) -> dict[str, Any]:
 
 
 def _observation(plcy_no: str) -> ObservationRecord:
-    return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
+    record = YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
         _policy_item(plcy_no), permission_status="testing_only", enabled=True
     )
+    return replace(record, disposition="target", jobs=(JobPlan(stage="ai_enrichment"),))
 
 
 def _seed(store: MemoryIngestStore, count: int) -> None:

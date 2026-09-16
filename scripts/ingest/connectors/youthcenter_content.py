@@ -26,6 +26,7 @@ from ingest.models import (
     OrderingCapability,
     RelationshipPlan,
 )
+from ingest.relevance import screen_content
 from ingest.sanitize import body_is_usable, extract_http_urls, html_to_plain_text, is_http_url
 from ingest.source_identity import (
     CANONICAL_CONTENT_SOURCE,
@@ -107,7 +108,13 @@ def content_job_and_flags(
     has_source_url: bool,
     attachment_present: bool,
     permission_ok: bool,
+    region_scope: str,
+    relevance_confirmed: bool,
+    screening_reasons: tuple[str, ...] = (),
 ) -> tuple[str, tuple[JobPlan, ...]]:
+    if region_scope == "noncapital":
+        return "non_target", ()
+
     reasons: list[str] = []
     attachment_dependent = (not body_usable) and attachment_present
     if attachment_dependent:
@@ -117,16 +124,32 @@ def content_job_and_flags(
     if not body_usable and "attachment_dependent" not in reasons:
         reasons.append("empty_body")
 
-    if (
-        body_usable
-        and has_source_url
-        and permission_ok
-        and not attachment_dependent
-    ):
-        return "target", (JobPlan(stage="ai_enrichment"),)
+    if reasons:
+        disposition = "attachment_dependent" if attachment_dependent else "observe_only"
+        return disposition, (JobPlan(stage="content_review", reason_codes=tuple(reasons)),)
 
-    disposition = "attachment_dependent" if attachment_dependent else "observe_only"
-    return disposition, (JobPlan(stage="content_review", reason_codes=tuple(reasons)),)
+    if not permission_ok:
+        return (
+            "observe_only",
+            (JobPlan(stage="content_review", reason_codes=("permission_blocked",)),),
+        )
+
+    if region_scope == "unknown":
+        codes = screening_reasons or ("region_scope_unknown",)
+        return (
+            "region_review_required",
+            (JobPlan(stage="content_review", reason_codes=codes),),
+        )
+
+    if not relevance_confirmed:
+        codes = screening_reasons or ("relevance_unconfirmed",)
+        return (
+            "region_review_required",
+            (JobPlan(stage="content_review", reason_codes=codes),),
+        )
+
+    # Phase 1: classifier target is not an ai_enrichment enqueue.
+    return "target", ()
 
 
 def policy_relationship_candidates(
@@ -229,17 +252,23 @@ class YouthcenterContentConnector(BatchConnector):
         source_url = select_content_source_url(cleaned, plain, hrefs)
         usable = body_is_usable(plain)
         permission_ok = allows_internal_processing(permission_status, enabled=enabled)
+        screening = screen_content(title, plain, body_usable=usable)
         disposition, jobs = content_job_and_flags(
             body_usable=usable,
             has_source_url=source_url is not None,
             attachment_present=attachment.present,
             permission_ok=permission_ok,
+            region_scope=screening.region_scope,
+            relevance_confirmed=screening.relevance.confirmed,
+            screening_reasons=screening.reason_codes,
         )
-        relationships = policy_relationship_candidates(
-            title=title,
-            plain_text=plain,
-            known_policies=self.known_policies,
-        )
+        relationships = ()
+        if disposition != "non_target":
+            relationships = policy_relationship_candidates(
+                title=title,
+                plain_text=plain,
+                known_policies=self.known_policies,
+            )
         if relationships:
             jobs = jobs + (
                 JobPlan(stage="relationship_review", reason_codes=("policy_link_candidate",)),

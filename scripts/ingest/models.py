@@ -23,6 +23,14 @@ Disposition = Literal[
     "observe_only",
     "attachment_dependent",
 ]
+RegionScope = Literal[
+    "capital",
+    "nationwide_or_online",
+    "noncapital",
+    "unknown",
+]
+REASON_REGION_SCOPE_UNKNOWN = "region_scope_unknown"
+REASON_RELEVANCE_UNCONFIRMED = "relevance_unconfirmed"
 ParseStatus = Literal["ok", "missing", "unparsed"]
 ProcessingStage = Literal[
     "region_review",

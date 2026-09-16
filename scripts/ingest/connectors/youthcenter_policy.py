@@ -25,7 +25,7 @@ from ingest.models import (
     ObservationRecord,
     OrderingCapability,
 )
-from ingest.region import classify_policy_disposition
+from ingest.relevance import screen_policy
 from ingest.sanitize import html_to_plain_text, is_http_url
 from ingest.source_identity import (
     CANONICAL_POLICY_SOURCE,
@@ -33,7 +33,6 @@ from ingest.source_identity import (
     LEGACY_POLICY_CURATION_SOURCE,
     PROVIDER_YOUTHCENTER,
     SOURCE_KIND_POLICY,
-    allows_internal_processing,
 )
 
 POLICY_LIST_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
@@ -137,18 +136,12 @@ def policy_revision_hash(item: dict[str, Any], source_url: str | None) -> str:
 def policy_job_plan(
     disposition: str,
     *,
-    outcome_is_new_or_changed: bool,
-    permission_status: str,
-    enabled: bool,
+    reason_codes: tuple[str, ...] = (),
 ) -> tuple[JobPlan, ...]:
+    # Phase 1: never enqueue ai_enrichment. approve_ai RPC is Phase 2.
     if disposition == "region_review_required":
-        return (JobPlan(stage="region_review", reason_codes=("region_review_required",)),)
-    if (
-        disposition == "target"
-        and outcome_is_new_or_changed
-        and allows_internal_processing(permission_status, enabled=enabled)
-    ):
-        return (JobPlan(stage="ai_enrichment"),)
+        codes = reason_codes or ("region_review_required",)
+        return (JobPlan(stage="region_review", reason_codes=codes),)
     return ()
 
 
@@ -221,21 +214,22 @@ class YouthcenterPolicyConnector(BatchConnector):
         source_url = select_policy_source_url(cleaned)
         created = parse_source_datetime(cleaned.get("frstRegDt"))
         updated = parse_source_datetime(cleaned.get("lastMdfcnDt"))
-        disposition = classify_policy_disposition(cleaned)
+        title = html_to_plain_text(cleaned.get("plcyNm"))
         body = html_to_plain_text(
             f"{cleaned.get('plcyExplnCn') or ''}\n\n{cleaned.get('plcySprtCn') or ''}"
         )
+        screening = screen_policy(
+            cleaned,
+            f"{title}\n{body}",
+            body_usable=bool(body),
+        )
+        disposition = screening.disposition
         normalized = None
         if disposition != "non_target":
             normalized = _copy_keys(cleaned, NORMALIZED_KEYS)
             normalized["source_url"] = source_url
             normalized["plain_text"] = body
-        jobs = policy_job_plan(
-            disposition,
-            outcome_is_new_or_changed=True,
-            permission_status=permission_status,
-            enabled=enabled,
-        )
+        jobs = policy_job_plan(disposition, reason_codes=screening.reason_codes)
         return ObservationRecord(
             external_key=external_key,
             revision_hash=policy_revision_hash(cleaned, source_url),

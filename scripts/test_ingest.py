@@ -12,6 +12,7 @@ import time
 import traceback
 import unittest
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -65,7 +66,7 @@ from ingest.http_client import (
     RETRYABLE_STATUSES,
     ResponseTooLarge,
 )
-from ingest.models import BatchResult, Checkpoint, FinishRunResult, ObservationRecord
+from ingest.models import BatchResult, Checkpoint, FinishRunResult, JobPlan, ObservationRecord
 from ingest.orchestrator import (
     BOOTSTRAP_COMPLETE_REASONS,
     InvalidOrderingCapability,
@@ -73,7 +74,16 @@ from ingest.orchestrator import (
     run_connector,
     run_ingest,
 )
-from ingest.region import classify_eligibility, classify_policy_disposition
+from ingest.region import classify_eligibility, classify_policy_disposition, classify_region_scope
+from ingest.relevance import (
+    AXIS_FOREIGN_RESIDENTS_IN_KR,
+    AXIS_JP_RESIDENTS_IN_KR,
+    AXIS_KR_JAPAN_ACTIVITY,
+    AXIS_KR_JP_EXCHANGE,
+    classify_content_relevance,
+    classify_policy_relevance,
+    screen_policy,
+)
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.run import build_youthcenter_connectors, run_ingest_architecture
 from ingest.sanitize import html_to_plain_text
@@ -89,6 +99,7 @@ from ingest.store import LeaseLost, MemoryIngestStore
 FIXTURES = pathlib.Path(__file__).resolve().parent / "ingest" / "fixtures"
 HWASUN_PATH = FIXTURES / "hwasun_policy.json"
 CONTENT_PATH = FIXTURES / "content_with_tiny_attachment.json"
+CONTENT_NONCAPITAL_PATH = FIXTURES / "content_noncapital_jeju.json"
 ATCH_SNIPPET = "data:text/plain;base64,QUFBQQ=="
 ATCH_MARKER = "ATCHFILE_MARKER_x7kQ2n"
 HTTP_KEY_MARKER = "ingest-http-marker-K9q2Vx7LmN4p"
@@ -361,19 +372,20 @@ def _ai_deps(**overrides: Any) -> dict[str, Any]:
 
 def _seed_ai_jobs(store: MemoryIngestStore, count: int) -> None:
     started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
-    records = [
-        observation_for(
-            policy_item(f"p{i}", zip_cd="11680", oper_cd="11680", title=f"정책{i}")
+    records = []
+    for index in range(count):
+        record = observation_for(
+            policy_item(f"p{index}", zip_cd="11680", oper_cd="11680", title=f"정책{index}")
         )
-        for i in range(count)
-    ]
+        records.append(
+            replace(record, disposition="target", jobs=(JobPlan(stage="ai_enrichment"),))
+        )
     store.upsert_source_observations(
         CANONICAL_POLICY_SOURCE,
         started.run_id,
         records,
         Checkpoint.for_rest_page(2),
     )
-    return json.loads(HWASUN_PATH.read_text(encoding="utf-8"))
 
 
 def load_hwasun() -> dict[str, Any]:
@@ -382,6 +394,10 @@ def load_hwasun() -> dict[str, Any]:
 
 def load_content() -> dict[str, Any]:
     return json.loads(CONTENT_PATH.read_text(encoding="utf-8"))
+
+
+def load_noncapital_content() -> dict[str, Any]:
+    return json.loads(CONTENT_NONCAPITAL_PATH.read_text(encoding="utf-8"))
 
 
 class SourceIdentityTests(unittest.TestCase):
@@ -407,67 +423,70 @@ class RegionTests(unittest.TestCase):
         self.assertEqual(classify_eligibility(""), "unknown")
         self.assertEqual(classify_eligibility(None), "unknown")
 
-    def test_capital_operator_and_capital_only_is_target(self) -> None:
+    def test_capital_zip_without_relevance_is_review_not_target(self) -> None:
         self.assertEqual(
             classify_policy_disposition(
                 policy_item("p1", zip_cd="11680", oper_cd="11680")
             ),
-            "target",
+            "region_review_required",
         )
 
-    def test_capital_operator_non_capital_only_is_review(self) -> None:
+    def test_capital_operator_non_capital_only_is_non_target(self) -> None:
         self.assertEqual(
             classify_policy_disposition(
                 policy_item("p1", zip_cd="50110", oper_cd="11680")
             ),
-            "region_review_required",
+            "non_target",
         )
 
-    def test_capital_operator_mixed_regions_is_target(self) -> None:
-        self.assertEqual(
-            classify_policy_disposition(
-                policy_item("p1", zip_cd="11680,50110", oper_cd="11680")
-            ),
-            "target",
+    def test_mixed_zip_without_nationwide_body_is_not_nationwide(self) -> None:
+        item = policy_item("p1", zip_cd="11680,50110", oper_cd="11680")
+        scope = classify_region_scope(
+            eligibility="mixed_capital_and_non_capital",
+            text=f"{item['plcyNm']}\n{item['plcyExplnCn']}",
+            operator="capital_operator",
         )
+        self.assertEqual(scope, "capital")
+        self.assertNotEqual(scope, "nationwide_or_online")
 
-    def test_central_and_capital_only_is_target(self) -> None:
-        self.assertEqual(
-            classify_policy_disposition(
-                policy_item(
-                    "p1", zip_cd="11680", oper_cd="", group="0054001"
-                )
-            ),
-            "target",
+    def test_central_operator_does_not_imply_nationwide(self) -> None:
+        item = policy_item(
+            "p1", zip_cd="11680,28100,50110", oper_cd="", group="0054001"
         )
+        scope = classify_region_scope(
+            eligibility="mixed_capital_and_non_capital",
+            text=f"{item['plcyNm']}\n{item['plcyExplnCn']}",
+            operator="central",
+        )
+        self.assertEqual(scope, "capital")
+        self.assertNotEqual(scope, "nationwide_or_online")
+        self.assertEqual(classify_policy_disposition(item), "region_review_required")
 
-    def test_central_mixed_regions_is_target(self) -> None:
-        self.assertEqual(
-            classify_policy_disposition(
-                policy_item(
-                    "p1", zip_cd="11680,50110", oper_cd="", group="0054001"
-                )
-            ),
-            "target",
+    def test_central_empty_zip_is_unknown_not_nationwide(self) -> None:
+        item = policy_item("p1", zip_cd="", oper_cd="", group="0054001")
+        scope = classify_region_scope(
+            eligibility="unknown",
+            text=f"{item['plcyNm']}\n{item['plcyExplnCn']}",
+            operator="central",
         )
+        self.assertEqual(scope, "unknown")
 
-    def test_central_non_capital_only_is_review(self) -> None:
-        self.assertEqual(
-            classify_policy_disposition(
-                policy_item(
-                    "p1", zip_cd="50110", oper_cd="", group="0054001"
-                )
-            ),
-            "region_review_required",
+    def test_explicit_nationwide_body_is_nationwide(self) -> None:
+        scope = classify_region_scope(
+            eligibility="unknown",
+            text="전국 청년을 대상으로 합니다. 온라인 참여가 가능합니다.",
+            operator="central",
         )
+        self.assertEqual(scope, "nationwide_or_online")
 
-    def test_non_capital_operator_mixed_regions_is_review(self) -> None:
-        self.assertEqual(
-            classify_policy_disposition(
-                policy_item("p1", zip_cd="11680,50110", oper_cd="50110")
-            ),
-            "region_review_required",
+    def test_online_apply_only_is_not_nationwide(self) -> None:
+        scope = classify_region_scope(
+            eligibility="capital_only",
+            text="서울 거주 청년을 대상으로 합니다. 온라인으로 신청하세요.",
+            operator="capital_operator",
         )
+        self.assertEqual(scope, "capital")
+        self.assertNotEqual(scope, "nationwide_or_online")
 
     def test_non_capital_operator_and_only_is_non_target(self) -> None:
         self.assertEqual(
@@ -496,19 +515,297 @@ class RegionTests(unittest.TestCase):
             "non_target",
         )
 
-    def test_new_target_creates_ai_job_under_permission(self) -> None:
+    def test_ambiguous_gwangju_is_unknown(self) -> None:
+        scope = classify_region_scope(
+            eligibility="unknown",
+            text="광주 청년 모집 안내입니다.",
+        )
+        self.assertEqual(scope, "unknown")
+
+    def test_new_observations_never_create_ai_jobs(self) -> None:
         mixed = observation_for(
             policy_item("p-mix", zip_cd="11680,50110", oper_cd="11680")
         )
-        self.assertEqual(mixed.disposition, "target")
-        self.assertEqual(mixed.jobs[0].stage, "ai_enrichment")
+        self.assertNotEqual(mixed.disposition, "target")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in mixed.jobs))
         central = observation_for(
             policy_item(
                 "p-central", zip_cd="11680,28100,50110", oper_cd="", group="0054001"
             )
         )
-        self.assertEqual(central.disposition, "target")
-        self.assertEqual(central.jobs[0].stage, "ai_enrichment")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in central.jobs))
+
+
+class PolicyRelevanceTests(unittest.TestCase):
+    def _capital_item(self, key: str, expln: str, sprt: str = "") -> dict[str, Any]:
+        return policy_item(
+            key,
+            zip_cd="11680",
+            oper_cd="11680",
+            plcyExplnCn=expln,
+            plcySprtCn=sprt or expln,
+        )
+
+    def test_generic_capital_welfare_is_review_not_ai(self) -> None:
+        record = observation_for(
+            self._capital_item("welfare", "서울 청년 주거비와 창업 금융 지원 안내입니다.")
+        )
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertEqual(record.jobs[0].stage, "region_review")
+        self.assertIn("relevance_unconfirmed", record.jobs[0].reason_codes)
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+
+    def test_jp_resident_axis_is_target_without_ai_job(self) -> None:
+        expln = "한국 거주 일본인은 신청 가능합니다. 서울 거주자를 대상으로 합니다."
+        record = observation_for(self._capital_item("jp-res", expln))
+        relevance = classify_policy_relevance(expln)
+        self.assertIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
+
+    def test_foreign_resident_axis_is_target_without_ai_job(self) -> None:
+        expln = "외국인 청년도 신청 가능합니다. 국적 제한 없음. 서울 거주 청년이 대상입니다."
+        record = observation_for(self._capital_item("foreign", expln))
+        relevance = classify_policy_relevance(expln)
+        self.assertIn(AXIS_FOREIGN_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
+
+    def test_kr_japan_activity_axis_is_target_without_ai_job(self) -> None:
+        expln = "한국 청년을 위한 일본 유학 지원 사업입니다. 서울·경기 거주자가 대상입니다."
+        record = observation_for(self._capital_item("study", expln))
+        relevance = classify_policy_relevance(expln)
+        self.assertIn(AXIS_KR_JAPAN_ACTIVITY, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
+
+    def test_exchange_axis_with_explicit_online_is_target_without_ai_job(self) -> None:
+        expln = "한일 청년 교류 포럼입니다. 온라인 참여가 가능합니다."
+        item = policy_item(
+            "exchange",
+            zip_cd="",
+            oper_cd="",
+            group="0054001",
+            plcyExplnCn=expln,
+            plcySprtCn=expln,
+        )
+        record = observation_for(item)
+        relevance = classify_policy_relevance(expln)
+        screening = screen_policy(item, expln, body_usable=True)
+        self.assertIn(AXIS_KR_JP_EXCHANGE, relevance.confirmed_axes)
+        self.assertEqual(screening.region_scope, "nationwide_or_online")
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
+
+    def test_keyword_with_negation_is_not_auto_approved(self) -> None:
+        expln = "외국인 참여가 불가합니다. 서울 거주 내국인만 신청 가능합니다."
+        record = observation_for(self._capital_item("neg", expln))
+        relevance = classify_policy_relevance(expln)
+        self.assertEqual(relevance.confirmed_axes, ())
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertIn("relevance_unconfirmed", record.jobs[0].reason_codes)
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+
+    def test_korean_nationals_only_lock_is_review_not_target(self) -> None:
+        expln = "재한 일본인은 대한민국 국민만 신청 가능합니다. 서울 거주자를 대상으로 합니다."
+        relevance = classify_policy_relevance(expln)
+        record = observation_for(self._capital_item("nationals-only", expln))
+        self.assertNotIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(relevance.confirmed_axes, ())
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertEqual(record.jobs[0].stage, "region_review")
+        self.assertIn("relevance_unconfirmed", record.jobs[0].reason_codes)
+        self.assertNotEqual(record.disposition, "non_target")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+
+    def test_korean_nationals_limited_phrase_is_review_not_target(self) -> None:
+        expln = "재한 일본인 신청은 대한민국 국민에 한함. 서울 거주자를 대상으로 합니다."
+        relevance = classify_policy_relevance(expln)
+        record = observation_for(self._capital_item("nationals-limited", expln))
+        self.assertNotIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertIn("relevance_unconfirmed", record.jobs[0].reason_codes)
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+
+    def test_each_national_exclusive_limit_blocks_resident_axes(self) -> None:
+        phrases = (
+            "대한민국 국민만",
+            "한국 국민만",
+            "대한민국 국민에 한함",
+            "한국 국민에 한함",
+            "대한민국 국민 한정",
+            "한국 국민 한정",
+        )
+        self.assertEqual(len(phrases), 6)
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                expln = (
+                    f"재한 일본인은 신청 가능합니다. {phrase} 대상입니다. "
+                    "서울 거주자를 대상으로 합니다."
+                )
+                relevance = classify_policy_relevance(expln)
+                record = observation_for(
+                    self._capital_item(f"limit-{phrase}", expln)
+                )
+                self.assertNotIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+                self.assertNotIn(AXIS_FOREIGN_RESIDENTS_IN_KR, relevance.confirmed_axes)
+                self.assertEqual(record.disposition, "region_review_required")
+                self.assertEqual(record.jobs[0].stage, "region_review")
+                self.assertIn("relevance_unconfirmed", record.jobs[0].reason_codes)
+                self.assertNotEqual(record.disposition, "non_target")
+                self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+
+    def test_cross_sentence_national_limit_after_positive_is_review(self) -> None:
+        expln = (
+            "재한 일본인은 신청 가능합니다. 외국인 청년도 신청 가능합니다. "
+            "대한민국 국민만 대상입니다. 서울 거주자를 대상으로 합니다."
+        )
+        relevance = classify_policy_relevance(expln)
+        record = observation_for(self._capital_item("cross-after", expln))
+        self.assertNotIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertNotIn(AXIS_FOREIGN_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(relevance.confirmed_axes, ())
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+
+    def test_cross_sentence_national_limit_before_positive_is_review(self) -> None:
+        expln = (
+            "대한민국 국민만 대상입니다. 재한 일본인은 신청 가능합니다. "
+            "외국인 청년도 신청 가능합니다. 서울 거주자를 대상으로 합니다."
+        )
+        relevance = classify_policy_relevance(expln)
+        record = observation_for(self._capital_item("cross-before", expln))
+        self.assertNotIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertNotIn(AXIS_FOREIGN_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+
+    def test_national_limit_does_not_block_kr_japan_activity_axis(self) -> None:
+        expln = (
+            "한국 청년을 위한 일본 유학 지원 사업입니다. "
+            "대한민국 국민만 대상입니다. 서울·경기 거주자가 대상입니다."
+        )
+        relevance = classify_policy_relevance(expln)
+        record = observation_for(self._capital_item("study-limit", expln))
+        self.assertIn(AXIS_KR_JAPAN_ACTIVITY, relevance.confirmed_axes)
+        self.assertNotIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertNotIn(AXIS_FOREIGN_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
+
+    def test_national_limit_does_not_block_exchange_axis(self) -> None:
+        expln = "한일 청년 교류 포럼입니다. 대한민국 국민만 대상입니다. 온라인 참여가 가능합니다."
+        item = policy_item(
+            "exchange-limit",
+            zip_cd="",
+            oper_cd="",
+            group="0054001",
+            plcyExplnCn=expln,
+            plcySprtCn=expln,
+        )
+        relevance = classify_policy_relevance(expln)
+        record = observation_for(item)
+        self.assertIn(AXIS_KR_JP_EXCHANGE, relevance.confirmed_axes)
+        self.assertNotIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertNotIn(AXIS_FOREIGN_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
+
+    def test_nationals_and_foreigners_both_eligible_is_not_lock_false_positive(self) -> None:
+        expln = "대한민국 국민과 외국인 모두 참여 가능합니다. 서울 거주 청년이 대상입니다."
+        relevance = classify_policy_relevance(expln)
+        record = observation_for(self._capital_item("nationals-and-foreign", expln))
+        self.assertIn(AXIS_FOREIGN_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
+
+    def test_bare_korean_national_word_does_not_lock_clear_jp_eligibility(self) -> None:
+        expln = "한국 거주 일본인은 신청 가능합니다. 대한민국 국민과 함께하는 서울 프로그램입니다."
+        relevance = classify_policy_relevance(expln)
+        record = observation_for(self._capital_item("nationals-word", expln))
+        self.assertIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
+
+    def test_keyword_only_japan_is_not_target(self) -> None:
+        expln = "일본 관련 통계를 참고한 서울 청년 주거 지원입니다."
+        record = observation_for(self._capital_item("kw", expln))
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertEqual(record.jobs[0].stage, "region_review")
+
+    def test_noncapital_policy_has_observation_without_ai_job(self) -> None:
+        record = observation_for(policy_item("p1", zip_cd="50110", oper_cd="50110"))
+        self.assertEqual(record.disposition, "non_target")
+        self.assertEqual(record.jobs, ())
+        self.assertEqual(record.external_key, "p1")
+        self.assertTrue(record.revision_hash)
+
+
+class ContentScreeningTests(unittest.TestCase):
+    def test_generic_fixture_is_review_not_ai(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        record = connector.to_observation(
+            load_content(), permission_status="testing_only", enabled=True
+        )
+        self.assertEqual(record.disposition, "region_review_required")
+        self.assertEqual(record.jobs[0].stage, "content_review")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+        self.assertTrue(record.body_usable)
+        self.assertIsNotNone(record.normalized_payload)
+
+    def test_c1_noncapital_content_has_no_ai_job(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        record = connector.to_observation(
+            load_noncapital_content(), permission_status="testing_only", enabled=True
+        )
+        self.assertEqual(record.disposition, "non_target")
+        self.assertEqual(record.jobs, ())
+        self.assertIsNotNone(record.normalized_payload)
+        self.assertEqual(record.external_key, "syn-c1:jeju-1")
+
+    def test_noncapital_empty_body_has_no_review_job(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        item = load_noncapital_content()
+        item["pstWholCn"] = ""
+        record = connector.to_observation(
+            item, permission_status="testing_only", enabled=True
+        )
+        self.assertEqual(record.disposition, "non_target")
+        self.assertEqual(record.jobs, ())
+        self.assertFalse(record.body_usable)
+        self.assertIsNotNone(record.normalized_payload)
+
+    def test_noncapital_missing_source_url_has_no_review_job(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        item = load_noncapital_content()
+        item["pstUrlAddr"] = None
+        item["pstWholCn"] = "<p>제주 서귀포시 거주 청년만 현장 참여할 수 있습니다.</p>"
+        record = connector.to_observation(
+            item, permission_status="testing_only", enabled=True
+        )
+        self.assertFalse(record.has_source_url)
+        self.assertEqual(record.disposition, "non_target")
+        self.assertEqual(record.jobs, ())
+        self.assertIsNotNone(record.normalized_payload)
+
+    def test_content_capital_exchange_is_target_without_ai_job(self) -> None:
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        item = load_content()
+        item["pstTtl"] = "서울 한일 교류 설명회"
+        item["pstWholCn"] = (
+            "<p>서울에서 열리는 한일 교류 설명회입니다. "
+            "한국 거주 일본인은 참석 가능합니다.</p>"
+        )
+        record = connector.to_observation(
+            item, permission_status="testing_only", enabled=True
+        )
+        relevance = classify_content_relevance(
+            "서울 한일 교류 설명회",
+            "서울에서 열리는 한일 교류 설명회입니다. 한국 거주 일본인은 참석 가능합니다.",
+        )
+        self.assertTrue(relevance.confirmed)
+        self.assertEqual(record.disposition, "target")
+        self.assertEqual(record.jobs, ())
 
 
 class DateParseTests(unittest.TestCase):
@@ -545,15 +842,72 @@ class AttachmentAndSanitizeTests(unittest.TestCase):
 
 
 class ContentJobPlanTests(unittest.TestCase):
-    def test_positive_conditions_create_ai_job(self) -> None:
+    def test_usable_unknown_region_creates_review_not_ai(self) -> None:
         disposition, jobs = content_job_and_flags(
             body_usable=True,
             has_source_url=True,
             attachment_present=False,
             permission_ok=True,
+            region_scope="unknown",
+            relevance_confirmed=False,
+        )
+        self.assertEqual(disposition, "region_review_required")
+        self.assertEqual(jobs[0].stage, "content_review")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in jobs))
+
+    def test_clear_fit_is_target_without_ai_job(self) -> None:
+        disposition, jobs = content_job_and_flags(
+            body_usable=True,
+            has_source_url=True,
+            attachment_present=False,
+            permission_ok=True,
+            region_scope="capital",
+            relevance_confirmed=True,
         )
         self.assertEqual(disposition, "target")
-        self.assertEqual(jobs[0].stage, "ai_enrichment")
+        self.assertEqual(jobs, ())
+
+    def test_noncapital_has_no_job(self) -> None:
+        disposition, jobs = content_job_and_flags(
+            body_usable=True,
+            has_source_url=True,
+            attachment_present=False,
+            permission_ok=True,
+            region_scope="noncapital",
+            relevance_confirmed=True,
+        )
+        self.assertEqual(disposition, "non_target")
+        self.assertEqual(jobs, ())
+
+    def test_noncapital_empty_body_or_missing_url_has_no_review_job(self) -> None:
+        cases = [
+            dict(body_usable=False, has_source_url=True, attachment_present=False),
+            dict(body_usable=True, has_source_url=False, attachment_present=False),
+            dict(body_usable=False, has_source_url=False, attachment_present=True),
+        ]
+        for kwargs in cases:
+            with self.subTest(kwargs=kwargs):
+                disposition, jobs = content_job_and_flags(
+                    permission_ok=True,
+                    region_scope="noncapital",
+                    relevance_confirmed=False,
+                    **kwargs,
+                )
+                self.assertEqual(disposition, "non_target")
+                self.assertEqual(jobs, ())
+
+    def test_unknown_empty_body_still_content_review(self) -> None:
+        disposition, jobs = content_job_and_flags(
+            body_usable=False,
+            has_source_url=True,
+            attachment_present=False,
+            permission_ok=True,
+            region_scope="unknown",
+            relevance_confirmed=False,
+        )
+        self.assertEqual(disposition, "observe_only")
+        self.assertEqual(jobs[0].stage, "content_review")
+        self.assertIn("empty_body", jobs[0].reason_codes)
 
     def test_each_missing_positive_condition_skips_ai(self) -> None:
         cases = [
@@ -564,7 +918,11 @@ class ContentJobPlanTests(unittest.TestCase):
         ]
         for kwargs in cases:
             with self.subTest(kwargs=kwargs):
-                _disposition, jobs = content_job_and_flags(**kwargs)
+                _disposition, jobs = content_job_and_flags(
+                    region_scope="capital",
+                    relevance_confirmed=True,
+                    **kwargs,
+                )
                 self.assertTrue(all(job.stage != "ai_enrichment" for job in jobs))
                 self.assertTrue(any(job.stage == "content_review" for job in jobs))
 
@@ -975,9 +1333,9 @@ class ContentConnectorTests(unittest.TestCase):
         self.assertTrue(record.attachment_present)
         self.assertTrue(record.body_usable)
         self.assertTrue(record.has_source_url)
-        self.assertEqual(record.jobs[0].stage, "ai_enrichment")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
 
-    def test_pstwholcn_html_becomes_plain_text_and_can_enqueue_ai(self) -> None:
+    def test_pstwholcn_html_becomes_plain_text_without_ai_job(self) -> None:
         connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         item = load_content()
         self.assertIn("pstWholCn", item)
@@ -991,8 +1349,8 @@ class ContentConnectorTests(unittest.TestCase):
         self.assertNotIn("<a ", plain)
         self.assertTrue(record.body_usable)
         self.assertTrue(record.has_source_url)
-        self.assertEqual(record.disposition, "target")
-        self.assertEqual(record.jobs[0].stage, "ai_enrichment")
+        self.assertNotEqual(record.disposition, "target")
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
         dumped = json.dumps(record.to_rpc_item(), ensure_ascii=False)
         self.assertNotIn(ATCH_SNIPPET, dumped)
         self.assertNotIn("atchFile", dumped)
@@ -1086,14 +1444,7 @@ class PublishGateTests(unittest.TestCase):
 class AiWorkerEnqueueAliasTests(unittest.TestCase):
     def test_policy_jobs_use_legacy_youthcenter_source(self) -> None:
         store = MemoryIngestStore()
-        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
-        record = observation_for(policy_item("p1", zip_cd="11680", oper_cd="11680"))
-        store.upsert_source_observations(
-            CANONICAL_POLICY_SOURCE,
-            started.run_id,
-            [record],
-            Checkpoint.for_rest_page(2),
-        )
+        _seed_ai_jobs(store, 1)
         captured: dict[str, Any] = {}
 
         def enqueue(_supabase: Any, params: dict[str, Any]) -> dict[str, Any]:
@@ -1244,8 +1595,11 @@ class AiDependencyAndRetryTests(unittest.TestCase):
         )
         self.assertEqual(result.ai.status, AI_SKIPPED_NOT_CONFIGURED)
         self.assertIn((CANONICAL_POLICY_SOURCE, "keep1"), store.items)
-        self.assertEqual(store.ai_job_counts()["queued"], 1)
+        self.assertEqual(store.ai_job_counts()["queued"], 0)
         self.assertEqual(store.ai_job_counts()["completed"], 0)
+        self.assertTrue(
+            any(job.processing_stage == "region_review" for job in store.jobs.values())
+        )
 
     def test_latest_revision_skip_completes_without_enqueue(self) -> None:
         store = MemoryIngestStore()
@@ -2865,6 +3219,10 @@ class ContentUntrustedBootstrapTests(unittest.TestCase):
         self.assertFalse(parsed.bootstrap_complete)
 
 
+def _review_seed_item(key: str, title: str) -> dict[str, Any]:
+    return policy_item(key, zip_cd="", oper_cd="", title=title)
+
+
 def _seed_synthetic_lineage(store: MemoryIngestStore) -> dict[str, str]:
     items: list[dict[str, Any]] = []
     for i in range(3):
@@ -2877,14 +3235,7 @@ def _seed_synthetic_lineage(store: MemoryIngestStore) -> dict[str, str]:
             )
         )
     for i in range(9):
-        items.append(
-            policy_item(
-                f"seed-review-{i:02d}",
-                zip_cd="50110",
-                oper_cd="11680",
-                title=f"시드리뷰{i:02d}",
-            )
-        )
+        items.append(_review_seed_item(f"seed-review-{i:02d}", f"시드리뷰{i:02d}"))
     for i in range(13):
         items.append(
             policy_item(
@@ -2933,8 +3284,8 @@ class RecanaryLineageTests(unittest.TestCase):
             items.append(
                 policy_item(
                     f"seed-review-{i:02d}",
-                    zip_cd="50110",
-                    oper_cd="11680",
+                    zip_cd="",
+                    oper_cd="",
                     title=f"시드리뷰{i:02d}",
                 )
             )
@@ -2983,8 +3334,8 @@ class RecanaryLineageTests(unittest.TestCase):
             items.append(
                 policy_item(
                     f"seed-review-{i:02d}",
-                    zip_cd="50110",
-                    oper_cd="11680",
+                    zip_cd="",
+                    oper_cd="",
                     title=f"시드리뷰{i:02d}",
                 )
             )
@@ -3057,8 +3408,8 @@ class RecanaryLineageTests(unittest.TestCase):
             items.append(
                 policy_item(
                     f"seed-review-{i:02d}",
-                    zip_cd="50110",
-                    oper_cd="11680",
+                    zip_cd="",
+                    oper_cd="",
                     title=f"시드리뷰{i:02d}",
                 )
             )
