@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from ingest.ai_errors import AI_OR_ENQUEUE_FAILED, AiJobError
 from ingest.models import ClaimedJob
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.source_identity import (
@@ -19,6 +21,8 @@ AI_DISABLED = "ai_disabled"
 AI_PROCESSED = "processed"
 AI_STATE_UNKNOWN = "ai_state_unknown"
 AI_SKIPPED_SOURCE_INCOMPLETE = "ai_skipped_source_incomplete"
+AI_NO_JOBS = "ai_no_jobs"
+_RAW_PAYLOAD_SKIP_KEYS = frozenset({"atchfile", "atch_file", "facts"})
 
 SummarizeFn = Callable[..., tuple[str, str, str | None]]
 TranslateFn = Callable[..., tuple[str | None, str | None, str, str | None]]
@@ -54,6 +58,7 @@ def process_ai_jobs(
     enqueue: EnqueueFn | None = None,
     revision_precheck: PrecheckFn | None = None,
     limit: int = AI_CLAIM_LIMIT,
+    require_jobs: bool = False,
 ) -> AiWorkerResult:
     if not ai_dependencies_ready(
         supabase=supabase, summarize_ko=summarize_ko, enqueue=enqueue
@@ -70,11 +75,17 @@ def process_ai_jobs(
     except Exception:
         return AiWorkerResult(status=AI_STATE_UNKNOWN)
 
+    claimed = list(jobs)
+    if not claimed:
+        if require_jobs:
+            return AiWorkerResult(status=AI_NO_JOBS, claimed=0)
+        return AiWorkerResult(status=AI_PROCESSED, claimed=0)
+
     completed = 0
     retried = 0
     failed = 0
     state_unknown = 0
-    for job in jobs:
+    for job in claimed:
         try:
             _process_one(
                 job,
@@ -87,10 +98,26 @@ def process_ai_jobs(
         except (RpcTimeout, RpcAmbiguous):
             state_unknown += 1
             break
+        except AiJobError as exc:
+            try:
+                new_status = store.fail_processing_job(
+                    job.job_id, worker_id=WORKER_ID, error_code=exc.code
+                )
+            except Exception:
+                state_unknown += 1
+                break
+            if new_status == "failed":
+                failed += 1
+            elif new_status == "queued":
+                retried += 1
+            else:
+                state_unknown += 1
+                break
+            continue
         except Exception:
             try:
                 new_status = store.fail_processing_job(
-                    job.job_id, worker_id=WORKER_ID, error_code="ai_or_enqueue_failed"
+                    job.job_id, worker_id=WORKER_ID, error_code=AI_OR_ENQUEUE_FAILED
                 )
             except Exception:
                 state_unknown += 1
@@ -114,7 +141,7 @@ def process_ai_jobs(
     status = AI_STATE_UNKNOWN if state_unknown > 0 else AI_PROCESSED
     return AiWorkerResult(
         status=status,
-        claimed=len(jobs),
+        claimed=len(claimed),
         completed=completed,
         retried=retried,
         failed=failed,
@@ -148,7 +175,9 @@ def _process_one(
     title = str(payload.get("plcyNm") or payload.get("pstTtl") or job.external_key)
     body = str(payload.get("plain_text") or "")
     source_url = payload.get("source_url")
-    content_ko, ai_status_ko, ai_model = summarize_ko(body, source_url)
+    content_ko, ai_status_ko, ai_model = _call_summarize(
+        summarize_ko, body, source_url, title
+    )
 
     title_ja = content_ja = ai_status_ja = None
     if ai_status_ko == "success" and translate_ja is not None:
@@ -165,7 +194,7 @@ def _process_one(
         "p_raw_payload": {
             key: value
             for key, value in payload.items()
-            if str(key).lower() not in {"atchfile", "atch_file"}
+            if str(key).lower() not in _RAW_PAYLOAD_SKIP_KEYS
         },
         "p_ai_status_ko": ai_status_ko,
         "p_category": str(
@@ -179,4 +208,25 @@ def _process_one(
         "p_summary_ja": None,
         "p_ai_status_ja": ai_status_ja,
     }
+    if "facts" in params or "p_facts" in params:
+        raise ValueError("facts_not_allowed_in_enqueue")
     enqueue(supabase, params)
+
+
+def _call_summarize(
+    summarize_ko: SummarizeFn,
+    body: str,
+    source_url: Any,
+    title: str,
+) -> tuple[str, str, str | None]:
+    try:
+        parameters = inspect.signature(summarize_ko).parameters
+    except (TypeError, ValueError):
+        return summarize_ko(body, source_url)
+    accepts_title = "title" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+    if accepts_title:
+        return summarize_ko(body, source_url, title=title)
+    return summarize_ko(body, source_url)

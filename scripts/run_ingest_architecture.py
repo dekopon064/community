@@ -7,8 +7,15 @@ import os
 import sys
 from typing import Any, Sequence
 
+from ingest.ai_provider import (
+    PROVIDER_ANTHROPIC,
+    PROVIDER_GEMINI,
+    ProviderError,
+    require_configured_provider,
+)
 from ingest.ai_worker import (
     AI_DISABLED,
+    AI_NO_JOBS,
     AI_PROCESSED,
     AI_SKIPPED_NOT_CONFIGURED,
     AI_SKIPPED_SOURCE_INCOMPLETE,
@@ -20,7 +27,7 @@ from ingest.connectors.youthcenter_content import (
 )
 from ingest.connectors.youthcenter_policy import YouthcenterPolicyConnector
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout, map_rpc_exception
-from ingest.run import IngestArchitectureResult, run_ingest_architecture
+from ingest.run import IngestArchitectureResult, run_ai_only, run_ingest_architecture
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
 from ingest.supabase_store import create_ingest_client
 from ingest.supabase_store import SupabaseIngestStore
@@ -28,7 +35,6 @@ from ingest.supabase_store import SupabaseIngestStore
 SOURCE_CHOICES = (CANONICAL_POLICY_SOURCE, CANONICAL_CONTENT_SOURCE)
 REQUIRED_SUPABASE_ENV = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
 POLICY_API_KEY_ENV = "YOUTH_API_KEY"
-REQUIRED_AI_ENV = ("GEMINI_API_KEY",)
 MISSING_ENV_MESSAGE = "missing required environment variables"
 MISSING_POLICY_KEY_MESSAGE = "missing_youth_policy_api_key"
 MISSING_CONTENT_KEY_MESSAGE = "missing_youth_content_api_key"
@@ -52,7 +58,7 @@ def cli_exit_code(result: IngestArchitectureResult, *, run_ai: bool) -> int:
     ai = result.ai
     if ai.status == AI_SKIPPED_SOURCE_INCOMPLETE:
         return 1
-    if ai.status in {AI_SKIPPED_NOT_CONFIGURED, AI_DISABLED}:
+    if ai.status in {AI_SKIPPED_NOT_CONFIGURED, AI_DISABLED, AI_NO_JOBS}:
         return 1
     if ai.status == AI_STATE_UNKNOWN:
         return 1
@@ -64,6 +70,21 @@ def cli_exit_code(result: IngestArchitectureResult, *, run_ai: bool) -> int:
     ):
         return 0
     return 1
+
+
+def cli_ai_only_exit_code(result: IngestArchitectureResult) -> int:
+    ai = result.ai
+    if ai.status == AI_NO_JOBS:
+        return 1
+    if ai.status != AI_PROCESSED:
+        return 1
+    if ai.claimed < 1:
+        return 1
+    if ai.completed != ai.claimed:
+        return 1
+    if ai.failed or ai.retried or ai.state_unknown:
+        return 1
+    return 0
 
 
 def _print_summary(result: IngestArchitectureResult, *, run_ai: bool, exit_code: int) -> None:
@@ -84,11 +105,21 @@ def _print_summary(result: IngestArchitectureResult, *, run_ai: bool, exit_code:
     print(f"ingest exit={exit_code}")
 
 
+def _print_ai_only_summary(result: IngestArchitectureResult, *, exit_code: int) -> None:
+    ai = result.ai
+    print(
+        "ingest ai="
+        f"{ai.status} claimed={ai.claimed} completed={ai.completed} "
+        f"retried={ai.retried} failed={ai.failed} state_unknown={ai.state_unknown}"
+    )
+    print(f"ingest exit={exit_code}")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="run_ingest_architecture")
     parser.add_argument(
         "--source",
-        required=True,
+        required=False,
         choices=SOURCE_CHOICES,
         help="canonical source id; exactly one source per invocation",
     )
@@ -103,21 +134,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="process global AI queue after source complete",
     )
     parser.add_argument(
+        "--ai-only",
+        action="store_true",
+        help="process global AI queue without source ingest or Youth API",
+    )
+    parser.add_argument(
         "--ai-limit",
         type=int,
         default=None,
-        help="global AI claim limit; required with --run-ai, range 1-10",
+        help="global AI claim limit; required with --run-ai/--ai-only, range 1-10",
     )
     return parser
 
 
 def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.ai_only and args.source:
+        parser.error("--ai-only cannot be used with --source")
+    if args.ai_only and args.run_ai:
+        parser.error("--ai-only cannot be used with --run-ai")
+    if not args.ai_only and not args.source:
+        parser.error("--source is required unless --ai-only")
     if args.run_ai and not args.execute:
         parser.error("--run-ai requires --execute")
-    if args.ai_limit is not None and not args.run_ai:
-        parser.error("--ai-limit requires --run-ai")
+    if args.ai_only and not args.execute:
+        parser.error("--ai-only requires --execute")
+    if args.ai_limit is not None and not args.run_ai and not args.ai_only:
+        parser.error("--ai-limit requires --run-ai or --ai-only")
     if args.run_ai and args.ai_limit is None:
         parser.error("--run-ai requires --ai-limit")
+    if args.ai_only and args.ai_limit is None:
+        parser.error("--ai-only requires --ai-limit")
     if args.ai_limit is not None and not (1 <= args.ai_limit <= 10):
         parser.error("--ai-limit must be an integer from 1 to 10")
 
@@ -130,7 +176,7 @@ def _youth_content_api_key() -> str:
     return os.environ[CONTENT_API_KEY_ENV]
 
 
-def _missing_execute_message(source: str, *, run_ai: bool) -> str | None:
+def _missing_source_execute_message(source: str) -> str | None:
     if _missing_env(REQUIRED_SUPABASE_ENV):
         return MISSING_ENV_MESSAGE
     if source == CANONICAL_POLICY_SOURCE:
@@ -138,7 +184,11 @@ def _missing_execute_message(source: str, *, run_ai: bool) -> str | None:
             return MISSING_POLICY_KEY_MESSAGE
     elif _missing_env((CONTENT_API_KEY_ENV,)):
         return MISSING_CONTENT_KEY_MESSAGE
-    if run_ai and _missing_env(REQUIRED_AI_ENV):
+    return None
+
+
+def _missing_ai_only_execute_message() -> str | None:
+    if _missing_env(REQUIRED_SUPABASE_ENV):
         return MISSING_ENV_MESSAGE
     return None
 
@@ -151,6 +201,11 @@ def _load_legacy_ai_helpers() -> dict[str, Any]:
         summarize_with_gemini,
         translate_with_gemini_ja,
     )
+
+    def summarize_ko(
+        body: str, url: str | None, title: str | None = None
+    ) -> tuple[str, str, str | None]:
+        return summarize_with_gemini(body, url)
 
     def enqueue(supabase: Any, params: dict[str, Any]) -> dict[str, Any]:
         mapped: BaseException | None = None
@@ -176,11 +231,32 @@ def _load_legacy_ai_helpers() -> dict[str, Any]:
         return parsed
 
     return {
-        "summarize_ko": summarize_with_gemini,
+        "summarize_ko": summarize_ko,
         "translate_ja": translate_with_gemini_ja,
         "enqueue": enqueue,
         "revision_precheck": is_latest_source_revision,
     }
+
+
+def _load_anthropic_ai_helpers(api_key: str) -> dict[str, Any]:
+    from ingest.ai_claude import ClaudeAdapter
+    from ingest.ai_queue_rpc import enqueue_curation_candidate, is_latest_source_revision
+
+    adapter = ClaudeAdapter(api_key=api_key)
+    return {
+        "summarize_ko": adapter.summarize_ko,
+        "translate_ja": adapter.translate_ja,
+        "enqueue": enqueue_curation_candidate,
+        "revision_precheck": is_latest_source_revision,
+    }
+
+
+def _load_ai_helpers(provider: str, api_key: str) -> dict[str, Any]:
+    if provider == PROVIDER_ANTHROPIC:
+        return _load_anthropic_ai_helpers(api_key)
+    if provider == PROVIDER_GEMINI:
+        return _load_legacy_ai_helpers()
+    raise ProviderError("invalid_ai_provider")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -196,7 +272,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    missing = _missing_execute_message(args.source, run_ai=args.run_ai)
+    provider: str | None = None
+    provider_key: str | None = None
+    if args.run_ai or args.ai_only:
+        try:
+            provider, provider_key = require_configured_provider()
+        except ProviderError as exc:
+            print(exc.code, file=sys.stderr)
+            return 1
+
+    if args.ai_only:
+        missing = _missing_ai_only_execute_message()
+    else:
+        missing = _missing_source_execute_message(args.source)
     if missing is not None:
         print(missing, file=sys.stderr)
         return 1
@@ -207,16 +295,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.environ["SUPABASE_SERVICE_KEY"],
         )
         store = SupabaseIngestStore(client)
+        ai_helpers: dict[str, Any] = {}
+        if provider is not None and provider_key is not None:
+            ai_helpers = _load_ai_helpers(provider, provider_key)
+
+        if args.ai_only:
+            result = run_ai_only(
+                store=store,
+                supabase=client,
+                summarize_ko=ai_helpers.get("summarize_ko"),
+                translate_ja=ai_helpers.get("translate_ja"),
+                enqueue=ai_helpers.get("enqueue"),
+                revision_precheck=ai_helpers.get("revision_precheck"),
+                ai_limit=args.ai_limit if args.ai_limit is not None else 1,
+            )
+            code = cli_ai_only_exit_code(result)
+            _print_ai_only_summary(result, exit_code=code)
+            return code
+
         if args.source == CANONICAL_POLICY_SOURCE:
             connector = YouthcenterPolicyConnector(api_key_provider=_youth_api_key)
         else:
             connector = YouthcenterContentConnector(
                 api_key_provider=_youth_content_api_key
             )
-
-        ai_helpers: dict[str, Any] = {}
-        if args.run_ai:
-            ai_helpers = _load_legacy_ai_helpers()
 
         result = run_ingest_architecture(
             store=store,

@@ -101,5 +101,37 @@ def run_ingest_architecture(
     )
 
 
+def run_ai_only(
+    *,
+    store: IngestStore,
+    supabase: Any | None = None,
+    summarize_ko: Callable[..., tuple[str, str, str | None]] | None = None,
+    translate_ja: Callable[..., tuple[str | None, str | None, str, str | None]] | None = None,
+    enqueue: Callable[..., dict[str, Any]] | None = None,
+    revision_precheck: Callable[..., bool] | None = None,
+    ai_limit: int = AI_CLAIM_LIMIT,
+) -> IngestArchitectureResult:
+    if not ai_dependencies_ready(
+        supabase=supabase, summarize_ko=summarize_ko, enqueue=enqueue
+    ):
+        ai_result = AiWorkerResult(status=AI_SKIPPED_NOT_CONFIGURED)
+    else:
+        ai_result = process_ai_jobs(
+            store,
+            supabase=supabase,
+            summarize_ko=summarize_ko,
+            translate_ja=translate_ja,
+            enqueue=enqueue,
+            revision_precheck=revision_precheck,
+            limit=ai_limit,
+            require_jobs=True,
+        )
+    return IngestArchitectureResult(
+        exit_code=0,
+        source_results=(),
+        ai=ai_result,
+    )
+
+
 def default_memory_store() -> MemoryIngestStore:
     return MemoryIngestStore()

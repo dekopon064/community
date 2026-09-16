@@ -5,7 +5,9 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from ingest.ai_errors import AiJobError
 from ingest.ai_worker import (
+    AI_NO_JOBS,
     AI_PROCESSED,
     AI_STATE_UNKNOWN,
     process_ai_jobs,
@@ -60,7 +62,7 @@ def _seed(store: MemoryIngestStore, count: int) -> None:
 def _ai_deps(**overrides: Any) -> dict[str, Any]:
     deps: dict[str, Any] = {
         "supabase": object(),
-        "summarize_ko": lambda text, url: (text, "success", "model"),
+        "summarize_ko": lambda text, url, title=None: (text, "success", "model"),
         "translate_ja": lambda title, body: ("t", "b", "success", "model"),
         "enqueue": lambda *_a, **_k: {"outcome": "inserted", "candidate_id": "x"},
         "revision_precheck": lambda *_a, **_k: False,
@@ -221,6 +223,70 @@ class AiClassBoundaryTests(unittest.TestCase):
             CONTENT_BODY_MARKER,
         ):
             self.assertNotIn(marker, text)
+
+
+class AiNoJobsAndPayloadTests(unittest.TestCase):
+    def test_require_jobs_empty_claim_is_ai_no_jobs(self) -> None:
+        store = SpyStore()
+        result = process_ai_jobs(store, require_jobs=True, **_ai_deps())
+        self.assertEqual(result.status, AI_NO_JOBS)
+        self.assertEqual(result.claimed, 0)
+        self.assertEqual(len(store.complete_calls), 0)
+        self.assertEqual(len(store.fail_calls), 0)
+
+    def test_empty_claim_without_require_jobs_stays_processed(self) -> None:
+        store = SpyStore()
+        result = process_ai_jobs(store, **_ai_deps())
+        self.assertEqual(result.status, AI_PROCESSED)
+        self.assertEqual(result.claimed, 0)
+
+    def test_ai_job_error_uses_secret_safe_code(self) -> None:
+        store = SpyStore()
+        _seed(store, 1)
+
+        def boom(*_a: Any, **_k: Any) -> dict[str, Any]:
+            raise AiJobError("ai_blocked_cost_cap")
+
+        result = process_ai_jobs(store, **_ai_deps(enqueue=boom))
+        self.assertEqual(result.status, AI_PROCESSED)
+        self.assertEqual(result.retried, 1)
+        job = next(iter(store.jobs.values()))
+        self.assertEqual(job.error_code, "ai_blocked_cost_cap")
+
+    def test_facts_are_not_enqueued_and_model_is_passed(self) -> None:
+        store = SpyStore()
+        _seed(store, 1)
+        captured: dict[str, Any] = {}
+
+        def enqueue(_supabase: Any, params: dict[str, Any]) -> dict[str, Any]:
+            captured.update(params)
+            return {"outcome": "inserted", "candidate_id": "x"}
+
+        def summarize(text: str, url: str | None, title: str | None = None) -> tuple[str, str, str]:
+            self.assertEqual(title, "테스트 정책")
+            return ("요약", "success", "claude-sonnet-5")
+
+        result = process_ai_jobs(
+            store,
+            **_ai_deps(enqueue=enqueue, summarize_ko=summarize),
+        )
+        self.assertEqual(result.completed, 1)
+        self.assertNotIn("facts", captured)
+        self.assertNotIn("p_facts", captured)
+        self.assertNotIn("facts", captured.get("p_raw_payload", {}))
+        self.assertEqual(captured["p_ai_model"], "claude-sonnet-5")
+
+    def test_enqueue_ambiguous_does_not_complete_or_fail(self) -> None:
+        store = SpyStore()
+        _seed(store, 1)
+
+        def boom(*_a: Any, **_k: Any) -> dict[str, Any]:
+            raise RpcAmbiguous()
+
+        result = process_ai_jobs(store, **_ai_deps(enqueue=boom))
+        self.assertEqual(result.status, AI_STATE_UNKNOWN)
+        self.assertEqual(len(store.complete_calls), 0)
+        self.assertEqual(len(store.fail_calls), 0)
 
 
 if __name__ == "__main__":
