@@ -19,6 +19,7 @@ from ingest.models import (
     ObservationRecord,
     ObservationResult,
     ProcessingStage,
+    ReviewDecisionResult,
     StartRunResult,
 )
 from ingest.rpc_errors import (
@@ -71,14 +72,28 @@ UPSERT_FIELDS = (
     "duplicate_in_batch",
 )
 FINISH_FIELDS = ("status", "stop_reason")
+REVIEW_DECISION_FIELDS = (
+    "decision_id",
+    "source_item_id",
+    "revision_hash",
+    "review_type",
+    "decision",
+    "ai_job_id",
+    "ai_job_status",
+    "review_job_id",
+    "review_job_status",
+)
+RECONCILE_FIELDS = ("action_result",) + REVIEW_DECISION_FIELDS
 
 GET_INGEST_SOURCE = "get_ingest_source"
 START_INGEST_RUN = "start_ingest_run"
-UPSERT_SOURCE_OBSERVATIONS = "upsert_source_observations"
+UPSERT_SOURCE_OBSERVATIONS = "upsert_source_observations_v2"
 FINISH_INGEST_RUN = "finish_ingest_run"
 CLAIM_PROCESSING_JOBS = "claim_processing_jobs"
 COMPLETE_PROCESSING_JOB = "complete_processing_job"
 FAIL_PROCESSING_JOB = "fail_processing_job"
+RESOLVE_INGEST_REVIEW_DECISION = "resolve_ingest_review_decision"
+RECONCILE_QUEUED_AI_JOB = "reconcile_queued_ai_job"
 
 
 def ingest_client_options(client_options_cls: Any) -> Any:
@@ -193,6 +208,40 @@ def _revision_hash(value: Any) -> str:
     if REVISION_HASH_RE.fullmatch(text) is None:
         raise RpcAmbiguous()
     return text
+
+
+def _optional_uuid(value: Any) -> str | None:
+    if value is None:
+        return None
+    return _uuid_str(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return _exact_str(value)
+
+
+def _parse_review_decision_row(
+    row: dict[str, Any], *, include_action: bool
+) -> ReviewDecisionResult:
+    keys = RECONCILE_FIELDS if include_action else REVIEW_DECISION_FIELDS
+    _require_keys(row, keys)
+    action = _exact_str(row["action_result"]) if include_action else None
+    if include_action and action == "":
+        raise RpcAmbiguous()
+    return ReviewDecisionResult(
+        decision_id=_uuid_str(row["decision_id"]),
+        source_item_id=_uuid_str(row["source_item_id"]),
+        revision_hash=_revision_hash(row["revision_hash"]),
+        review_type=_nonempty_str(row["review_type"]),
+        decision=_nonempty_str(row["decision"]),
+        ai_job_id=_optional_uuid(row["ai_job_id"]),
+        ai_job_status=_optional_str(row["ai_job_status"]),
+        review_job_id=_optional_uuid(row["review_job_id"]),
+        review_job_status=_optional_str(row["review_job_status"]),
+        action_result=action,
+    )
 
 
 class SupabaseIngestStore:
@@ -410,6 +459,68 @@ class SupabaseIngestStore:
         if token not in {"queued", "failed"}:
             raise RpcAmbiguous()
         return token
+
+    def resolve_ingest_review_decision(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        review_type: str,
+        decision: str,
+        region_scope: str,
+        audience_relevance: tuple[str, ...] | list[str] = (),
+        reason_codes: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ReviewDecisionResult:
+        data = _rpc_data(
+            self._client,
+            RESOLVE_INGEST_REVIEW_DECISION,
+            {
+                "p_source_item_id": source_item_id,
+                "p_revision_hash": revision_hash,
+                "p_review_type": review_type,
+                "p_decision": decision,
+                "p_region_scope": region_scope,
+                "p_audience_relevance": list(audience_relevance),
+                "p_reason_codes": list(reason_codes),
+                "p_rule_version": rule_version,
+                "p_reviewer": reviewer,
+                "p_memo": memo,
+            },
+        )
+        return _parse_review_decision_row(_one_row(data), include_action=False)
+
+    def reconcile_queued_ai_job(
+        self,
+        job_id: str,
+        *,
+        action: str,
+        review_type: str,
+        region_scope: str,
+        audience_relevance: tuple[str, ...] | list[str] = (),
+        reason_codes: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ReviewDecisionResult:
+        data = _rpc_data(
+            self._client,
+            RECONCILE_QUEUED_AI_JOB,
+            {
+                "p_job_id": job_id,
+                "p_action": action,
+                "p_review_type": review_type,
+                "p_region_scope": region_scope,
+                "p_audience_relevance": list(audience_relevance),
+                "p_reason_codes": list(reason_codes),
+                "p_rule_version": rule_version,
+                "p_reviewer": reviewer,
+                "p_memo": memo,
+            },
+        )
+        return _parse_review_decision_row(_one_row(data), include_action=True)
 
     def set_source_permission(
         self,

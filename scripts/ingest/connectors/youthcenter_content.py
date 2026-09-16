@@ -26,7 +26,7 @@ from ingest.models import (
     OrderingCapability,
     RelationshipPlan,
 )
-from ingest.relevance import screen_content
+from ingest.relevance import classifier_decision_metadata, screen_content
 from ingest.sanitize import body_is_usable, extract_http_urls, html_to_plain_text, is_http_url
 from ingest.source_identity import (
     CANONICAL_CONTENT_SOURCE,
@@ -138,14 +138,14 @@ def content_job_and_flags(
         codes = screening_reasons or ("region_scope_unknown",)
         return (
             "region_review_required",
-            (JobPlan(stage="content_review", reason_codes=codes),),
+            (JobPlan(stage="region_review", reason_codes=codes),),
         )
 
     if not relevance_confirmed:
         codes = screening_reasons or ("relevance_unconfirmed",)
         return (
             "region_review_required",
-            (JobPlan(stage="content_review", reason_codes=codes),),
+            (JobPlan(stage="relevance_review", reason_codes=codes),),
         )
 
     # Phase 1: classifier target is not an ai_enrichment enqueue.
@@ -313,6 +313,11 @@ class YouthcenterContentConnector(BatchConnector):
             is_data_url=attachment.is_data_url,
             jobs=jobs,
             relationships=relationships,
+            classifier_decision=(
+                classifier_decision_metadata(screening)
+                if disposition == "target"
+                else None
+            ),
         )
 
     def _api_key(self) -> str:

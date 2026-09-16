@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -20,14 +21,24 @@ from ingest.constants import (
 )
 from ingest.models import (
     AI_STAGE,
+    APPROVE_REGION_SCOPES,
+    AUDIENCE_AXES,
     Checkpoint,
     ClaimedJob,
+    CLASSIFIER_DECISION_KEYS,
+    CLASSIFIER_REVIEWER_PREFIX,
     FinishRunResult,
     ObservationRecord,
     ObservationResult,
     ProcessingStage,
+    RECONCILE_ACTIONS,
+    RELEVANCE_REVIEW_STAGE,
+    REVIEW_DECISIONS,
+    REVIEW_TYPES,
+    ReviewDecisionResult,
     StartRunResult,
 )
+from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import (
     CANONICAL_CONTENT_SOURCE,
     CANONICAL_POLICY_SOURCE,
@@ -44,6 +55,17 @@ from ingest.source_identity import (
 )
 
 ClockFn = Callable[[], datetime]
+REVIEW_TYPE_TO_STAGE = {
+    "region": "region_review",
+    "relevance": RELEVANCE_REVIEW_STAGE,
+}
+BLOCKING_REVIEW_STAGES = frozenset(
+    {"region_review", RELEVANCE_REVIEW_STAGE, "content_review"}
+)
+UNRESOLVED_REVIEW_STATUSES = frozenset({"queued", "claimed"})
+FORBIDDEN_PROMOTE_DISPOSITIONS = frozenset(
+    {"non_target", "observe_only", "attachment_dependent"}
+)
 
 
 class LeaseLost(RuntimeError):
@@ -97,6 +119,37 @@ class IngestStore(Protocol):
     def fail_processing_job(
         self, job_id: str, *, worker_id: str, error_code: str
     ) -> str:
+        ...
+
+    def resolve_ingest_review_decision(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        review_type: str,
+        decision: str,
+        region_scope: str,
+        audience_relevance: tuple[str, ...] | list[str] = (),
+        reason_codes: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ReviewDecisionResult:
+        ...
+
+    def reconcile_queued_ai_job(
+        self,
+        job_id: str,
+        *,
+        action: str,
+        review_type: str,
+        region_scope: str,
+        audience_relevance: tuple[str, ...] | list[str] = (),
+        reason_codes: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ReviewDecisionResult:
         ...
 
     def set_source_permission(
@@ -180,6 +233,24 @@ class _Job:
 
 
 @dataclass
+class _Decision:
+    id: str
+    source_item_id: str
+    revision_hash: str
+    review_type: str
+    decision: str
+    region_scope: str
+    audience_relevance: tuple[str, ...]
+    reason_codes: tuple[str, ...]
+    rule_version: str
+    reviewer: str
+    reviewed_at: datetime
+    memo: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass
 class _Run:
     id: str
     source_id: str
@@ -221,7 +292,10 @@ class MemoryIngestStore:
         self.publication_events: list[dict[str, Any]] = []
         self.permission_events: list[dict[str, Any]] = []
         self.public_curations: dict[str, dict[str, Any]] = {}
+        self.decisions: dict[tuple[str, str, str], _Decision] = {}
         self._fail_permission_event = False
+        self._fail_decision_core = False
+        self._fail_decision_core_after_mapped = False
         seed_youthcenter_sources(self)
 
     def seed_source(self, source: _Source) -> None:
@@ -291,73 +365,96 @@ class MemoryIngestStore:
         encoded = repr([record.to_rpc_item() for record in records]).encode("utf-8")
         if len(encoded) > MAX_BATCH_BYTES * 16:
             raise ValueError("batch_too_large")
-        pending_items = dict(self.items)
-        pending_jobs = dict(self.jobs)
-        pending_rels = list(self.relationships)
-        results: list[ObservationResult] = []
-        seen_keys: set[str] = set()
-
-        for index, record in enumerate(records):
-            if not record.external_key:
-                raise ValueError("external_key_required")
-            if contains_forbidden_attachment_key(record.to_rpc_item()):
-                raise ValueError("forbidden_attachment_key")
-            duplicate = record.external_key in seen_keys
-            seen_keys.add(record.external_key)
-            key = (source_id, record.external_key)
-            existing = pending_items.get(key)
-            if existing is None:
-                outcome = "new"
-                item_id = str(uuid.uuid4())
-                pending_items[key] = _item_from_record(
-                    item_id, source_id, record, run_id, now, now
-                )
-            elif existing.revision_hash != record.revision_hash:
-                outcome = "changed"
-                item_id = existing.id
-                pending_items[key] = _item_from_record(
-                    item_id,
-                    source_id,
-                    record,
-                    run_id,
-                    existing.first_seen_at,
-                    now,
-                )
-            else:
-                outcome = "unchanged"
-                item_id = existing.id
-                updated = existing
-                updated.last_seen_at = now
-                updated.last_run_id = run_id
-                pending_items[key] = updated
-
-            if outcome in {"new", "changed"} and not duplicate:
-                _insert_jobs(pending_jobs, item_id, record, now)
-                _insert_relationships(
-                    pending_rels, source_id, record.external_key, record
-                )
-
-            results.append(
-                ObservationResult(
-                    input_index=index,
-                    external_key=record.external_key,
-                    outcome=outcome,  # type: ignore[arg-type]
-                    duplicate_in_batch=duplicate,
-                    skipped_streak=duplicate,
-                )
-            )
+        for record in records:
+            self._reject_v2_input(record)
 
         sync = self.sync[source_id]
         run = self.runs[run_id]
-        sync.committed_checkpoint = (
-            next_checkpoint.to_json() if next_checkpoint is not None else None
-        )
-        sync.lease_expires_at = now + timedelta(seconds=run.lease_seconds)
-        self.items = pending_items
-        self.jobs = pending_jobs
-        self.relationships = pending_rels
-        run.batches_ok += 1
-        return results
+        snapshot = {
+            "items": copy.deepcopy(self.items),
+            "jobs": copy.deepcopy(self.jobs),
+            "decisions": copy.deepcopy(self.decisions),
+            "relationships": copy.deepcopy(self.relationships),
+            "checkpoint": copy.deepcopy(sync.committed_checkpoint),
+            "lease_expires_at": sync.lease_expires_at,
+            "batches_ok": run.batches_ok,
+        }
+        try:
+            pending_items = copy.deepcopy(self.items)
+            pending_jobs = copy.deepcopy(self.jobs)
+            pending_rels = copy.deepcopy(self.relationships)
+            results: list[ObservationResult] = []
+            seen_keys: set[str] = set()
+
+            for index, record in enumerate(records):
+                if not record.external_key:
+                    raise ValueError("external_key_required")
+                if contains_forbidden_attachment_key(record.to_rpc_item()):
+                    raise ValueError("forbidden_attachment_key")
+                duplicate = record.external_key in seen_keys
+                seen_keys.add(record.external_key)
+                key = (source_id, record.external_key)
+                existing = pending_items.get(key)
+                if existing is None:
+                    outcome = "new"
+                    item_id = str(uuid.uuid4())
+                    pending_items[key] = _item_from_record(
+                        item_id, source_id, record, run_id, now, now
+                    )
+                elif existing.revision_hash != record.revision_hash:
+                    outcome = "changed"
+                    item_id = existing.id
+                    pending_items[key] = _item_from_record(
+                        item_id,
+                        source_id,
+                        record,
+                        run_id,
+                        existing.first_seen_at,
+                        now,
+                    )
+                else:
+                    outcome = "unchanged"
+                    item_id = existing.id
+                    updated = existing
+                    updated.last_seen_at = now
+                    updated.last_run_id = run_id
+                    pending_items[key] = updated
+
+                if outcome in {"new", "changed"} and not duplicate:
+                    _insert_jobs(pending_jobs, item_id, record, now)
+                    _insert_relationships(
+                        pending_rels, source_id, record.external_key, record
+                    )
+
+                results.append(
+                    ObservationResult(
+                        input_index=index,
+                        external_key=record.external_key,
+                        outcome=outcome,  # type: ignore[arg-type]
+                        duplicate_in_batch=duplicate,
+                        skipped_streak=duplicate,
+                    )
+                )
+
+            sync.committed_checkpoint = (
+                next_checkpoint.to_json() if next_checkpoint is not None else None
+            )
+            sync.lease_expires_at = now + timedelta(seconds=run.lease_seconds)
+            self.items = pending_items
+            self.jobs = pending_jobs
+            self.relationships = pending_rels
+            self._apply_classifier_approvals(source_id, records, results)
+            run.batches_ok += 1
+            return results
+        except Exception:
+            self.items = snapshot["items"]
+            self.jobs = snapshot["jobs"]
+            self.decisions = snapshot["decisions"]
+            self.relationships = snapshot["relationships"]
+            sync.committed_checkpoint = snapshot["checkpoint"]
+            sync.lease_expires_at = snapshot["lease_expires_at"]
+            run.batches_ok = snapshot["batches_ok"]
+            raise
 
     def finish_ingest_run(
         self,
@@ -415,18 +512,8 @@ class MemoryIngestStore:
             job
             for job in self.jobs.values()
             if job.processing_stage == AI_STAGE
-            and (
-                (
-                    job.status == "queued"
-                    and job.available_at <= now
-                    and (job.next_retry_at is None or job.next_retry_at <= now)
-                )
-                or (
-                    job.status == "claimed"
-                    and job.claim_lease_until is not None
-                    and job.claim_lease_until < now
-                )
-            )
+            and self._ai_job_is_claim_ready(job, now)
+            and self._claimable_item_for_ai_job(job) is not None
         ]
         eligible.sort(key=lambda job: (job.queued_at, job.id))
         claimed: list[ClaimedJob] = []
@@ -435,7 +522,9 @@ class MemoryIngestStore:
             job.claimed_at = now
             job.claim_lease_until = now + timedelta(seconds=lease_seconds)
             job.claimed_by = worker_id
-            item = next(value for value in self.items.values() if value.id == job.source_item_id)
+            item = self._claimable_item_for_ai_job(job)
+            if item is None:
+                continue
             source = self.sources[item.source_id]
             claimed.append(
                 ClaimedJob(
@@ -478,6 +567,283 @@ class MemoryIngestStore:
                 seconds=AI_RETRY_BACKOFF_SECONDS
             )
         return job.status
+
+    def resolve_ingest_review_decision(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        review_type: str,
+        decision: str,
+        region_scope: str,
+        audience_relevance: tuple[str, ...] | list[str] = (),
+        reason_codes: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ReviewDecisionResult:
+        return self._apply_ingest_review_decision(
+            source_item_id=source_item_id,
+            revision_hash=revision_hash,
+            review_type=review_type,
+            decision=decision,
+            region_scope=region_scope,
+            audience_relevance=audience_relevance,
+            reason_codes=reason_codes,
+            rule_version=rule_version,
+            reviewer=reviewer,
+            memo=memo,
+        )
+
+    def _apply_ingest_review_decision(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        review_type: str,
+        decision: str,
+        region_scope: str,
+        audience_relevance: tuple[str, ...] | list[str] = (),
+        reason_codes: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ReviewDecisionResult:
+        snapshot = {
+            "items": copy.deepcopy(self.items),
+            "jobs": copy.deepcopy(self.jobs),
+            "decisions": copy.deepcopy(self.decisions),
+        }
+        try:
+            return self._apply_ingest_review_decision_inner(
+                source_item_id=source_item_id,
+                revision_hash=revision_hash,
+                review_type=review_type,
+                decision=decision,
+                region_scope=region_scope,
+                audience_relevance=audience_relevance,
+                reason_codes=reason_codes,
+                rule_version=rule_version,
+                reviewer=reviewer,
+                memo=memo,
+            )
+        except Exception:
+            self.items = snapshot["items"]
+            self.jobs = snapshot["jobs"]
+            self.decisions = snapshot["decisions"]
+            raise
+
+    def _apply_ingest_review_decision_inner(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        review_type: str,
+        decision: str,
+        region_scope: str,
+        audience_relevance: tuple[str, ...] | list[str] = (),
+        reason_codes: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ReviewDecisionResult:
+        if self._fail_decision_core:
+            raise RpcFailure("decision_conflict")
+        now = self._clock()
+        axes = tuple(audience_relevance)
+        reasons = tuple(reason_codes)
+        v_hash = (revision_hash or "").strip()
+        v_type = (review_type or "").strip()
+        v_decision = (decision or "").strip()
+        v_scope = (region_scope or "").strip()
+        v_rule = (rule_version or "").strip()
+        v_reviewer = (reviewer or "").strip()
+        v_memo = (memo or "").strip() or None
+        if not source_item_id:
+            raise RpcFailure("source_item_not_found")
+        if len(v_hash) != 64 or any(ch not in "0123456789abcdef" for ch in v_hash):
+            raise RpcFailure("revision_mismatch")
+        if v_type not in REVIEW_TYPES:
+            raise RpcFailure("invalid_review_type")
+        if v_decision not in REVIEW_DECISIONS:
+            raise RpcFailure("invalid_decision")
+        if v_scope not in {
+            "capital",
+            "nationwide_or_online",
+            "noncapital",
+            "unknown",
+        }:
+            raise RpcFailure("invalid_region_scope")
+        if not (1 <= len(v_rule) <= 64):
+            raise RpcFailure("invalid_rule_version")
+        if not (1 <= len(v_reviewer) <= 128):
+            raise RpcFailure("invalid_reviewer")
+        if v_memo is not None and len(v_memo) > 500:
+            raise RpcFailure("invalid_memo")
+        if any(axis not in AUDIENCE_AXES for axis in axes):
+            raise RpcFailure("invalid_audience_relevance")
+        if v_decision == "approve_ai" and (
+            len(axes) < 1 or v_scope not in APPROVE_REGION_SCOPES
+        ):
+            raise RpcFailure("approve_requirements_not_met")
+
+        item = self._item_by_id(source_item_id)
+        if item.revision_hash != v_hash:
+            raise RpcFailure("revision_mismatch")
+
+        key = (item.id, v_hash, v_type)
+        existing = self.decisions.get(key)
+        if existing is not None:
+            if existing.decision == v_decision:
+                pass
+            elif existing.decision == "needs_review" and v_decision in {
+                "approve_ai",
+                "reject",
+            }:
+                pass
+            else:
+                raise RpcFailure("decision_conflict")
+            existing.decision = v_decision
+            existing.region_scope = v_scope
+            existing.audience_relevance = axes
+            existing.reason_codes = reasons
+            existing.rule_version = v_rule
+            existing.reviewer = v_reviewer
+            existing.reviewed_at = now
+            existing.memo = v_memo
+            existing.updated_at = now
+            decision_row = existing
+        else:
+            decision_row = _Decision(
+                id=str(uuid.uuid4()),
+                source_item_id=item.id,
+                revision_hash=v_hash,
+                review_type=v_type,
+                decision=v_decision,
+                region_scope=v_scope,
+                audience_relevance=axes,
+                reason_codes=reasons,
+                rule_version=v_rule,
+                reviewer=v_reviewer,
+                reviewed_at=now,
+                memo=v_memo,
+                created_at=now,
+                updated_at=now,
+            )
+            self.decisions[key] = decision_row
+
+        ai_job = self._job_for(item.id, v_hash, AI_STAGE)
+        live_claimed = ai_job is not None and self._is_live_claimed(ai_job, now)
+        review_stage = REVIEW_TYPE_TO_STAGE.get(v_type)
+        if review_stage is None:
+            raise RpcFailure("invalid_review_type")
+
+        if v_decision == "approve_ai":
+            self._complete_mapped_review_job(item.id, v_hash, review_stage, now)
+            if self._fail_decision_core_after_mapped:
+                raise RpcFailure("decision_conflict")
+            if self._can_promote_to_target(item, v_hash, v_scope):
+                item.disposition = "target"
+            self._ensure_queued_ai_job(item, v_hash, now, reasons)
+        elif v_decision == "reject":
+            if live_claimed:
+                raise RpcFailure("ai_job_claimed")
+            self._complete_mapped_review_job(item.id, v_hash, review_stage, now)
+            if ai_job is not None and ai_job.status in {"queued", "claimed"}:
+                self._cancel_ai_job(
+                    ai_job, reasons or ("rejected_non_target",)
+                )
+            item.disposition = "non_target"
+        else:
+            if live_claimed:
+                raise RpcFailure("ai_job_claimed")
+            if ai_job is not None and ai_job.status in {"queued", "claimed"}:
+                self._cancel_ai_job(ai_job, reasons or ("needs_review",))
+            review_job = self._job_for(item.id, v_hash, review_stage)
+            if review_job is None:
+                self._insert_job(item.id, v_hash, review_stage, now, reasons)
+            elif review_job.status != "queued":
+                review_job.status = "queued"
+                review_job.available_at = now
+                review_job.claimed_by = None
+                review_job.claim_lease_until = None
+                review_job.completed_at = None
+                review_job.next_retry_at = None
+                review_job.reason_codes = reasons
+
+        ai_job = self._job_for(item.id, v_hash, AI_STAGE)
+        review_job = self._job_for(item.id, v_hash, review_stage)
+        return ReviewDecisionResult(
+            decision_id=decision_row.id,
+            source_item_id=item.id,
+            revision_hash=v_hash,
+            review_type=v_type,
+            decision=v_decision,
+            ai_job_id=None if ai_job is None else ai_job.id,
+            ai_job_status=None if ai_job is None else ai_job.status,
+            review_job_id=None if review_job is None else review_job.id,
+            review_job_status=None if review_job is None else review_job.status,
+        )
+
+    def reconcile_queued_ai_job(
+        self,
+        job_id: str,
+        *,
+        action: str,
+        review_type: str,
+        region_scope: str,
+        audience_relevance: tuple[str, ...] | list[str] = (),
+        reason_codes: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ReviewDecisionResult:
+        now = self._clock()
+        v_action = (action or "").strip()
+        if not job_id:
+            raise RpcFailure("job not found")
+        if v_action not in RECONCILE_ACTIONS:
+            raise RpcFailure("invalid_reconcile_action")
+        job = self.jobs.get(job_id)
+        if job is None:
+            raise RpcFailure("job not found")
+        if job.processing_stage != AI_STAGE:
+            raise RpcFailure("unexpected_job_status")
+        if job.status == "completed":
+            raise RpcFailure("completed_job_not_reconcileable")
+        if job.status == "failed":
+            raise RpcFailure("unexpected_job_status")
+        if self._is_live_claimed(job, now):
+            raise RpcFailure("ai_job_claimed")
+        if job.status not in {"queued", "claimed", "cancelled"}:
+            raise RpcFailure("unexpected_job_status")
+        item = self._item_by_id(job.source_item_id)
+        if item.revision_hash != job.revision_hash:
+            raise RpcFailure("revision_mismatch")
+        reasons = tuple(reason_codes)
+        if v_action == "keep_with_approve":
+            decision = "approve_ai"
+        elif v_action == "cancel_unfit":
+            decision = "reject"
+            if not reasons:
+                reasons = ("reconcile_unfit",)
+        else:
+            decision = "needs_review"
+            if not reasons:
+                reasons = ("needs_review",)
+        result = self._apply_ingest_review_decision(
+            source_item_id=item.id,
+            revision_hash=item.revision_hash,
+            review_type=review_type,
+            decision=decision,
+            region_scope=region_scope,
+            audience_relevance=audience_relevance,
+            reason_codes=reasons,
+            rule_version=rule_version,
+            reviewer=reviewer,
+            memo=memo,
+        )
+        return replace(result, action_result=v_action)
 
     def publish_candidate(
         self,
@@ -634,6 +1000,200 @@ class MemoryIngestStore:
     def jobs_for_stage(self, stage: str) -> list[_Job]:
         return [job for job in self.jobs.values() if job.processing_stage == stage]
 
+    def _item_by_id(self, item_id: str) -> _Item:
+        for item in self.items.values():
+            if item.id == item_id:
+                return item
+        raise RpcFailure("source_item_not_found")
+
+    def _job_for(
+        self, item_id: str, revision_hash: str, stage: str
+    ) -> _Job | None:
+        for job in self.jobs.values():
+            if (
+                job.source_item_id == item_id
+                and job.revision_hash == revision_hash
+                and job.processing_stage == stage
+            ):
+                return job
+        return None
+
+    def _has_approve_ai(self, item_id: str, revision_hash: str) -> bool:
+        return any(
+            row.source_item_id == item_id
+            and row.revision_hash == revision_hash
+            and row.decision == "approve_ai"
+            for row in self.decisions.values()
+        )
+
+    def _ai_job_is_claim_ready(self, job: _Job, now: datetime) -> bool:
+        if job.status == "queued":
+            return job.available_at <= now and (
+                job.next_retry_at is None or job.next_retry_at <= now
+            )
+        if job.status == "claimed":
+            return (
+                job.claim_lease_until is not None and job.claim_lease_until < now
+            )
+        return False
+
+    def _has_unresolved_blocking_review(
+        self, item_id: str, revision_hash: str
+    ) -> bool:
+        return any(
+            row.source_item_id == item_id
+            and row.revision_hash == revision_hash
+            and row.processing_stage in BLOCKING_REVIEW_STAGES
+            and row.status in UNRESOLVED_REVIEW_STATUSES
+            for row in self.jobs.values()
+        )
+
+    def _claimable_item_for_ai_job(self, job: _Job) -> _Item | None:
+        item = next(
+            (value for value in self.items.values() if value.id == job.source_item_id),
+            None,
+        )
+        if item is None:
+            return None
+        if item.revision_hash != job.revision_hash:
+            return None
+        if item.disposition != "target":
+            return None
+        if not item.body_usable or not item.has_source_url:
+            return None
+        if not self._has_approve_ai(job.source_item_id, job.revision_hash):
+            return None
+        if self._has_unresolved_blocking_review(job.source_item_id, job.revision_hash):
+            return None
+        return item
+
+    def _has_review_decision(
+        self, item_id: str, revision_hash: str, review_type: str, decision: str
+    ) -> bool:
+        row = self.decisions.get((item_id, revision_hash, review_type))
+        return row is not None and row.decision == decision
+
+    def _has_reject_decision(self, item_id: str, revision_hash: str) -> bool:
+        return any(
+            row.source_item_id == item_id
+            and row.revision_hash == revision_hash
+            and row.decision == "reject"
+            for row in self.decisions.values()
+        )
+
+    def _can_promote_to_target(
+        self, item: _Item, revision_hash: str, region_scope: str
+    ) -> bool:
+        if item.revision_hash != revision_hash:
+            return False
+        if not item.body_usable or not item.has_source_url:
+            return False
+        if item.disposition in FORBIDDEN_PROMOTE_DISPOSITIONS:
+            return False
+        if region_scope not in APPROVE_REGION_SCOPES:
+            return False
+        if not self._has_review_decision(item.id, revision_hash, "region", "approve_ai"):
+            return False
+        if not self._has_review_decision(
+            item.id, revision_hash, "relevance", "approve_ai"
+        ):
+            return False
+        if self._has_reject_decision(item.id, revision_hash):
+            return False
+        if self._has_unresolved_blocking_review(item.id, revision_hash):
+            return False
+        return True
+
+    def _can_ensure_ai_job(self, item: _Item, revision_hash: str) -> bool:
+        if item.disposition != "target":
+            return False
+        if item.revision_hash != revision_hash:
+            return False
+        if not item.body_usable or not item.has_source_url:
+            return False
+        if self._has_reject_decision(item.id, revision_hash):
+            return False
+        if self._has_unresolved_blocking_review(item.id, revision_hash):
+            return False
+        return True
+
+    def _ensure_queued_ai_job(
+        self,
+        item: _Item,
+        revision_hash: str,
+        now: datetime,
+        reasons: tuple[str, ...],
+    ) -> None:
+        if not self._can_ensure_ai_job(item, revision_hash):
+            return
+        job = self._job_for(item.id, revision_hash, AI_STAGE)
+        if job is None:
+            self._insert_job(item.id, revision_hash, AI_STAGE, now, reasons)
+            return
+        if job.status == "cancelled":
+            job.status = "queued"
+            job.available_at = now
+            job.claimed_by = None
+            job.claim_lease_until = None
+            job.claimed_at = None
+            job.next_retry_at = None
+            job.reason_codes = reasons
+
+    def _job_revision_is_current(self, job: _Job) -> bool:
+        item = next(
+            (value for value in self.items.values() if value.id == job.source_item_id),
+            None,
+        )
+        return item is not None and item.revision_hash == job.revision_hash
+
+    def _is_live_claimed(self, job: _Job, now: datetime) -> bool:
+        return (
+            job.status == "claimed"
+            and job.claim_lease_until is not None
+            and job.claim_lease_until > now
+        )
+
+    def _complete_mapped_review_job(
+        self, item_id: str, revision_hash: str, stage: str, now: datetime
+    ) -> None:
+        if stage not in {"region_review", RELEVANCE_REVIEW_STAGE}:
+            raise RpcFailure("invalid_review_type")
+        job = self._job_for(item_id, revision_hash, stage)
+        if job is not None and job.status in {"queued", "claimed"}:
+            job.status = "completed"
+            job.completed_at = now
+            job.claimed_by = None
+            job.claim_lease_until = None
+
+    def _cancel_ai_job(self, job: _Job, reasons: tuple[str, ...]) -> None:
+        job.status = "cancelled"
+        job.claimed_by = None
+        job.claim_lease_until = None
+        job.claimed_at = None
+        job.next_retry_at = None
+        job.reason_codes = reasons
+
+    def _insert_job(
+        self,
+        item_id: str,
+        revision_hash: str,
+        stage: str,
+        now: datetime,
+        reasons: tuple[str, ...],
+    ) -> _Job:
+        job = _Job(
+            id=str(uuid.uuid4()),
+            source_item_id=item_id,
+            revision_hash=revision_hash,
+            processing_stage=stage,
+            status="queued",
+            queued_at=now,
+            available_at=now,
+            reason_codes=reasons,
+        )
+        self.jobs[job.id] = job
+        return job
+
     def _require_claimed_ai_job(self, job_id: str, worker_id: str) -> _Job:
         now = self._clock()
         job = self.jobs.get(job_id)
@@ -658,6 +1218,88 @@ class MemoryIngestStore:
             or sync.lease_expires_at <= now
         ):
             raise LeaseLost()
+
+    def _reject_v2_input(self, record: ObservationRecord) -> None:
+        if any(job.stage == AI_STAGE for job in record.jobs):
+            raise RpcFailure("ai_job_not_allowed_in_upsert")
+        meta = record.classifier_decision
+        if record.disposition != "target":
+            if meta is not None:
+                raise RpcFailure("classifier_metadata_forbidden")
+            return
+        if meta is not None:
+            self._parsed_classifier_decision(meta)
+
+    def _parsed_classifier_decision(self, raw: object) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            raise RpcFailure("invalid_classifier_decision")
+        extra = set(raw) - CLASSIFIER_DECISION_KEYS
+        if extra:
+            raise RpcFailure("invalid_classifier_decision")
+        decision = str(raw.get("decision") or "").strip()
+        if decision != "approve_ai":
+            raise RpcFailure("invalid_classifier_decision")
+        review_type = str(raw.get("review_type") or "").strip()
+        if review_type != "relevance":
+            raise RpcFailure("invalid_review_type")
+        region_scope = str(raw.get("region_scope") or "").strip()
+        if region_scope not in APPROVE_REGION_SCOPES:
+            raise RpcFailure("invalid_region_scope")
+        axes_raw = raw.get("audience_relevance")
+        if not isinstance(axes_raw, (list, tuple)):
+            raise RpcFailure("invalid_audience_relevance")
+        axes = tuple(str(axis) for axis in axes_raw)
+        if any(axis not in AUDIENCE_AXES for axis in axes):
+            raise RpcFailure("invalid_audience_relevance")
+        if not axes:
+            raise RpcFailure("approve_requirements_not_met")
+        reasons_raw = raw.get("reason_codes", ())
+        if reasons_raw is None:
+            reasons_raw = ()
+        if not isinstance(reasons_raw, (list, tuple)):
+            raise RpcFailure("invalid_classifier_decision")
+        rule_version = str(raw.get("rule_version") or "").strip()
+        if not (1 <= len(rule_version) <= 64):
+            raise RpcFailure("invalid_rule_version")
+        return {
+            "decision": decision,
+            "review_type": review_type,
+            "region_scope": region_scope,
+            "audience_relevance": axes,
+            "reason_codes": tuple(str(code) for code in reasons_raw),
+            "rule_version": rule_version,
+        }
+
+    def _apply_classifier_approvals(
+        self,
+        source_id: str,
+        records: list[ObservationRecord],
+        results: list[ObservationResult],
+    ) -> None:
+        for record, result in zip(records, results):
+            if result.duplicate_in_batch:
+                continue
+            if result.outcome not in {"new", "changed"}:
+                continue
+            if record.disposition != "target":
+                continue
+            if record.classifier_decision is None:
+                raise RpcFailure("classifier_metadata_required")
+            parsed = self._parsed_classifier_decision(record.classifier_decision)
+            item = self.items[(source_id, record.external_key)]
+            if item.revision_hash != record.revision_hash:
+                raise RpcFailure("revision_mismatch")
+            self._apply_ingest_review_decision(
+                source_item_id=item.id,
+                revision_hash=item.revision_hash,
+                review_type=parsed["review_type"],
+                decision=parsed["decision"],
+                region_scope=parsed["region_scope"],
+                audience_relevance=parsed["audience_relevance"],
+                reason_codes=parsed["reason_codes"],
+                rule_version=parsed["rule_version"],
+                reviewer=f"{CLASSIFIER_REVIEWER_PREFIX}{parsed['rule_version']}",
+            )
 
 
 def _item_from_record(

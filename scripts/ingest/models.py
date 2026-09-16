@@ -37,15 +37,54 @@ ProcessingStage = Literal[
     "content_review",
     "relationship_review",
     "ai_enrichment",
+    "relevance_review",
 ]
 JobStatus = Literal["queued", "claimed", "completed", "failed", "cancelled"]
+ReviewType = Literal["region", "relevance"]
+ReviewDecision = Literal["approve_ai", "reject", "needs_review"]
+ReconcileAction = Literal["keep_with_approve", "cancel_unfit", "move_to_review"]
+REVIEW_TYPES: frozenset[str] = frozenset({"region", "relevance"})
+REVIEW_DECISIONS: frozenset[str] = frozenset(
+    {"approve_ai", "reject", "needs_review"}
+)
+RECONCILE_ACTIONS: frozenset[str] = frozenset(
+    {"keep_with_approve", "cancel_unfit", "move_to_review"}
+)
+APPROVE_REGION_SCOPES: frozenset[str] = frozenset(
+    {"capital", "nationwide_or_online"}
+)
+AUDIENCE_AXES: frozenset[str] = frozenset(
+    {
+        "jp_residents_in_kr",
+        "foreign_residents_in_kr",
+        "kr_japan_activity",
+        "kr_jp_exchange",
+    }
+)
+HUMAN_REVIEW_STAGES: frozenset[str] = frozenset(
+    {
+        "region_review",
+        "content_review",
+        "relationship_review",
+        "relevance_review",
+    }
+)
 RunStatus = Literal["complete", "incomplete", "failed"]
 ObservationOutcome = Literal["new", "changed", "unchanged"]
 
-HUMAN_REVIEW_STAGES: frozenset[str] = frozenset(
-    {"region_review", "content_review", "relationship_review"}
-)
 AI_STAGE: ProcessingStage = "ai_enrichment"
+RELEVANCE_REVIEW_STAGE: ProcessingStage = "relevance_review"
+CLASSIFIER_DECISION_KEYS: frozenset[str] = frozenset(
+    {
+        "decision",
+        "review_type",
+        "region_scope",
+        "audience_relevance",
+        "reason_codes",
+        "rule_version",
+    }
+)
+CLASSIFIER_REVIEWER_PREFIX = "classifier:"
 
 CHECKPOINT_PAGE_KEY = "page_num"
 
@@ -126,9 +165,10 @@ class ObservationRecord:
     is_data_url: bool
     jobs: tuple[JobPlan, ...] = ()
     relationships: tuple[RelationshipPlan, ...] = ()
+    classifier_decision: Mapping[str, Any] | None = None
 
     def to_rpc_item(self) -> dict[str, Any]:
-        return {
+        payload = {
             "external_key": self.external_key,
             "revision_hash": self.revision_hash,
             "disposition": self.disposition,
@@ -158,6 +198,9 @@ class ObservationRecord:
                 for rel in self.relationships
             ],
         }
+        if self.classifier_decision is not None:
+            payload["classifier_decision"] = dict(self.classifier_decision)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -182,6 +225,20 @@ class StartRunResult:
 class FinishRunResult:
     status: str
     stop_reason: str
+
+
+@dataclass(frozen=True)
+class ReviewDecisionResult:
+    decision_id: str
+    source_item_id: str
+    revision_hash: str
+    review_type: str
+    decision: str
+    ai_job_id: str | None
+    ai_job_status: str | None
+    review_job_id: str | None
+    review_job_status: str | None
+    action_result: str | None = None
 
 
 @dataclass(frozen=True)

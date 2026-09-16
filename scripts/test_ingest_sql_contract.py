@@ -60,9 +60,28 @@ class IngestSqlContractTests(unittest.TestCase):
         self.assertIn("p_status = 'complete'", self.obs)
 
     def test_claim_is_ai_only_with_skip_locked(self) -> None:
-        self.assertIn("for update skip locked", self.obs.lower())
-        self.assertIn("p_stage is distinct from 'ai_enrichment'", self.obs)
-        self.assertIn("v_limit > 10", self.obs)
+        claim = _latest_fn("machimoa_review", "claim_processing_jobs").lower()
+        self.assertIn("skip locked", claim)
+        self.assertIn("p_stage is distinct from 'ai_enrichment'", claim)
+        self.assertIn("v_limit > 10", claim)
+        self.assertIn("ingest_review_decisions", claim)
+        self.assertIn("approve_ai", claim)
+        self.assertIn("si.revision_hash", claim)
+        self.assertIn("si.disposition = 'target'", claim)
+        self.assertIn("si.body_usable is true", claim)
+        self.assertIn("si.has_source_url is true", claim)
+        self.assertIn("'region_review'", claim)
+        self.assertIn("'relevance_review'", claim)
+        self.assertIn("'content_review'", claim)
+        self.assertNotIn("'relationship_review'", claim)
+        self.assertIn("and not exists", claim)
+        self.assertIn("for update of j skip locked", claim)
+
+    def test_00000_claim_body_does_not_include_decision_gate(self) -> None:
+        claim = self.obs.split("create function machimoa_review.claim_processing_jobs")[1]
+        claim = claim.split("create function machimoa_review.complete_processing_job")[0]
+        self.assertNotIn("ingest_review_decisions", claim)
+        self.assertIn("for update skip locked", claim.lower())
 
     def test_human_jobs_cannot_be_completed_by_ai(self) -> None:
         self.assertIn("human_job_not_completable_by_ai", self.obs)
@@ -145,11 +164,12 @@ class IngestSqlContractTests(unittest.TestCase):
         self.assertIn("human_job_not_completable_by_ai", fail)
 
     def test_claim_excludes_terminal_failed(self) -> None:
-        claim = self.obs.split("create function machimoa_review.claim_processing_jobs")[1]
-        claim = claim.split("create function machimoa_review.complete_processing_job")[0]
+        claim = _latest_fn("machimoa_review", "claim_processing_jobs")
         self.assertIn("j.status = 'queued'", claim)
         self.assertIn("j.status = 'claimed'", claim)
         self.assertNotIn("j.status = 'failed'", claim)
+        self.assertNotIn("j.status = 'cancelled'", claim)
+        self.assertNotIn("j.status = 'completed'", claim)
 
     def _private_sql(self, name: str, nxt: str) -> str:
         chunk = self.obs.split(f"create function machimoa_review.{name}")[1]
@@ -420,6 +440,35 @@ class IngestSqlContractTests(unittest.TestCase):
 
 RPC = ROOT / "supabase" / "migrations" / "20260914000000_ingest_public_rpc_adapters.sql"
 RPC_DOWN = ROOT / "supabase" / "rollback" / "20260914000000_ingest_public_rpc_adapters_down.sql"
+DEC = ROOT / "supabase" / "migrations" / "20260916000000_ingest_review_decisions.sql"
+DEC_RPC = ROOT / "supabase" / "migrations" / "20260916000001_ingest_review_decision_rpc_adapters.sql"
+DEC_DOWN = ROOT / "supabase" / "rollback" / "20260916000000_ingest_review_decisions_down.sql"
+DEC_RPC_DOWN = ROOT / "supabase" / "rollback" / "20260916000001_ingest_review_decision_rpc_adapters_down.sql"
+_CREATE_FN = re.compile(
+    r"create(?:\s+or\s+replace)?\s+function\s+(machimoa_review|public)\.([a-z0-9_]+)\s*\(",
+    re.IGNORECASE,
+)
+
+
+def _migration_sql() -> str:
+    files = sorted((ROOT / "supabase" / "migrations").glob("*.sql"))
+    return "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+
+def _latest_fn(schema: str, name: str) -> str:
+    combined = _migration_sql()
+    matches = list(_CREATE_FN.finditer(combined))
+    current = [
+        match
+        for match in matches
+        if match.group(1).lower() == schema and match.group(2).lower() == name
+    ]
+    if not current:
+        raise AssertionError(f"missing {schema}.{name}")
+    start = current[-1].start()
+    following = [match for match in matches if match.start() > start]
+    end = following[0].start() if following else len(combined)
+    return combined[start:end]
 
 _WS = re.compile(r"\s+")
 _PRIVATE_GRANT_RE = re.compile(
@@ -618,6 +667,344 @@ class IngestPublicRpcAdapterContractTests(unittest.TestCase):
         self.assertNotIn("delete from public.curations", down)
         self.assertEqual(len(_private_grant_signatures(self.rpc_down)), 7)
         self.assertEqual(down.count("grant execute on function machimoa_review."), 7)
+
+
+class IngestReviewDecisionSqlContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dec = DEC.read_text(encoding="utf-8")
+        self.rpc = DEC_RPC.read_text(encoding="utf-8")
+        self.dec_down = DEC_DOWN.read_text(encoding="utf-8")
+        self.rpc_down = DEC_RPC_DOWN.read_text(encoding="utf-8")
+
+    def test_table_columns_unique_fk_rls_and_acl(self) -> None:
+        table = self.dec.split("create table machimoa_review.ingest_review_decisions")[1]
+        table = table.split("alter table machimoa_review.ingest_review_decisions")[0]
+        for column in (
+            "source_item_id",
+            "revision_hash",
+            "review_type",
+            "decision",
+            "region_scope",
+            "audience_relevance",
+            "reason_codes",
+            "rule_version",
+            "reviewer",
+            "reviewed_at",
+            "memo",
+            "created_at",
+            "updated_at",
+        ):
+            self.assertIn(column, table)
+        self.assertIn("unique (source_item_id, revision_hash, review_type)", table)
+        self.assertIn("references machimoa_review.source_items (id)", table)
+        self.assertIn("on delete restrict", table.lower())
+        self.assertIn("ingest_review_decisions_approve_ck", table)
+        self.assertIn("char_length(memo) <= 500", table)
+        self.assertIn("enable row level security", self.dec.lower())
+        self.assertIn(
+            "revoke all privileges on table machimoa_review.ingest_review_decisions",
+            self.dec.lower(),
+        )
+        self.assertIn("from public, anon, authenticated, service_role", self.dec.lower())
+        self.assertNotIn(
+            "grant select on table machimoa_review.ingest_review_decisions",
+            self.dec.lower(),
+        )
+        self.assertNotIn(
+            "grant insert on table machimoa_review.ingest_review_decisions",
+            self.dec.lower(),
+        )
+
+    def test_forbidden_payload_columns_absent(self) -> None:
+        table = self.dec.split("create table machimoa_review.ingest_review_decisions")[1]
+        table = table.split("create function")[0].lower()
+        for banned in (
+            "plain_text",
+            "normalized_payload",
+            "source_url",
+            "min_fields",
+            "attachment",
+            "secret",
+            "api_key",
+            "body",
+        ):
+            self.assertNotIn(banned, table)
+
+    def test_stage_check_adds_relevance_review_only(self) -> None:
+        self.assertIn("'relevance_review'", self.dec)
+        self.assertNotIn("'relevance_review_required'", self.dec)
+        self.assertNotIn("'resolved_no_action'", self.dec)
+        self.assertNotIn("'superseded'", self.dec)
+
+    def test_private_execute_revoked_and_not_granted(self) -> None:
+        for sql in (self.dec, self.rpc):
+            for name in (
+                "apply_ingest_review_decision",
+                "resolve_ingest_review_decision",
+                "reconcile_queued_ai_job",
+                "upsert_source_observations_v2",
+            ):
+                self.assertIn(
+                    f"revoke all privileges on function machimoa_review.{name}",
+                    sql,
+                )
+        self.assertEqual(_private_grant_signatures(self.dec), set())
+        self.assertEqual(_private_grant_signatures(self.rpc), set())
+        self.assertNotIn(
+            "create function public.apply_ingest_review_decision",
+            self.dec,
+        )
+        self.assertNotIn(
+            "create function public.apply_ingest_review_decision",
+            self.rpc,
+        )
+
+    def test_public_wrappers_owner_search_path_and_acl(self) -> None:
+        self.assertEqual(self.rpc.lower().count("security definer"), 3)
+        self.assertGreaterEqual(self.rpc.count("set search_path = ''"), 3)
+        self.assertEqual(self.rpc.lower().count("owner to postgres"), 3)
+        for name in (
+            "resolve_ingest_review_decision",
+            "reconcile_queued_ai_job",
+            "upsert_source_observations_v2",
+        ):
+            self.assertIn(f"revoke all privileges on function public.{name}", self.rpc)
+            self.assertIn(f"grant execute on function public.{name}", self.rpc)
+            self.assertIn(
+                f"create function public.{name}",
+                self.rpc,
+            )
+            fn = _latest_fn("public", name)
+            header = fn.split("language", 1)[0]
+            self.assertIn("returns table", header.lower())
+            self.assertIn("security definer", fn.lower())
+            self.assertIn("set search_path = ''", fn)
+        self.assertIn("to service_role", self.rpc.lower())
+        self.assertNotIn("to anon", self.rpc.lower())
+        self.assertNotIn("to authenticated", self.rpc.lower())
+        self.assertNotIn("grant usage on schema machimoa_review", self.rpc.lower())
+        self.assertNotIn("grant select on table", self.rpc.lower())
+        self.assertNotIn("grant insert on table", self.rpc.lower())
+        self.assertNotIn("grant update on table", self.rpc.lower())
+        self.assertNotIn("grant delete on table", self.rpc.lower())
+        self.assertNotIn("set_source_permission", self.rpc.lower())
+        self.assertNotIn("publish_curation", self.rpc.lower())
+        self.assertNotIn("hard_delete", self.rpc.lower())
+
+    def test_private_functions_owner_and_empty_search_path(self) -> None:
+        for name in (
+            "apply_ingest_review_decision",
+            "resolve_ingest_review_decision",
+            "reconcile_queued_ai_job",
+            "upsert_source_observations_v2",
+            "claim_processing_jobs",
+        ):
+            fn = _latest_fn("machimoa_review", name)
+            header = fn.split("as $function$", 1)[0]
+            self.assertIn("security definer", header.lower())
+            self.assertIn("set search_path = ''", header)
+            self.assertIn(
+                f"alter function machimoa_review.{name}",
+                self.dec,
+            )
+            self.assertIn("owner to postgres", self.dec)
+
+    def test_resolve_and_reconcile_state_tokens(self) -> None:
+        core = _latest_fn("machimoa_review", "apply_ingest_review_decision")
+        resolve = _latest_fn("machimoa_review", "resolve_ingest_review_decision")
+        reconcile = _latest_fn("machimoa_review", "reconcile_queued_ai_job")
+        self.assertIn("raise exception 'revision_mismatch'", core)
+        self.assertIn("raise exception 'decision_conflict'", core)
+        self.assertIn("raise exception 'ai_job_claimed'", core)
+        self.assertIn("status = 'cancelled'", core)
+        self.assertIn("'rejected_non_target'", core)
+        self.assertNotIn("status = 'failed'", core.split("begin", 1)[1])
+        self.assertNotIn("delete from machimoa_review.source_items", core.lower())
+        self.assertNotIn("delete from machimoa_review.ingest_runs", core.lower())
+        self.assertIn("apply_ingest_review_decision", resolve)
+        self.assertNotIn("raise exception 'decision_conflict'", resolve)
+        self.assertIn("keep_with_approve", reconcile)
+        self.assertIn("cancel_unfit", reconcile)
+        self.assertIn("move_to_review", reconcile)
+        self.assertIn("completed_job_not_reconcileable", reconcile)
+        self.assertIn("apply_ingest_review_decision", reconcile)
+        self.assertNotIn(
+            "machimoa_review.resolve_ingest_review_decision",
+            reconcile,
+        )
+        self.assertNotIn("delete from machimoa_review.processing_jobs", reconcile.lower())
+        self.assertNotIn("set_source_permission", core.lower())
+        self.assertNotIn("assert_publish_allowed", core.lower())
+        self.assertNotIn("write_publication_lineage", core.lower())
+        self.assertIn("when 'region' then 'region_review'", core)
+        self.assertIn("when 'relevance' then 'relevance_review'", core)
+        self.assertIn("processing_stage = v_review_stage", core)
+        self.assertIn("processing_stage in (", core)
+        self.assertIn("disposition = 'target'", core)
+        self.assertIn("disposition = 'non_target'", core)
+        self.assertIn("and d.review_type = 'region'", core)
+        self.assertIn("and d.review_type = 'relevance'", core)
+        self.assertIn("'content_review'", core)
+        self.assertNotIn("'relationship_review'", core)
+        self.assertNotIn("when 'content' then", core)
+        self.assertIn("if v_review_stage is null then", core)
+
+    def test_v2_matches_v1_signature_and_uses_core(self) -> None:
+        v1 = _latest_fn("machimoa_review", "upsert_source_observations")
+        v2 = _latest_fn("machimoa_review", "upsert_source_observations_v2")
+        public_v2 = _latest_fn("public", "upsert_source_observations_v2")
+        v1_header = v1.split("language", 1)[0]
+        v2_header = v2.split("language", 1)[0]
+        for token in (
+            "p_source_id pg_catalog.text",
+            "p_run_id pg_catalog.uuid",
+            "p_items pg_catalog.jsonb",
+            "p_next_checkpoint pg_catalog.jsonb",
+            "input_index pg_catalog.int4",
+            "external_key pg_catalog.text",
+            "outcome pg_catalog.text",
+            "duplicate_in_batch pg_catalog.bool",
+        ):
+            self.assertIn(token, v1_header)
+            self.assertIn(token, v2_header)
+        self.assertIn("machimoa_review.upsert_source_observations(", v2)
+        self.assertIn("apply_ingest_review_decision", v2)
+        self.assertIn("ai_job_not_allowed_in_upsert", v2)
+        self.assertIn("classifier_metadata_required", v2)
+        self.assertIn("classifier_metadata_forbidden", v2)
+        self.assertIn("'classifier:'", v2)
+        self.assertIn("for update", v2.lower())
+        self.assertNotIn("set_source_permission", v2.lower())
+        self.assertNotIn("write_publication_lineage", v2.lower())
+        self.assertIn("from machimoa_review.upsert_source_observations_v2", public_v2)
+        self.assertIn(
+            "create function machimoa_review.upsert_source_observations(",
+            _migration_sql(),
+        )
+
+    def test_v2_result_loop_avoids_ambiguous_output_variables(self) -> None:
+        v2 = _latest_fn("machimoa_review", "upsert_source_observations_v2")
+        header = v2.split("language", 1)[0]
+        self.assertIn(
+            "\n  input_index pg_catalog.int4,\n"
+            "  external_key pg_catalog.text,\n"
+            "  outcome pg_catalog.text,\n"
+            "  duplicate_in_batch pg_catalog.bool\n",
+            header,
+        )
+        self.assertNotIn("si.external_key = external_key", v2)
+        self.assertNotIn(
+            "for input_index, external_key, outcome, duplicate_in_batch in",
+            v2,
+        )
+        self.assertIn("v_upsert_row record", v2)
+        self.assertIn("for v_upsert_row in", v2)
+        self.assertIn("si.external_key = v_upsert_row.external_key", v2)
+        self.assertIn("input_index := v_upsert_row.input_index", v2)
+        self.assertIn("external_key := v_upsert_row.external_key", v2)
+        self.assertIn("outcome := v_upsert_row.outcome", v2)
+        self.assertIn("duplicate_in_batch := v_upsert_row.duplicate_in_batch", v2)
+        self.assertIn("p_items -> v_upsert_row.input_index", v2)
+        self.assertIn("v_upsert_row.outcome in ('new', 'changed')", v2)
+        self.assertIn("v_disp = 'target'", v2)
+        self.assertIn("apply_ingest_review_decision", v2)
+        self.assertIn("return next", v2)
+
+    def test_rollback_preflight_fail_closed_before_drops(self) -> None:
+        for sql in (self.rpc_down, self.dec_down):
+            lowered = sql.lower()
+            drop_positions = [
+                pos
+                for pos in (lowered.find("drop function"), lowered.find("drop table"))
+                if pos >= 0
+            ]
+            self.assertTrue(drop_positions)
+            first_drop = min(drop_positions)
+            lock_decisions = lowered.find(
+                "lock table machimoa_review.ingest_review_decisions"
+            )
+            lock_jobs = lowered.find("lock table machimoa_review.processing_jobs")
+            decision_exists = lowered.find(
+                "from machimoa_review.ingest_review_decisions"
+            )
+            relevance_exists = lowered.find(
+                "j.processing_stage = 'relevance_review'"
+            )
+            error = lowered.find("raise exception 'rollback_phase2_data_present'")
+            last_error = lowered.rfind("raise exception 'rollback_phase2_data_present'")
+            self.assertGreater(lock_decisions, 0)
+            self.assertGreater(lock_jobs, lock_decisions)
+            self.assertGreater(decision_exists, lock_jobs)
+            self.assertGreater(error, decision_exists)
+            self.assertGreater(relevance_exists, error)
+            self.assertGreater(last_error, relevance_exists)
+            self.assertLess(last_error, first_drop)
+            self.assertEqual(lowered.count("rollback_phase2_data_present"), 2)
+            self.assertNotIn("delete from machimoa_review.source_items", lowered)
+            self.assertNotIn("delete from machimoa_review.processing_jobs", lowered)
+            self.assertNotIn(
+                "delete from machimoa_review.ingest_review_decisions", lowered
+            )
+            self.assertNotIn("delete from machimoa_review.curation_candidates", lowered)
+            self.assertNotIn("delete from public.curations", lowered)
+            self.assertNotIn("set processing_stage", lowered)
+            self.assertNotIn("processing_stage = 'region_review'", lowered)
+            self.assertNotIn("processing_stage = 'content_review'", lowered)
+            self.assertNotIn("processing_stage = 'relationship_review'", lowered)
+            self.assertNotIn("set_source_permission", lowered)
+            self.assertNotIn("write_publication_lineage", lowered)
+        restored = self.dec_down.split("add constraint processing_jobs_stage_ck")[1]
+        restored = restored.split("commit;")[0]
+        self.assertIn("'region_review'", restored)
+        self.assertIn("'content_review'", restored)
+        self.assertIn("'relationship_review'", restored)
+        self.assertIn("'ai_enrichment'", restored)
+        self.assertNotIn("'relevance_review'", restored)
+
+    def test_rollback_does_not_delete_candidates_or_curations(self) -> None:
+        combined = self.dec_down + self.rpc_down
+        self.assertNotIn("delete from machimoa_review.curation_candidates", combined.lower())
+        self.assertNotIn("delete from public.curations", combined.lower())
+        public_v2 = self.rpc_down.find(
+            "drop function if exists public.upsert_source_observations_v2"
+        )
+        public_resolve = self.rpc_down.find(
+            "drop function if exists public.resolve_ingest_review_decision"
+        )
+        self.assertGreater(public_v2, 0)
+        self.assertGreater(public_resolve, public_v2)
+        self.assertNotIn("drop function if exists machimoa_review", self.rpc_down.lower())
+        private_v2 = self.dec_down.find(
+            "drop function if exists machimoa_review.upsert_source_observations_v2"
+        )
+        private_recon = self.dec_down.find(
+            "drop function if exists machimoa_review.reconcile_queued_ai_job"
+        )
+        private_resolve = self.dec_down.find(
+            "drop function if exists machimoa_review.resolve_ingest_review_decision"
+        )
+        private_apply = self.dec_down.find(
+            "drop function if exists machimoa_review.apply_ingest_review_decision"
+        )
+        self.assertGreater(private_v2, 0)
+        self.assertGreater(private_recon, private_v2)
+        self.assertGreater(private_resolve, private_recon)
+        self.assertGreater(private_apply, private_resolve)
+        self.assertIn("drop table if exists machimoa_review.ingest_review_decisions", self.dec_down)
+        self.assertIn("create or replace function machimoa_review.claim_processing_jobs", self.dec_down)
+        restored = self.dec_down.split(
+            "create or replace function machimoa_review.claim_processing_jobs"
+        )[1]
+        restored = restored.split("drop table")[0]
+        self.assertNotIn("ingest_review_decisions", restored)
+        self.assertNotIn("upsert_source_observations_v2", restored)
+
+    def test_notify_pgrst_on_adapter_up_and_down(self) -> None:
+        for sql in (self.rpc, self.rpc_down):
+            lowered = sql.lower()
+            self.assertIn("notify pgrst, 'reload schema'", lowered)
+            self.assertLess(lowered.find("begin"), lowered.find("notify pgrst"))
+            self.assertLess(lowered.rfind("notify pgrst"), lowered.rfind("commit"))
 
 
 if __name__ == "__main__":

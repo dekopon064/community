@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ingest.models import (
+    APPROVE_REGION_SCOPES,
     REASON_RELEVANCE_UNCONFIRMED,
     REASON_REGION_SCOPE_UNKNOWN,
     RegionScope,
@@ -124,6 +125,24 @@ class ScreeningResult:
     disposition: str
     job_stage: str | None
     reason_codes: tuple[str, ...]
+
+
+def classifier_decision_metadata(screening: ScreeningResult) -> dict[str, Any] | None:
+    if screening.disposition != "target":
+        return None
+    if screening.region_scope not in APPROVE_REGION_SCOPES:
+        return None
+    axes = list(screening.relevance.confirmed_axes)
+    if not axes:
+        return None
+    return {
+        "decision": "approve_ai",
+        "review_type": "relevance",
+        "region_scope": screening.region_scope,
+        "audience_relevance": axes,
+        "reason_codes": list(screening.reason_codes),
+        "rule_version": RULE_VERSION,
+    }
 
 
 def _sentences(text: str) -> tuple[str, ...]:

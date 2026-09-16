@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import replace
 from typing import Any
 
 from ingest.ai_errors import AiJobError
@@ -16,7 +15,8 @@ from ingest.ai_worker import (
 )
 from ingest.constants import DEFAULT_JOB_LEASE_SECONDS
 from ingest.connectors.youthcenter_policy import YouthcenterPolicyConnector
-from ingest.models import Checkpoint, JobPlan, ObservationRecord
+from ingest.models import Checkpoint, ObservationRecord, AI_STAGE
+from ingest.relevance import AXIS_JP_RESIDENTS_IN_KR, RULE_VERSION
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.source_identity import CANONICAL_POLICY_SOURCE
 from ingest.store import AI_CLAIM_LIMIT, MemoryIngestStore
@@ -32,8 +32,8 @@ def _policy_item(plcy_no: str) -> dict[str, Any]:
     return {
         "plcyNo": plcy_no,
         "plcyNm": "테스트 정책",
-        "plcyExplnCn": "설명입니다. 본문이 충분히 있습니다.",
-        "plcySprtCn": "지원 내용입니다.",
+        "plcyExplnCn": "재한 일본인은 신청 가능합니다. 서울 거주자를 대상으로 합니다.",
+        "plcySprtCn": "재한 일본인은 신청 가능합니다. 서울 거주자를 대상으로 합니다.",
         "aplyUrlAddr": "https://example.go.kr/apply",
         "zipCd": "11680",
         "operInstCd": "11680",
@@ -46,10 +46,48 @@ def _policy_item(plcy_no: str) -> dict[str, Any]:
 
 
 def _observation(plcy_no: str) -> ObservationRecord:
-    record = YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
+    return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
         _policy_item(plcy_no), permission_status="testing_only", enabled=True
     )
-    return replace(record, disposition="target", jobs=(JobPlan(stage="ai_enrichment"),))
+
+
+def _human_review_observation(plcy_no: str) -> ObservationRecord:
+    item = _policy_item(plcy_no)
+    item["plcyExplnCn"] = "서울 거주 청년을 대상으로 합니다."
+    item["plcySprtCn"] = "서울 거주 청년을 대상으로 합니다."
+    return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
+        item, permission_status="testing_only", enabled=True
+    )
+
+
+def _assert_v2_created_clear_target_ai(store: MemoryIngestStore, count: int) -> None:
+    items = list(store.items.values())
+    if len(items) != count:
+        raise AssertionError("v2_clear_target_item_count")
+    if len(store.decisions) != count:
+        raise AssertionError("v2_clear_target_decision_count")
+    for item in items:
+        decisions = [
+            row
+            for row in store.decisions.values()
+            if row.source_item_id == item.id and row.revision_hash == item.revision_hash
+        ]
+        if len(decisions) != 1:
+            raise AssertionError("v2_clear_target_decision_missing")
+        decision = decisions[0]
+        if decision.decision != "approve_ai":
+            raise AssertionError("v2_clear_target_decision_not_approve")
+        if decision.reviewer != f"classifier:{RULE_VERSION}":
+            raise AssertionError("v2_clear_target_reviewer")
+        ais = [
+            job
+            for job in store.jobs.values()
+            if job.source_item_id == item.id
+            and job.revision_hash == item.revision_hash
+            and job.processing_stage == AI_STAGE
+        ]
+        if len(ais) != 1 or ais[0].status != "queued":
+            raise AssertionError("v2_clear_target_ai_missing")
 
 
 def _seed(store: MemoryIngestStore, count: int) -> None:
@@ -61,6 +99,7 @@ def _seed(store: MemoryIngestStore, count: int) -> None:
         records,
         Checkpoint.for_rest_page(2),
     )
+    _assert_v2_created_clear_target_ai(store, count)
 
 
 def _ai_deps(**overrides: Any) -> dict[str, Any]:
@@ -256,7 +295,9 @@ class AiNoJobsAndPayloadTests(unittest.TestCase):
         result = process_ai_jobs(store, **_ai_deps(enqueue=boom))
         self.assertEqual(result.status, AI_PROCESSED)
         self.assertEqual(result.retried, 1)
-        job = next(iter(store.jobs.values()))
+        job = next(
+            row for row in store.jobs.values() if row.processing_stage == AI_STAGE
+        )
         self.assertEqual(job.error_code, "ai_blocked_cost_cap")
 
     def test_facts_are_not_enqueued_and_model_is_passed(self) -> None:
@@ -305,8 +346,43 @@ class AiNoJobsAndPayloadTests(unittest.TestCase):
         self.assertEqual(kwargs["lease_seconds"], DEFAULT_JOB_LEASE_SECONDS)
         self.assertEqual(kwargs["worker_id"], WORKER_ID)
         self.assertEqual(kwargs["limit"], AI_CLAIM_LIMIT)
-        job = next(iter(store.jobs.values()))
+        job = next(
+            row for row in store.jobs.values() if row.processing_stage == AI_STAGE
+        )
         self.assertEqual(job.status, "completed")
+
+
+class HumanApproveWorkerFixtureTests(unittest.TestCase):
+    def test_human_region_only_approve_fixture_is_not_claimed(self) -> None:
+        store = SpyStore()
+        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+        record = _human_review_observation("human-1")
+        store.upsert_source_observations(
+            CANONICAL_POLICY_SOURCE,
+            started.run_id,
+            [record],
+            None,
+        )
+        item = next(iter(store.items.values()))
+        self.assertEqual(store.decisions, {})
+        self.assertEqual(store.jobs_for_stage(AI_STAGE), [])
+        self.assertTrue(store.jobs_for_stage("region_review"))
+        store.resolve_ingest_review_decision(
+            source_item_id=item.id,
+            revision_hash=item.revision_hash,
+            review_type="region",
+            decision="approve_ai",
+            region_scope="capital",
+            audience_relevance=(AXIS_JP_RESIDENTS_IN_KR,),
+            rule_version=RULE_VERSION,
+            reviewer="human:reviewer",
+        )
+        self.assertEqual(store.jobs_for_stage(AI_STAGE), [])
+        self.assertEqual(item.disposition, "region_review_required")
+        result = process_ai_jobs(store, **_ai_deps())
+        self.assertEqual(result.status, AI_PROCESSED)
+        self.assertEqual(result.claimed, 0)
+        self.assertEqual(store.jobs_for_stage("region_review")[0].status, "completed")
 
 
 if __name__ == "__main__":

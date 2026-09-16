@@ -12,7 +12,6 @@ import time
 import traceback
 import unittest
 from datetime import datetime, timedelta, timezone
-from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -66,7 +65,7 @@ from ingest.http_client import (
     RETRYABLE_STATUSES,
     ResponseTooLarge,
 )
-from ingest.models import BatchResult, Checkpoint, FinishRunResult, JobPlan, ObservationRecord
+from ingest.models import BatchResult, Checkpoint, FinishRunResult, ObservationRecord
 from ingest.orchestrator import (
     BOOTSTRAP_COMPLETE_REASONS,
     InvalidOrderingCapability,
@@ -80,6 +79,7 @@ from ingest.relevance import (
     AXIS_JP_RESIDENTS_IN_KR,
     AXIS_KR_JAPAN_ACTIVITY,
     AXIS_KR_JP_EXCHANGE,
+    RULE_VERSION,
     classify_content_relevance,
     classify_policy_relevance,
     screen_policy,
@@ -370,15 +370,52 @@ def _ai_deps(**overrides: Any) -> dict[str, Any]:
     return deps
 
 
+CLEAR_FIT_BODY = "재한 일본인은 신청 가능합니다. 서울 거주자를 대상으로 합니다."
+
+
+def _assert_v2_created_clear_target_ai(store: MemoryIngestStore, count: int) -> None:
+    items = list(store.items.values())
+    if len(items) != count:
+        raise AssertionError("v2_clear_target_item_count")
+    if len(store.decisions) != count:
+        raise AssertionError("v2_clear_target_decision_count")
+    reviewer = f"classifier:{RULE_VERSION}"
+    for item in items:
+        decisions = [
+            row
+            for row in store.decisions.values()
+            if row.source_item_id == item.id and row.revision_hash == item.revision_hash
+        ]
+        if len(decisions) != 1 or decisions[0].decision != "approve_ai":
+            raise AssertionError("v2_clear_target_decision_missing")
+        if decisions[0].reviewer != reviewer:
+            raise AssertionError("v2_clear_target_reviewer")
+        ais = [
+            job
+            for job in store.jobs.values()
+            if job.source_item_id == item.id
+            and job.revision_hash == item.revision_hash
+            and job.processing_stage == "ai_enrichment"
+        ]
+        if len(ais) != 1 or ais[0].status != "queued":
+            raise AssertionError("v2_clear_target_ai_missing")
+
+
 def _seed_ai_jobs(store: MemoryIngestStore, count: int) -> None:
     started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
     records = []
     for index in range(count):
-        record = observation_for(
-            policy_item(f"p{index}", zip_cd="11680", oper_cd="11680", title=f"정책{index}")
-        )
         records.append(
-            replace(record, disposition="target", jobs=(JobPlan(stage="ai_enrichment"),))
+            observation_for(
+                policy_item(
+                    f"p{index}",
+                    zip_cd="11680",
+                    oper_cd="11680",
+                    title=f"정책{index}",
+                    plcyExplnCn=CLEAR_FIT_BODY,
+                    plcySprtCn=CLEAR_FIT_BODY,
+                )
+            )
         )
     store.upsert_source_observations(
         CANONICAL_POLICY_SOURCE,
@@ -386,6 +423,7 @@ def _seed_ai_jobs(store: MemoryIngestStore, count: int) -> None:
         records,
         Checkpoint.for_rest_page(2),
     )
+    _assert_v2_created_clear_target_ai(store, count)
 
 
 def load_hwasun() -> dict[str, Any]:
@@ -562,6 +600,11 @@ class PolicyRelevanceTests(unittest.TestCase):
         self.assertIn(AXIS_JP_RESIDENTS_IN_KR, relevance.confirmed_axes)
         self.assertEqual(record.disposition, "target")
         self.assertEqual(record.jobs, ())
+        self.assertIsNotNone(record.classifier_decision)
+        self.assertEqual(record.classifier_decision["decision"], "approve_ai")
+        self.assertEqual(record.classifier_decision["review_type"], "relevance")
+        self.assertNotIn("reviewer", record.classifier_decision)
+        self.assertNotIn("classifier_decision", record.normalized_payload or {})
 
     def test_foreign_resident_axis_is_target_without_ai_job(self) -> None:
         expln = "외국인 청년도 신청 가능합니다. 국적 제한 없음. 서울 거주 청년이 대상입니다."
@@ -739,6 +782,7 @@ class PolicyRelevanceTests(unittest.TestCase):
         self.assertEqual(record.jobs, ())
         self.assertEqual(record.external_key, "p1")
         self.assertTrue(record.revision_hash)
+        self.assertIsNone(record.classifier_decision)
 
 
 class ContentScreeningTests(unittest.TestCase):
@@ -748,7 +792,8 @@ class ContentScreeningTests(unittest.TestCase):
             load_content(), permission_status="testing_only", enabled=True
         )
         self.assertEqual(record.disposition, "region_review_required")
-        self.assertEqual(record.jobs[0].stage, "content_review")
+        self.assertEqual(record.jobs[0].stage, "region_review")
+        self.assertTrue(all(job.stage != "content_review" for job in record.jobs))
         self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
         self.assertTrue(record.body_usable)
         self.assertIsNotNone(record.normalized_payload)
@@ -806,6 +851,10 @@ class ContentScreeningTests(unittest.TestCase):
         self.assertTrue(relevance.confirmed)
         self.assertEqual(record.disposition, "target")
         self.assertEqual(record.jobs, ())
+        self.assertIsNotNone(record.classifier_decision)
+        self.assertEqual(record.classifier_decision["decision"], "approve_ai")
+        self.assertNotIn("reviewer", record.classifier_decision)
+        self.assertNotIn("classifier_decision", record.normalized_payload or {})
 
 
 class DateParseTests(unittest.TestCase):
@@ -852,8 +901,20 @@ class ContentJobPlanTests(unittest.TestCase):
             relevance_confirmed=False,
         )
         self.assertEqual(disposition, "region_review_required")
-        self.assertEqual(jobs[0].stage, "content_review")
+        self.assertEqual(jobs[0].stage, "region_review")
         self.assertTrue(all(job.stage != "ai_enrichment" for job in jobs))
+
+    def test_usable_unconfirmed_relevance_creates_relevance_review(self) -> None:
+        disposition, jobs = content_job_and_flags(
+            body_usable=True,
+            has_source_url=True,
+            attachment_present=False,
+            permission_ok=True,
+            region_scope="capital",
+            relevance_confirmed=False,
+        )
+        self.assertEqual(disposition, "region_review_required")
+        self.assertEqual(jobs[0].stage, "relevance_review")
 
     def test_clear_fit_is_target_without_ai_job(self) -> None:
         disposition, jobs = content_job_and_flags(
@@ -1156,6 +1217,31 @@ class JobClaimTests(unittest.TestCase):
         )
         self.assertEqual(claimed, [])
         self.assertEqual(store.jobs_for_stage("region_review")[0].status, "queued")
+
+    def test_injected_ai_without_approve_is_not_claimed(self) -> None:
+        store = MemoryIngestStore()
+        started = store.start_ingest_run(CANONICAL_POLICY_SOURCE)
+        record = observation_for(
+            policy_item("p-no-approve", zip_cd="11680", oper_cd="11680")
+        )
+        store.upsert_source_observations(
+            CANONICAL_POLICY_SOURCE,
+            started.run_id,
+            [record],
+            Checkpoint.for_rest_page(2),
+        )
+        item = store.items[(CANONICAL_POLICY_SOURCE, "p-no-approve")]
+        store._insert_job(
+            item.id, item.revision_hash, "ai_enrichment", store._clock(), ()
+        )
+        self.assertEqual(len(store.jobs_for_stage("ai_enrichment")), 1)
+        self.assertEqual(
+            store.claim_processing_jobs(
+                "ai_enrichment", limit=10, worker_id=WORKER_ID
+            ),
+            [],
+        )
+        self.assertEqual(store.jobs_for_stage("ai_enrichment")[0].status, "queued")
 
     def test_ai_claim_cap_ten_keeps_backlog(self) -> None:
         store = MemoryIngestStore()

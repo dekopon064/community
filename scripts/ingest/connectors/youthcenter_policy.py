@@ -25,7 +25,7 @@ from ingest.models import (
     ObservationRecord,
     OrderingCapability,
 )
-from ingest.relevance import screen_policy
+from ingest.relevance import classifier_decision_metadata, screen_policy
 from ingest.sanitize import html_to_plain_text, is_http_url
 from ingest.source_identity import (
     CANONICAL_POLICY_SOURCE,
@@ -248,6 +248,7 @@ class YouthcenterPolicyConnector(BatchConnector):
             attachment_length=attachment.length,
             is_data_url=attachment.is_data_url,
             jobs=jobs,
+            classifier_decision=classifier_decision_metadata(screening),
         )
 
     def _api_key(self) -> str:

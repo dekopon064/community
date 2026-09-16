@@ -17,6 +17,8 @@ from ingest.supabase_store import (
     FINISH_INGEST_RUN,
     GET_INGEST_SOURCE,
     INGEST_RPC_TIMEOUT_SECONDS,
+    RECONCILE_QUEUED_AI_JOB,
+    RESOLVE_INGEST_REVIEW_DECISION,
     START_INGEST_RUN,
     UPSERT_SOURCE_OBSERVATIONS,
     SupabaseIngestStore,
@@ -235,6 +237,15 @@ class SupabaseIngestStoreRpcTests(unittest.TestCase):
         self.assertEqual(client.table_calls, [])
         self.assertNotIn("set_source_permission", names)
         self.assertNotIn("publish_curation_candidate", names)
+        self.assertEqual(UPSERT_SOURCE_OBSERVATIONS, "upsert_source_observations_v2")
+        self.assertNotIn(RESOLVE_INGEST_REVIEW_DECISION, names)
+        self.assertNotIn(RECONCILE_QUEUED_AI_JOB, names)
+        self.assertTrue(all("lookup" not in name for name in names))
+        self.assertEqual(client.calls[2][0], "upsert_source_observations_v2")
+        item_payload = client.calls[2][1]["p_items"][0]
+        self.assertIn("external_key", item_payload)
+        self.assertIn("revision_hash", item_payload)
+        self.assertNotIn("source_item_id", item_payload)
 
     def test_claim_empty_list_is_success(self) -> None:
         client = FakeClient({CLAIM_PROCESSING_JOBS: lambda _p: []})
@@ -696,6 +707,88 @@ class StrictClaimParseTests(unittest.TestCase):
                 self.assertIsNone(jobs)
             self.assertEqual(len(client.calls), 1)
             _assert_clean(self, caught.exception)
+
+
+def _decision_row(**overrides: Any) -> dict[str, Any]:
+    row = {
+        "decision_id": "44444444-4444-4444-4444-444444444444",
+        "source_item_id": "22222222-2222-2222-2222-222222222222",
+        "revision_hash": "a" * 64,
+        "review_type": "relevance",
+        "decision": "approve_ai",
+        "ai_job_id": "11111111-1111-1111-1111-111111111111",
+        "ai_job_status": "queued",
+        "review_job_id": None,
+        "review_job_status": None,
+    }
+    row.update(overrides)
+    return row
+
+
+class SupabaseReviewDecisionRpcTests(unittest.TestCase):
+    def test_resolve_and_reconcile_use_public_rpc_only(self) -> None:
+        client = FakeClient(
+            {
+                RESOLVE_INGEST_REVIEW_DECISION: lambda _p: [_decision_row()],
+                RECONCILE_QUEUED_AI_JOB: lambda _p: [
+                    _decision_row(
+                        action_result="keep_with_approve",
+                        decision="approve_ai",
+                    )
+                ],
+            }
+        )
+        store = SupabaseIngestStore(client)
+        resolved = store.resolve_ingest_review_decision(
+            source_item_id="22222222-2222-2222-2222-222222222222",
+            revision_hash="a" * 64,
+            review_type="relevance",
+            decision="approve_ai",
+            region_scope="capital",
+            audience_relevance=("jp_residents_in_kr",),
+            reason_codes=(),
+            rule_version="relevance-capital-v1",
+            reviewer="classifier:relevance-capital-v1",
+        )
+        self.assertEqual(resolved.ai_job_status, "queued")
+        reconciled = store.reconcile_queued_ai_job(
+            "11111111-1111-1111-1111-111111111111",
+            action="keep_with_approve",
+            review_type="relevance",
+            region_scope="capital",
+            audience_relevance=("jp_residents_in_kr",),
+            rule_version="relevance-capital-v1",
+            reviewer="human:reconcile",
+        )
+        self.assertEqual(reconciled.action_result, "keep_with_approve")
+        names = [name for name, _params in client.calls]
+        self.assertEqual(
+            names,
+            [RESOLVE_INGEST_REVIEW_DECISION, RECONCILE_QUEUED_AI_JOB],
+        )
+        self.assertEqual(client.table_calls, [])
+        self.assertNotIn("set_source_permission", names)
+        self.assertNotIn("publish_curation_candidate", names)
+        self.assertEqual(
+            client.calls[0][1]["p_source_item_id"],
+            "22222222-2222-2222-2222-222222222222",
+        )
+        self.assertNotIn("p_plain_text", client.calls[0][1])
+        self.assertNotIn("p_normalized_payload", client.calls[0][1])
+
+    def test_resolve_malformed_is_ambiguous(self) -> None:
+        client = FakeClient({RESOLVE_INGEST_REVIEW_DECISION: lambda _p: []})
+        with self.assertRaises(RpcAmbiguous):
+            SupabaseIngestStore(client).resolve_ingest_review_decision(
+                source_item_id="22222222-2222-2222-2222-222222222222",
+                revision_hash="a" * 64,
+                review_type="relevance",
+                decision="approve_ai",
+                region_scope="capital",
+                audience_relevance=("jp_residents_in_kr",),
+                rule_version="relevance-capital-v1",
+                reviewer="classifier:relevance-capital-v1",
+            )
 
 
 if __name__ == "__main__":
