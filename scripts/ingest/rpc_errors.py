@@ -52,6 +52,15 @@ SAFE_RPC_MESSAGES = frozenset(
         "classifier_metadata_forbidden",
         "classifier_metadata_required",
         "invalid_classifier_decision",
+        "content_product_type_locked",
+        "invalid_product_type",
+        "invalid_product_type_action",
+        "product_type_metadata_forbidden",
+        "product_type_metadata_required",
+        "invalid_product_type_classification",
+        "product_type_review_not_allowed_in_upsert",
+        "ai_job_malformed_lease",
+        "invalid_period_signals",
     }
 )
 

@@ -26,6 +26,10 @@ from ingest.models import (
     OrderingCapability,
     RelationshipPlan,
 )
+from ingest.product_type import (
+    classify_content_product_type,
+    product_type_classification_payload,
+)
 from ingest.relevance import classifier_decision_metadata, screen_content
 from ingest.sanitize import body_is_usable, extract_http_urls, html_to_plain_text, is_http_url
 from ingest.source_identity import (
@@ -315,6 +319,11 @@ class YouthcenterContentConnector(BatchConnector):
             relationships=relationships,
             classifier_decision=(
                 classifier_decision_metadata(screening)
+                if disposition == "target"
+                else None
+            ),
+            product_type_classification=(
+                product_type_classification_payload(classify_content_product_type())
                 if disposition == "target"
                 else None
             ),

@@ -19,6 +19,7 @@ from ingest.models import (
     ObservationRecord,
     ObservationResult,
     ProcessingStage,
+    ProductTypeResult,
     ReviewDecisionResult,
     StartRunResult,
 )
@@ -83,17 +84,29 @@ REVIEW_DECISION_FIELDS = (
     "review_job_id",
     "review_job_status",
 )
+PRODUCT_TYPE_RESULT_FIELDS = (
+    "source_item_id",
+    "revision_hash",
+    "product_type",
+    "origin",
+    "review_job_id",
+    "review_job_status",
+    "ai_job_id",
+    "ai_job_status",
+    "action_result",
+)
 RECONCILE_FIELDS = ("action_result",) + REVIEW_DECISION_FIELDS
 
 GET_INGEST_SOURCE = "get_ingest_source"
 START_INGEST_RUN = "start_ingest_run"
-UPSERT_SOURCE_OBSERVATIONS = "upsert_source_observations_v2"
+UPSERT_SOURCE_OBSERVATIONS = "upsert_source_observations_v3"
 FINISH_INGEST_RUN = "finish_ingest_run"
 CLAIM_PROCESSING_JOBS = "claim_processing_jobs"
 COMPLETE_PROCESSING_JOB = "complete_processing_job"
 FAIL_PROCESSING_JOB = "fail_processing_job"
 RESOLVE_INGEST_REVIEW_DECISION = "resolve_ingest_review_decision"
 RECONCILE_QUEUED_AI_JOB = "reconcile_queued_ai_job"
+RESOLVE_SOURCE_ITEM_PRODUCT_TYPE = "resolve_source_item_product_type"
 
 
 def ingest_client_options(client_options_cls: Any) -> Any:
@@ -521,6 +534,49 @@ class SupabaseIngestStore:
             },
         )
         return _parse_review_decision_row(_one_row(data), include_action=True)
+
+    def resolve_source_item_product_type(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        action: str,
+        product_type: str | None = None,
+        reason_codes: tuple[str, ...] | list[str] = (),
+        period_signals: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ProductTypeResult:
+        data = _rpc_data(
+            self._client,
+            RESOLVE_SOURCE_ITEM_PRODUCT_TYPE,
+            {
+                "p_source_item_id": source_item_id,
+                "p_revision_hash": revision_hash,
+                "p_action": action,
+                "p_product_type": product_type,
+                "p_reason_codes": list(reason_codes),
+                "p_period_signals": list(period_signals),
+                "p_rule_version": rule_version,
+                "p_reviewer": reviewer,
+                "p_memo": memo,
+            },
+        )
+        row = _one_row(data)
+        _require_keys(row, PRODUCT_TYPE_RESULT_FIELDS)
+        action_result = _nonempty_str(row["action_result"])
+        return ProductTypeResult(
+            source_item_id=_uuid_str(row["source_item_id"]),
+            revision_hash=_revision_hash(row["revision_hash"]),
+            product_type=_optional_str(row["product_type"]),
+            origin=_optional_str(row["origin"]),
+            review_job_id=_optional_uuid(row["review_job_id"]),
+            review_job_status=_optional_str(row["review_job_status"]),
+            ai_job_id=_optional_uuid(row["ai_job_id"]),
+            ai_job_status=_optional_str(row["ai_job_status"]),
+            action_result=action_result,
+        )
 
     def set_source_permission(
         self,

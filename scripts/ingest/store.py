@@ -30,13 +30,29 @@ from ingest.models import (
     FinishRunResult,
     ObservationRecord,
     ObservationResult,
+    PRODUCT_TYPE_REVIEW_STAGE,
     ProcessingStage,
+    ProductTypeResult,
     RECONCILE_ACTIONS,
     RELEVANCE_REVIEW_STAGE,
     REVIEW_DECISIONS,
     REVIEW_TYPES,
     ReviewDecisionResult,
     StartRunResult,
+)
+from ingest.product_type import (
+    PRODUCT_TYPE_ACTION_CONFIRM,
+    PRODUCT_TYPE_ACTION_OVERRIDE,
+    PRODUCT_TYPE_ACTION_ROLLBACK,
+    PRODUCT_TYPE_ACTIONS,
+    PRODUCT_TYPE_CLASSIFICATION_KEYS,
+    PRODUCT_TYPE_EVENT_PROGRAM,
+    PRODUCT_TYPE_KIND_CONFIRMED,
+    PRODUCT_TYPE_KIND_REVIEW,
+    PRODUCT_TYPE_ORIGIN_CLASSIFIER,
+    PRODUCT_TYPE_ORIGIN_HUMAN,
+    PRODUCT_TYPE_RULE_VERSION,
+    PRODUCT_TYPES,
 )
 from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import (
@@ -60,7 +76,12 @@ REVIEW_TYPE_TO_STAGE = {
     "relevance": RELEVANCE_REVIEW_STAGE,
 }
 BLOCKING_REVIEW_STAGES = frozenset(
-    {"region_review", RELEVANCE_REVIEW_STAGE, "content_review"}
+    {
+        "region_review",
+        RELEVANCE_REVIEW_STAGE,
+        "content_review",
+        PRODUCT_TYPE_REVIEW_STAGE,
+    }
 )
 UNRESOLVED_REVIEW_STATUSES = frozenset({"queued", "claimed"})
 FORBIDDEN_PROMOTE_DISPOSITIONS = frozenset(
@@ -150,6 +171,21 @@ class IngestStore(Protocol):
         reviewer: str,
         memo: str | None = None,
     ) -> ReviewDecisionResult:
+        ...
+
+    def resolve_source_item_product_type(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        action: str,
+        product_type: str | None = None,
+        reason_codes: tuple[str, ...] | list[str] = (),
+        period_signals: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ProductTypeResult:
         ...
 
     def set_source_permission(
@@ -251,6 +287,21 @@ class _Decision:
 
 
 @dataclass
+class _ProductType:
+    source_item_id: str
+    revision_hash: str
+    product_type: str
+    origin: str
+    rule_version: str
+    reason_codes: tuple[str, ...]
+    period_signals: tuple[str, ...]
+    reviewer: str
+    memo: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass
 class _Run:
     id: str
     source_id: str
@@ -293,9 +344,12 @@ class MemoryIngestStore:
         self.permission_events: list[dict[str, Any]] = []
         self.public_curations: dict[str, dict[str, Any]] = {}
         self.decisions: dict[tuple[str, str, str], _Decision] = {}
+        self.product_types: dict[tuple[str, str], _ProductType] = {}
         self._fail_permission_event = False
         self._fail_decision_core = False
         self._fail_decision_core_after_mapped = False
+        self._fail_product_type_core = False
+        self._fail_after_product_type = False
         seed_youthcenter_sources(self)
 
     def seed_source(self, source: _Source) -> None:
@@ -366,7 +420,7 @@ class MemoryIngestStore:
         if len(encoded) > MAX_BATCH_BYTES * 16:
             raise ValueError("batch_too_large")
         for record in records:
-            self._reject_v2_input(record)
+            self._reject_v3_input(record)
 
         sync = self.sync[source_id]
         run = self.runs[run_id]
@@ -374,6 +428,7 @@ class MemoryIngestStore:
             "items": copy.deepcopy(self.items),
             "jobs": copy.deepcopy(self.jobs),
             "decisions": copy.deepcopy(self.decisions),
+            "product_types": copy.deepcopy(self.product_types),
             "relationships": copy.deepcopy(self.relationships),
             "checkpoint": copy.deepcopy(sync.committed_checkpoint),
             "lease_expires_at": sync.lease_expires_at,
@@ -443,6 +498,7 @@ class MemoryIngestStore:
             self.items = pending_items
             self.jobs = pending_jobs
             self.relationships = pending_rels
+            self._apply_product_type_classifications(source_id, records, results)
             self._apply_classifier_approvals(source_id, records, results)
             run.batches_ok += 1
             return results
@@ -450,6 +506,7 @@ class MemoryIngestStore:
             self.items = snapshot["items"]
             self.jobs = snapshot["jobs"]
             self.decisions = snapshot["decisions"]
+            self.product_types = snapshot["product_types"]
             self.relationships = snapshot["relationships"]
             sync.committed_checkpoint = snapshot["checkpoint"]
             sync.lease_expires_at = snapshot["lease_expires_at"]
@@ -733,6 +790,8 @@ class MemoryIngestStore:
             self.decisions[key] = decision_row
 
         ai_job = self._job_for(item.id, v_hash, AI_STAGE)
+        if ai_job is not None and self._is_malformed_claimed(ai_job):
+            raise RpcFailure("ai_job_malformed_lease")
         live_claimed = ai_job is not None and self._is_live_claimed(ai_job, now)
         review_stage = REVIEW_TYPE_TO_STAGE.get(v_type)
         if review_stage is None:
@@ -749,7 +808,9 @@ class MemoryIngestStore:
             if live_claimed:
                 raise RpcFailure("ai_job_claimed")
             self._complete_mapped_review_job(item.id, v_hash, review_stage, now)
-            if ai_job is not None and ai_job.status in {"queued", "claimed"}:
+            if ai_job is not None and (
+                ai_job.status == "queued" or self._is_lease_expired_claimed(ai_job, now)
+            ):
                 self._cancel_ai_job(
                     ai_job, reasons or ("rejected_non_target",)
                 )
@@ -757,7 +818,9 @@ class MemoryIngestStore:
         else:
             if live_claimed:
                 raise RpcFailure("ai_job_claimed")
-            if ai_job is not None and ai_job.status in {"queued", "claimed"}:
+            if ai_job is not None and (
+                ai_job.status == "queued" or self._is_lease_expired_claimed(ai_job, now)
+            ):
                 self._cancel_ai_job(ai_job, reasons or ("needs_review",))
             review_job = self._job_for(item.id, v_hash, review_stage)
             if review_job is None:
@@ -813,6 +876,8 @@ class MemoryIngestStore:
             raise RpcFailure("completed_job_not_reconcileable")
         if job.status == "failed":
             raise RpcFailure("unexpected_job_status")
+        if self._is_malformed_claimed(job):
+            raise RpcFailure("ai_job_malformed_lease")
         if self._is_live_claimed(job, now):
             raise RpcFailure("ai_job_claimed")
         if job.status not in {"queued", "claimed", "cancelled"}:
@@ -844,6 +909,42 @@ class MemoryIngestStore:
             memo=memo,
         )
         return replace(result, action_result=v_action)
+
+    def resolve_source_item_product_type(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        action: str,
+        product_type: str | None = None,
+        reason_codes: tuple[str, ...] | list[str] = (),
+        period_signals: tuple[str, ...] | list[str] = (),
+        rule_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> ProductTypeResult:
+        snapshot = {
+            "items": copy.deepcopy(self.items),
+            "jobs": copy.deepcopy(self.jobs),
+            "product_types": copy.deepcopy(self.product_types),
+        }
+        try:
+            return self._resolve_source_item_product_type_inner(
+                source_item_id=source_item_id,
+                revision_hash=revision_hash,
+                action=action,
+                product_type=product_type,
+                reason_codes=reason_codes,
+                period_signals=period_signals,
+                rule_version=rule_version,
+                reviewer=reviewer,
+                memo=memo,
+            )
+        except Exception:
+            self.items = snapshot["items"]
+            self.jobs = snapshot["jobs"]
+            self.product_types = snapshot["product_types"]
+            raise
 
     def publish_candidate(
         self,
@@ -1026,6 +1127,9 @@ class MemoryIngestStore:
             for row in self.decisions.values()
         )
 
+    def _has_confirmed_product_type(self, item_id: str, revision_hash: str) -> bool:
+        return (item_id, revision_hash) in self.product_types
+
     def _ai_job_is_claim_ready(self, job: _Job, now: datetime) -> bool:
         if job.status == "queued":
             return job.available_at <= now and (
@@ -1033,7 +1137,7 @@ class MemoryIngestStore:
             )
         if job.status == "claimed":
             return (
-                job.claim_lease_until is not None and job.claim_lease_until < now
+                job.claim_lease_until is not None and job.claim_lease_until <= now
             )
         return False
 
@@ -1062,6 +1166,8 @@ class MemoryIngestStore:
         if not item.body_usable or not item.has_source_url:
             return None
         if not self._has_approve_ai(job.source_item_id, job.revision_hash):
+            return None
+        if not self._has_confirmed_product_type(job.source_item_id, job.revision_hash):
             return None
         if self._has_unresolved_blocking_review(job.source_item_id, job.revision_hash):
             return None
@@ -1113,9 +1219,24 @@ class MemoryIngestStore:
             return False
         if self._has_reject_decision(item.id, revision_hash):
             return False
+        if not self._has_approve_ai(item.id, revision_hash):
+            return False
+        if not self._has_confirmed_product_type(item.id, revision_hash):
+            return False
         if self._has_unresolved_blocking_review(item.id, revision_hash):
             return False
         return True
+
+    def _requeue_ai_job(
+        self, job: _Job, now: datetime, reasons: tuple[str, ...]
+    ) -> None:
+        job.status = "queued"
+        job.available_at = now
+        job.claimed_by = None
+        job.claim_lease_until = None
+        job.claimed_at = None
+        job.next_retry_at = None
+        job.reason_codes = reasons
 
     def _ensure_queued_ai_job(
         self,
@@ -1124,20 +1245,21 @@ class MemoryIngestStore:
         now: datetime,
         reasons: tuple[str, ...],
     ) -> None:
+        job = self._job_for(item.id, revision_hash, AI_STAGE)
+        if job is not None and self._is_malformed_claimed(job):
+            if self._can_ensure_ai_job(item, revision_hash):
+                raise RpcFailure("ai_job_malformed_lease")
+            return
         if not self._can_ensure_ai_job(item, revision_hash):
             return
-        job = self._job_for(item.id, revision_hash, AI_STAGE)
         if job is None:
             self._insert_job(item.id, revision_hash, AI_STAGE, now, reasons)
             return
         if job.status == "cancelled":
-            job.status = "queued"
-            job.available_at = now
-            job.claimed_by = None
-            job.claim_lease_until = None
-            job.claimed_at = None
-            job.next_retry_at = None
-            job.reason_codes = reasons
+            self._requeue_ai_job(job, now, reasons)
+            return
+        if self._is_lease_expired_claimed(job, now):
+            self._requeue_ai_job(job, now, reasons)
 
     def _job_revision_is_current(self, job: _Job) -> bool:
         item = next(
@@ -1152,6 +1274,16 @@ class MemoryIngestStore:
             and job.claim_lease_until is not None
             and job.claim_lease_until > now
         )
+
+    def _is_lease_expired_claimed(self, job: _Job, now: datetime) -> bool:
+        return (
+            job.status == "claimed"
+            and job.claim_lease_until is not None
+            and job.claim_lease_until <= now
+        )
+
+    def _is_malformed_claimed(self, job: _Job) -> bool:
+        return job.status == "claimed" and job.claim_lease_until is None
 
     def _complete_mapped_review_job(
         self, item_id: str, revision_hash: str, stage: str, now: datetime
@@ -1230,6 +1362,61 @@ class MemoryIngestStore:
         if meta is not None:
             self._parsed_classifier_decision(meta)
 
+    def _reject_v3_input(self, record: ObservationRecord) -> None:
+        self._reject_v2_input(record)
+        if any(job.stage == PRODUCT_TYPE_REVIEW_STAGE for job in record.jobs):
+            raise RpcFailure("product_type_review_not_allowed_in_upsert")
+        meta = record.product_type_classification
+        if record.disposition != "target":
+            if meta is not None:
+                raise RpcFailure("product_type_metadata_forbidden")
+            return
+        if meta is not None:
+            self._parsed_product_type_classification(meta)
+
+    def _parsed_product_type_classification(self, raw: object) -> dict[str, Any]:
+        if not isinstance(raw, dict):
+            raise RpcFailure("invalid_product_type_classification")
+        extra = set(raw) - PRODUCT_TYPE_CLASSIFICATION_KEYS
+        if extra:
+            raise RpcFailure("invalid_product_type_classification")
+        kind = str(raw.get("kind") or "").strip()
+        if kind not in {PRODUCT_TYPE_KIND_CONFIRMED, PRODUCT_TYPE_KIND_REVIEW}:
+            raise RpcFailure("invalid_product_type_classification")
+        reasons_raw = raw.get("reason_codes", ())
+        if reasons_raw is None:
+            reasons_raw = ()
+        if not isinstance(reasons_raw, (list, tuple)):
+            raise RpcFailure("invalid_product_type_classification")
+        signals_raw = raw.get("period_signals", ())
+        if signals_raw is None:
+            signals_raw = ()
+        if not isinstance(signals_raw, (list, tuple)):
+            raise RpcFailure("invalid_period_signals")
+        rule_version = str(raw.get("rule_version") or "").strip()
+        if not (1 <= len(rule_version) <= 64):
+            raise RpcFailure("invalid_rule_version")
+        if kind == PRODUCT_TYPE_KIND_REVIEW:
+            if "product_type" in raw:
+                raise RpcFailure("invalid_product_type")
+            return {
+                "kind": kind,
+                "product_type": None,
+                "reason_codes": tuple(str(code) for code in reasons_raw),
+                "period_signals": tuple(str(signal) for signal in signals_raw),
+                "rule_version": rule_version,
+            }
+        confirmed = str(raw.get("product_type") or "").strip()
+        if confirmed not in PRODUCT_TYPES:
+            raise RpcFailure("invalid_product_type")
+        return {
+            "kind": kind,
+            "product_type": confirmed,
+            "reason_codes": tuple(str(code) for code in reasons_raw),
+            "period_signals": tuple(str(signal) for signal in signals_raw),
+            "rule_version": rule_version,
+        }
+
     def _parsed_classifier_decision(self, raw: object) -> dict[str, Any]:
         if not isinstance(raw, dict):
             raise RpcFailure("invalid_classifier_decision")
@@ -1300,6 +1487,276 @@ class MemoryIngestStore:
                 rule_version=parsed["rule_version"],
                 reviewer=f"{CLASSIFIER_REVIEWER_PREFIX}{parsed['rule_version']}",
             )
+
+    def _apply_product_type_classifications(
+        self,
+        source_id: str,
+        records: list[ObservationRecord],
+        results: list[ObservationResult],
+    ) -> None:
+        for record, result in zip(records, results):
+            if result.duplicate_in_batch:
+                continue
+            if result.outcome not in {"new", "changed"}:
+                continue
+            item = self.items[(source_id, record.external_key)]
+            if item.revision_hash != record.revision_hash:
+                raise RpcFailure("revision_mismatch")
+            self._apply_source_item_product_type(item, record)
+            if self._fail_after_product_type:
+                raise RpcFailure("decision_conflict")
+
+    def _apply_source_item_product_type(
+        self, item: _Item, record: ObservationRecord
+    ) -> None:
+        if self._fail_product_type_core:
+            raise RpcFailure("decision_conflict")
+        key = (item.id, item.revision_hash)
+        if key in self.product_types:
+            return
+        if record.disposition != "target":
+            return
+        if record.product_type_classification is None:
+            raise RpcFailure("product_type_metadata_required")
+        parsed = self._parsed_product_type_classification(
+            record.product_type_classification
+        )
+        source = self.sources[item.source_id]
+        now = self._clock()
+        if source.source_kind == SOURCE_KIND_CONTENT:
+            if (
+                parsed["kind"] != PRODUCT_TYPE_KIND_CONFIRMED
+                or parsed["product_type"] != PRODUCT_TYPE_EVENT_PROGRAM
+            ):
+                raise RpcFailure("content_product_type_locked")
+            self._insert_product_type(
+                item,
+                parsed,
+                origin=PRODUCT_TYPE_ORIGIN_CLASSIFIER,
+                reviewer=f"{CLASSIFIER_REVIEWER_PREFIX}{parsed['rule_version']}",
+                memo=None,
+                now=now,
+            )
+            return
+        if parsed["kind"] == PRODUCT_TYPE_KIND_REVIEW:
+            self._ensure_product_type_review_job(
+                item.id, item.revision_hash, now, parsed["reason_codes"]
+            )
+            return
+        self._insert_product_type(
+            item,
+            parsed,
+            origin=PRODUCT_TYPE_ORIGIN_CLASSIFIER,
+            reviewer=f"{CLASSIFIER_REVIEWER_PREFIX}{parsed['rule_version']}",
+            memo=None,
+            now=now,
+        )
+
+    def _insert_product_type(
+        self,
+        item: _Item,
+        parsed: dict[str, Any],
+        *,
+        origin: str,
+        reviewer: str,
+        memo: str | None,
+        now: datetime,
+    ) -> _ProductType:
+        row = _ProductType(
+            source_item_id=item.id,
+            revision_hash=item.revision_hash,
+            product_type=parsed["product_type"],
+            origin=origin,
+            rule_version=parsed["rule_version"],
+            reason_codes=parsed["reason_codes"],
+            period_signals=parsed["period_signals"],
+            reviewer=reviewer,
+            memo=memo,
+            created_at=now,
+            updated_at=now,
+        )
+        self.product_types[(item.id, item.revision_hash)] = row
+        return row
+
+    def _ensure_product_type_review_job(
+        self,
+        item_id: str,
+        revision_hash: str,
+        now: datetime,
+        reasons: tuple[str, ...],
+    ) -> _Job:
+        job = self._job_for(item_id, revision_hash, PRODUCT_TYPE_REVIEW_STAGE)
+        if job is None:
+            return self._insert_job(
+                item_id, revision_hash, PRODUCT_TYPE_REVIEW_STAGE, now, reasons
+            )
+        if job.status != "queued":
+            job.status = "queued"
+            job.available_at = now
+            job.claimed_by = None
+            job.claim_lease_until = None
+            job.completed_at = None
+            job.next_retry_at = None
+            job.reason_codes = reasons
+        return job
+
+    def _complete_product_type_review_job(
+        self, item_id: str, revision_hash: str, now: datetime
+    ) -> None:
+        job = self._job_for(item_id, revision_hash, PRODUCT_TYPE_REVIEW_STAGE)
+        if job is not None and job.status in {"queued", "claimed"}:
+            job.status = "completed"
+            job.completed_at = now
+            job.claimed_by = None
+            job.claim_lease_until = None
+
+    def _resolve_source_item_product_type_inner(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        action: str,
+        product_type: str | None,
+        reason_codes: tuple[str, ...] | list[str],
+        period_signals: tuple[str, ...] | list[str],
+        rule_version: str,
+        reviewer: str,
+        memo: str | None,
+    ) -> ProductTypeResult:
+        now = self._clock()
+        v_hash = (revision_hash or "").strip()
+        v_action = (action or "").strip()
+        v_type = (product_type or "").strip() or None
+        v_rule = (rule_version or "").strip()
+        v_reviewer = (reviewer or "").strip()
+        v_memo = (memo or "").strip() or None
+        reasons = tuple(reason_codes)
+        signals = tuple(period_signals)
+        if not source_item_id:
+            raise RpcFailure("source_item_not_found")
+        if len(v_hash) != 64 or any(ch not in "0123456789abcdef" for ch in v_hash):
+            raise RpcFailure("revision_mismatch")
+        if v_action not in PRODUCT_TYPE_ACTIONS:
+            raise RpcFailure("invalid_product_type_action")
+        if v_action in {PRODUCT_TYPE_ACTION_CONFIRM, PRODUCT_TYPE_ACTION_OVERRIDE}:
+            if v_type not in PRODUCT_TYPES:
+                raise RpcFailure("invalid_product_type")
+        if not (1 <= len(v_rule) <= 64):
+            raise RpcFailure("invalid_rule_version")
+        if not (1 <= len(v_reviewer) <= 128):
+            raise RpcFailure("invalid_reviewer")
+        if v_memo is not None and len(v_memo) > 500:
+            raise RpcFailure("invalid_memo")
+
+        item = self._item_by_id(source_item_id)
+        if item.revision_hash != v_hash:
+            raise RpcFailure("revision_mismatch")
+        source = self.sources[item.source_id]
+        if source.source_kind == SOURCE_KIND_CONTENT:
+            if (
+                v_action != PRODUCT_TYPE_ACTION_CONFIRM
+                or v_type != PRODUCT_TYPE_EVENT_PROGRAM
+            ):
+                raise RpcFailure("content_product_type_locked")
+
+        key = (item.id, v_hash)
+        existing = self.product_types.get(key)
+        kind = self._classify_product_type_request(v_action, existing, v_type)
+        if kind == "no-op":
+            return self._product_type_result(item, v_hash, "no-op")
+        if kind == "reject":
+            raise RpcFailure("decision_conflict")
+
+        ai_job = self._job_for(item.id, v_hash, AI_STAGE)
+        if ai_job is not None and self._is_live_claimed(ai_job, now):
+            raise RpcFailure("ai_job_claimed")
+        if v_action in {PRODUCT_TYPE_ACTION_OVERRIDE, PRODUCT_TYPE_ACTION_ROLLBACK}:
+            if v_memo is None:
+                raise RpcFailure("invalid_memo")
+
+        parsed = {
+            "kind": PRODUCT_TYPE_KIND_CONFIRMED,
+            "product_type": v_type,
+            "reason_codes": reasons,
+            "period_signals": signals,
+            "rule_version": v_rule,
+        }
+        action_result = "confirmed"
+        if v_action == PRODUCT_TYPE_ACTION_CONFIRM:
+            self._insert_product_type(
+                item,
+                parsed,
+                origin=PRODUCT_TYPE_ORIGIN_HUMAN,
+                reviewer=v_reviewer,
+                memo=v_memo,
+                now=now,
+            )
+            self._complete_product_type_review_job(item.id, v_hash, now)
+            self._ensure_queued_ai_job(item, v_hash, now, reasons)
+            action_result = "confirmed"
+        elif v_action == PRODUCT_TYPE_ACTION_OVERRIDE:
+            existing.product_type = v_type  # type: ignore[union-attr]
+            existing.origin = PRODUCT_TYPE_ORIGIN_HUMAN  # type: ignore[union-attr]
+            existing.rule_version = v_rule  # type: ignore[union-attr]
+            existing.reason_codes = reasons  # type: ignore[union-attr]
+            existing.period_signals = signals  # type: ignore[union-attr]
+            existing.reviewer = v_reviewer  # type: ignore[union-attr]
+            existing.memo = v_memo  # type: ignore[union-attr]
+            existing.updated_at = now  # type: ignore[union-attr]
+            self._complete_product_type_review_job(item.id, v_hash, now)
+            self._ensure_queued_ai_job(item, v_hash, now, reasons)
+            action_result = "overridden"
+        else:
+            del self.product_types[key]
+            self._ensure_product_type_review_job(item.id, v_hash, now, reasons)
+            ai_job = self._job_for(item.id, v_hash, AI_STAGE)
+            if ai_job is not None and (
+                ai_job.status == "queued"
+                or self._is_lease_expired_claimed(ai_job, now)
+            ):
+                self._cancel_ai_job(ai_job, reasons or ("product_type_rollback",))
+            action_result = "rolled_back"
+        return self._product_type_result(item, v_hash, action_result)
+
+    def _classify_product_type_request(
+        self,
+        action: str,
+        existing: _ProductType | None,
+        requested: str | None,
+    ) -> str:
+        if action == PRODUCT_TYPE_ACTION_CONFIRM:
+            if existing is None:
+                return "mutate"
+            if existing.product_type == requested:
+                return "no-op"
+            return "reject"
+        if action == PRODUCT_TYPE_ACTION_OVERRIDE:
+            if existing is None:
+                return "reject"
+            if existing.product_type == requested:
+                return "no-op"
+            return "mutate"
+        if existing is None:
+            return "no-op"
+        return "mutate"
+
+    def _product_type_result(
+        self, item: _Item, revision_hash: str, action_result: str
+    ) -> ProductTypeResult:
+        row = self.product_types.get((item.id, revision_hash))
+        review_job = self._job_for(item.id, revision_hash, PRODUCT_TYPE_REVIEW_STAGE)
+        ai_job = self._job_for(item.id, revision_hash, AI_STAGE)
+        return ProductTypeResult(
+            source_item_id=item.id,
+            revision_hash=revision_hash,
+            product_type=None if row is None else row.product_type,
+            origin=None if row is None else row.origin,
+            review_job_id=None if review_job is None else review_job.id,
+            review_job_status=None if review_job is None else review_job.status,
+            ai_job_id=None if ai_job is None else ai_job.id,
+            ai_job_status=None if ai_job is None else ai_job.status,
+            action_result=action_result,
+        )
 
 
 def _item_from_record(

@@ -25,6 +25,10 @@ from ingest.models import (
     ObservationRecord,
     OrderingCapability,
 )
+from ingest.product_type import (
+    classify_policy_product_type,
+    product_type_classification_payload,
+)
 from ingest.relevance import classifier_decision_metadata, screen_policy
 from ingest.sanitize import html_to_plain_text, is_http_url
 from ingest.source_identity import (
@@ -230,6 +234,11 @@ class YouthcenterPolicyConnector(BatchConnector):
             normalized["source_url"] = source_url
             normalized["plain_text"] = body
         jobs = policy_job_plan(disposition, reason_codes=screening.reason_codes)
+        product_type_classification = None
+        if disposition == "target":
+            product_type_classification = product_type_classification_payload(
+                classify_policy_product_type(f"{title}\n{body}")
+            )
         return ObservationRecord(
             external_key=external_key,
             revision_hash=policy_revision_hash(cleaned, source_url),
@@ -249,6 +258,7 @@ class YouthcenterPolicyConnector(BatchConnector):
             is_data_url=attachment.is_data_url,
             jobs=jobs,
             classifier_decision=classifier_decision_metadata(screening),
+            product_type_classification=product_type_classification,
         )
 
     def _api_key(self) -> str:

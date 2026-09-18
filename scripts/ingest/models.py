@@ -38,7 +38,10 @@ ProcessingStage = Literal[
     "relationship_review",
     "ai_enrichment",
     "relevance_review",
+    "product_type_review",
 ]
+ProductType = Literal["event_program", "policy_reference"]
+ProductTypeAction = Literal["confirm", "override", "rollback"]
 JobStatus = Literal["queued", "claimed", "completed", "failed", "cancelled"]
 ReviewType = Literal["region", "relevance"]
 ReviewDecision = Literal["approve_ai", "reject", "needs_review"]
@@ -67,6 +70,7 @@ HUMAN_REVIEW_STAGES: frozenset[str] = frozenset(
         "content_review",
         "relationship_review",
         "relevance_review",
+        "product_type_review",
     }
 )
 RunStatus = Literal["complete", "incomplete", "failed"]
@@ -74,6 +78,7 @@ ObservationOutcome = Literal["new", "changed", "unchanged"]
 
 AI_STAGE: ProcessingStage = "ai_enrichment"
 RELEVANCE_REVIEW_STAGE: ProcessingStage = "relevance_review"
+PRODUCT_TYPE_REVIEW_STAGE: ProcessingStage = "product_type_review"
 CLASSIFIER_DECISION_KEYS: frozenset[str] = frozenset(
     {
         "decision",
@@ -166,6 +171,7 @@ class ObservationRecord:
     jobs: tuple[JobPlan, ...] = ()
     relationships: tuple[RelationshipPlan, ...] = ()
     classifier_decision: Mapping[str, Any] | None = None
+    product_type_classification: Mapping[str, Any] | None = None
 
     def to_rpc_item(self) -> dict[str, Any]:
         payload = {
@@ -200,6 +206,10 @@ class ObservationRecord:
         }
         if self.classifier_decision is not None:
             payload["classifier_decision"] = dict(self.classifier_decision)
+        if self.product_type_classification is not None:
+            payload["product_type_classification"] = dict(
+                self.product_type_classification
+            )
         return payload
 
 
@@ -225,6 +235,19 @@ class StartRunResult:
 class FinishRunResult:
     status: str
     stop_reason: str
+
+
+@dataclass(frozen=True)
+class ProductTypeResult:
+    source_item_id: str
+    revision_hash: str
+    product_type: str | None
+    origin: str | None
+    review_job_id: str | None
+    review_job_status: str | None
+    ai_job_id: str | None
+    ai_job_status: str | None
+    action_result: str
 
 
 @dataclass(frozen=True)

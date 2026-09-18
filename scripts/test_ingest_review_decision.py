@@ -110,6 +110,14 @@ def _enable_ai_claim(store: MemoryIngestStore, item) -> None:
             and job.status in {"queued", "claimed"}
         ):
             job.status = "completed"
+    store.resolve_source_item_product_type(
+        source_item_id=item.id,
+        revision_hash=item.revision_hash,
+        action="confirm",
+        product_type="event_program",
+        rule_version="product-type-v1",
+        reviewer="human:test",
+    )
 
 
 def _seed_approved_target_ai(store: MemoryIngestStore, key: str = "ok"):
@@ -1262,10 +1270,20 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
         _approve(store, item, review_type="region")
         result = _approve(store, item, review_type="relevance")
         self.assertEqual(item.disposition, "target")
+        self.assertEqual(_current_ai(store, item), [])
+        self.assertIsNone(result.ai_job_id)
+        confirmed = store.resolve_source_item_product_type(
+            source_item_id=item.id,
+            revision_hash=item.revision_hash,
+            action="confirm",
+            product_type="event_program",
+            rule_version="product-type-v1",
+            reviewer="human:test",
+        )
         ais = _current_ai(store, item)
         self.assertEqual(len(ais), 1)
         self.assertEqual(ais[0].status, "queued")
-        self.assertEqual(result.ai_job_id, ais[0].id)
+        self.assertEqual(confirmed.ai_job_id, ais[0].id)
         claimed = store.claim_processing_jobs("ai_enrichment", worker_id="w")
         self.assertEqual(len(claimed), 1)
         self.assertEqual(claimed[0].job_id, ais[0].id)
@@ -1275,11 +1293,19 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
         item = _seed_blocking_pair(store, "idemp-both")
         first_region = _approve(store, item, review_type="region")
         first_rel = _approve(store, item, review_type="relevance")
+        store.resolve_source_item_product_type(
+            source_item_id=item.id,
+            revision_hash=item.revision_hash,
+            action="confirm",
+            product_type="event_program",
+            rule_version="product-type-v1",
+            reviewer="human:test",
+        )
         second_rel = _approve(store, item, review_type="relevance")
         second_region = _approve(store, item, review_type="region")
         self.assertEqual(first_region.decision_id, second_region.decision_id)
         self.assertEqual(first_rel.decision_id, second_rel.decision_id)
-        self.assertEqual(first_rel.ai_job_id, second_rel.ai_job_id)
+        self.assertEqual(second_rel.ai_job_id, second_region.ai_job_id)
         self.assertEqual(len(_current_ai(store, item)), 1)
         self.assertEqual(item.disposition, "target")
 
@@ -1410,6 +1436,14 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
         self.assertEqual(item.disposition, "target")
         self.assertEqual(
             _current_stage_job(store, item, "relationship_review").status, "queued"
+        )
+        store.resolve_source_item_product_type(
+            source_item_id=item.id,
+            revision_hash=item.revision_hash,
+            action="confirm",
+            product_type="event_program",
+            rule_version="product-type-v1",
+            reviewer="human:test",
         )
         self.assertEqual(len(_current_ai(store, item)), 1)
         self.assertEqual(len(store.claim_processing_jobs("ai_enrichment", worker_id="w")), 1)
@@ -1581,6 +1615,14 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
         item = _seed_blocking_pair(store, "gate")
         _approve(store, item, review_type="region")
         _approve(store, item, review_type="relevance")
+        store.resolve_source_item_product_type(
+            source_item_id=item.id,
+            revision_hash=item.revision_hash,
+            action="confirm",
+            product_type="event_program",
+            rule_version="product-type-v1",
+            reviewer="human:test",
+        )
         self.assertEqual(len(store.claim_processing_jobs("ai_enrichment", worker_id="w")), 1)
         other = MemoryIngestStore()
         blocked = _seed_blocking_pair(other, "still-block")
@@ -1591,6 +1633,14 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
         _insert_review_job(rel, rel_item, "relationship_review")
         _approve(rel, rel_item, review_type="region")
         _approve(rel, rel_item, review_type="relevance")
+        rel.resolve_source_item_product_type(
+            source_item_id=rel_item.id,
+            revision_hash=rel_item.revision_hash,
+            action="confirm",
+            product_type="event_program",
+            rule_version="product-type-v1",
+            reviewer="human:test",
+        )
         self.assertEqual(len(rel.claim_processing_jobs("ai_enrichment", worker_id="w")), 1)
 
 

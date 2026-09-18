@@ -73,8 +73,12 @@ class IngestSqlContractTests(unittest.TestCase):
         self.assertIn("'region_review'", claim)
         self.assertIn("'relevance_review'", claim)
         self.assertIn("'content_review'", claim)
+        self.assertIn("'product_type_review'", claim)
+        self.assertIn("source_item_product_types", claim)
         self.assertNotIn("'relationship_review'", claim)
         self.assertIn("and not exists", claim)
+        self.assertIn("claim_lease_until <= v_now", claim)
+        self.assertNotIn("claim_lease_until < v_now", claim)
         self.assertIn("for update of j skip locked", claim)
 
     def test_00000_claim_body_does_not_include_decision_gate(self) -> None:
@@ -845,6 +849,7 @@ class IngestReviewDecisionSqlContractTests(unittest.TestCase):
         self.assertIn("and d.review_type = 'region'", core)
         self.assertIn("and d.review_type = 'relevance'", core)
         self.assertIn("'content_review'", core)
+        self.assertIn("'product_type_review'", core)
         self.assertNotIn("'relationship_review'", core)
         self.assertNotIn("when 'content' then", core)
         self.assertIn("if v_review_stage is null then", core)
@@ -1005,6 +1010,127 @@ class IngestReviewDecisionSqlContractTests(unittest.TestCase):
             self.assertIn("notify pgrst, 'reload schema'", lowered)
             self.assertLess(lowered.find("begin"), lowered.find("notify pgrst"))
             self.assertLess(lowered.rfind("notify pgrst"), lowered.rfind("commit"))
+
+
+PT = ROOT / "supabase" / "migrations" / "20260918000000_ingest_product_type.sql"
+PT_RPC = ROOT / "supabase" / "migrations" / "20260918000001_ingest_product_type_rpc_adapters.sql"
+PT_DOWN = ROOT / "supabase" / "rollback" / "20260918000000_ingest_product_type_down.sql"
+PT_RPC_DOWN = ROOT / "supabase" / "rollback" / "20260918000001_ingest_product_type_rpc_adapters_down.sql"
+
+
+class ProductTypeSqlContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.pt = PT.read_text(encoding="utf-8")
+        self.rpc = PT_RPC.read_text(encoding="utf-8")
+        self.down = PT_DOWN.read_text(encoding="utf-8")
+        self.rpc_down = PT_RPC_DOWN.read_text(encoding="utf-8")
+
+    def test_confirmed_values_and_stage_are_split(self) -> None:
+        table = self.pt.split("create table machimoa_review.source_item_product_types")[1]
+        table = table.split("create function")[0]
+        self.assertIn("'event_program'", table)
+        self.assertIn("'policy_reference'", table)
+        self.assertNotIn("'product_type_review'", table)
+        self.assertNotIn("source_kind", table.lower())
+        self.assertNotIn("plain_text", table.lower())
+        self.assertIn("enable row level security", self.pt.lower())
+        self.assertIn(
+            "revoke all privileges on table machimoa_review.source_item_product_types",
+            self.pt.lower(),
+        )
+        self.assertIn("'product_type_review'", self.pt)
+        self.assertNotIn("'expired'", self.pt)
+        self.assertNotIn("product_type_unclassified_after_approve", self.pt)
+        self.assertNotIn("review_type", table)
+
+    def test_writers_and_v3_same_txn(self) -> None:
+        apply_src = _latest_fn("machimoa_review", "apply_source_item_product_type")
+        resolve = _latest_fn("machimoa_review", "resolve_source_item_product_type")
+        v3 = _latest_fn("machimoa_review", "upsert_source_observations_v3")
+        v2 = _latest_fn("machimoa_review", "upsert_source_observations_v2")
+        self.assertIn("insert into machimoa_review.source_item_product_types", apply_src)
+        self.assertNotIn("update machimoa_review.source_item_product_types", apply_src)
+        self.assertIn("product_type_review", apply_src)
+        self.assertIn("apply_source_item_product_type", v3)
+        self.assertIn("apply_ingest_review_decision", v3)
+        apply_pos = v3.find("apply_source_item_product_type")
+        decision_pos = v3.find("apply_ingest_review_decision")
+        self.assertGreater(decision_pos, apply_pos)
+        self.assertNotIn("apply_source_item_product_type", v2)
+        self.assertIn("create function public.upsert_source_observations_v3", self.rpc)
+        self.assertIn("create function public.resolve_source_item_product_type", self.rpc)
+        self.assertNotIn(
+            "create function public.apply_source_item_product_type", self.rpc
+        )
+        self.assertNotIn(
+            "create function public.apply_ingest_review_decision", self.rpc
+        )
+        self.assertEqual(_private_grant_signatures(self.pt), set())
+        self.assertEqual(_private_grant_signatures(self.rpc), set())
+
+    def test_claim_and_apply_and_lease_equality(self) -> None:
+        claim = _latest_fn("machimoa_review", "claim_processing_jobs")
+        apply = _latest_fn("machimoa_review", "apply_ingest_review_decision")
+        ensure = _latest_fn("machimoa_review", "ensure_ai_enrichment_job")
+        self.assertIn("source_item_product_types", claim)
+        self.assertIn("'product_type_review'", claim)
+        self.assertIn("claim_lease_until <= v_now", claim)
+        self.assertNotIn("claim_lease_until < v_now", claim)
+        self.assertIn("ensure_ai_enrichment_job", apply)
+        self.assertIn("'product_type_review'", apply)
+        self.assertIn("ai_job_malformed_lease", apply)
+        self.assertIn("claim_lease_until <= v_now", apply)
+        self.assertIn("status = 'cancelled'", ensure)
+        self.assertIn("claim_lease_until <= v_now", ensure)
+        self.assertIn("ai_job_malformed_lease", ensure)
+        self.assertNotIn("status = 'expired'", ensure)
+        self.assertNotIn("insert into machimoa_review.source_item_product_types", apply)
+        self.assertNotIn("product_type_review", _latest_fn("machimoa_review", "upsert_source_observations_v2"))
+
+    def test_rollback_fail_closed_acl_and_no_backfill(self) -> None:
+        for sql in (self.down, self.rpc_down):
+            lowered = sql.lower()
+            first_drop = min(
+                pos
+                for pos in (lowered.find("drop function"), lowered.find("drop table"))
+                if pos >= 0
+            )
+            lock_pt = lowered.find("lock table machimoa_review.source_item_product_types")
+            lock_jobs = lowered.find("lock table machimoa_review.processing_jobs")
+            error = lowered.find("raise exception 'rollback_product_type_data_present'")
+            self.assertGreater(lock_pt, 0)
+            self.assertGreater(lock_jobs, lock_pt)
+            self.assertGreater(error, lock_jobs)
+            self.assertLess(error, first_drop)
+            self.assertEqual(lowered.count("rollback_product_type_data_present"), 2)
+            self.assertNotIn("delete from machimoa_review.source_items", lowered)
+            self.assertNotIn("delete from machimoa_review.curation_candidates", lowered)
+            self.assertNotIn("delete from public.curations", lowered)
+            self.assertNotIn("delete from machimoa_review.ingest_review_decisions", lowered)
+            self.assertNotIn("status in ('queued', 'claimed', 'completed', 'failed', 'cancelled', 'expired')", lowered)
+            self.assertNotIn("'expired'", lowered.split("begin;")[1] if "begin;" in lowered else lowered)
+        self.assertIn("drop function if exists public.upsert_source_observations_v3", self.rpc_down)
+        self.assertNotIn("drop function if exists machimoa_review", self.rpc_down.lower())
+        self.assertIn("create or replace function machimoa_review.apply_ingest_review_decision", self.down)
+        self.assertLess(
+            self.down.find("create or replace function machimoa_review.apply_ingest_review_decision"),
+            self.down.find("drop function if exists machimoa_review.ensure_ai_enrichment_job"),
+        )
+        restored_claim = self.down.split(
+            "create or replace function machimoa_review.claim_processing_jobs"
+        )[1].split("create or replace function")[0]
+        self.assertIn("ingest_review_decisions", restored_claim)
+        self.assertNotIn("source_item_product_types", restored_claim)
+        self.assertIn("claim_lease_until < v_now", restored_claim)
+        self.assertIn("'relevance_review'", self.down.split("add constraint processing_jobs_stage_ck")[1])
+        self.assertNotIn(
+            "'product_type_review'",
+            self.down.split("add constraint processing_jobs_stage_ck")[1].split("drop table")[0],
+        )
+        self.assertNotIn("backfill", self.pt.lower())
+        self.assertNotIn("phase 3", self.pt.lower())
+        self.assertIn("notify pgrst, 'reload schema'", self.rpc.lower())
+        self.assertIn("notify pgrst, 'reload schema'", self.rpc_down.lower())
 
 
 if __name__ == "__main__":

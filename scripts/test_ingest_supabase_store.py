@@ -237,11 +237,11 @@ class SupabaseIngestStoreRpcTests(unittest.TestCase):
         self.assertEqual(client.table_calls, [])
         self.assertNotIn("set_source_permission", names)
         self.assertNotIn("publish_curation_candidate", names)
-        self.assertEqual(UPSERT_SOURCE_OBSERVATIONS, "upsert_source_observations_v2")
+        self.assertEqual(UPSERT_SOURCE_OBSERVATIONS, "upsert_source_observations_v3")
         self.assertNotIn(RESOLVE_INGEST_REVIEW_DECISION, names)
         self.assertNotIn(RECONCILE_QUEUED_AI_JOB, names)
         self.assertTrue(all("lookup" not in name for name in names))
-        self.assertEqual(client.calls[2][0], "upsert_source_observations_v2")
+        self.assertEqual(client.calls[2][0], "upsert_source_observations_v3")
         item_payload = client.calls[2][1]["p_items"][0]
         self.assertIn("external_key", item_payload)
         self.assertIn("revision_hash", item_payload)
