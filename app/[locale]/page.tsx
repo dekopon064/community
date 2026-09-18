@@ -7,6 +7,11 @@ import { fetchLocalizedCurations } from "@/app/lib/curations";
 // 새 글 등록 시 최대 60초 안에 대표 카드를 최신화 (ISR)
 export const revalidate = 60;
 
+function asStringList(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
 function formatPublishedDate(value: string, locale: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
@@ -27,6 +32,7 @@ export default async function Home({
   setRequestLocale(locale);
   const t = await getTranslations("Home");
   const categoriesT = await getTranslations("Categories");
+  const headlineParts = asStringList(t.raw("headlineParts"));
 
   const curations = await fetchLocalizedCurations(locale);
   const [primary, secondary] = curations;
@@ -42,11 +48,35 @@ export default async function Home({
       <div className="relative mx-auto max-w-xl px-4 pb-24 pt-[49px] sm:px-8 lg:max-w-7xl lg:grid lg:grid-cols-[minmax(13.5rem,0.82fr)_minmax(0,1.18fr)_18.5rem] lg:items-start lg:gap-x-8 lg:px-8 lg:pb-16 lg:pt-[51px]">
         <section className="relative lg:pt-[69px]">
           <h1
+            aria-label={headlineParts.length > 1 ? t("headline") : undefined}
             className={isJapanese
-              ? "max-w-[20ch] text-[clamp(1.625rem,7.4vw,2rem)] font-bold leading-[1.2] tracking-[-0.045em] text-ink [text-wrap:balance] md:text-[clamp(2rem,5vw,2.45rem)] lg:max-w-[13ch] lg:text-[2.625rem]"
+              ? "max-w-[20ch] text-[clamp(1.625rem,7.4vw,2rem)] font-bold leading-[1.2] tracking-[-0.045em] text-ink md:text-[clamp(2rem,5vw,2.45rem)] lg:max-w-none lg:text-[2.625rem]"
               : "max-w-[15ch] text-[1.875rem] font-bold leading-[1.25] tracking-[-0.055em] text-ink [text-wrap:balance] md:text-4xl lg:max-w-[13ch] lg:text-[2.625rem] lg:leading-[1.2]"}
           >
-            {t("headline")}
+            {headlineParts.length > 1 ? (
+              <span aria-hidden="true">
+                <span className="block whitespace-nowrap">
+                  {headlineParts[0]}
+                </span>
+                {isJapanese ? (
+                  headlineParts.slice(1).map((part) => (
+                    <span key={part} className="block whitespace-nowrap">
+                      {part}
+                    </span>
+                  ))
+                ) : (
+                  <span className="flex flex-wrap gap-x-[0.28em]">
+                    {headlineParts.slice(1).map((part) => (
+                      <span key={part} className="whitespace-nowrap">
+                        {part}
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </span>
+            ) : (
+              t("headline")
+            )}
           </h1>
           <p className="mt-5 max-w-sm text-base leading-7 text-ink-sub md:text-lg">
             {t("intro")}
