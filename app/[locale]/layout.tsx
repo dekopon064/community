@@ -40,7 +40,7 @@ const notoSansJp = Noto_Sans_JP({
 
 export const metadata: Metadata = {
   title: "마치모아(Machimoa)",
-  description: "마치모아(Machimoa)는 사람이 검수한 한국 생활정보를 한국어와 일본어로 제공합니다.",
+  description: "마치모아(Machimoa)는 한국 생활에 도움이 되는 정책과 지역 행사·프로그램을 한국어와 일본어로 소개합니다.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,

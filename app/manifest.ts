@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "마치모아(Machimoa)",
     short_name: "Machimoa",
-    description: "마치모아(Machimoa)는 사람이 검수한 한국 생활정보를 한국어와 일본어로 제공합니다.",
+    description: "마치모아(Machimoa)는 한국 생활에 도움이 되는 정책과 지역 행사·프로그램을 한국어와 일본어로 소개합니다.",
     start_url: "/",
     display: "standalone",
     orientation: "portrait",
