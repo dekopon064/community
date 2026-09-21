@@ -1207,7 +1207,12 @@ class MemoryIngestStore:
             authority.jobs[0].reason_codes if authority.jobs else (),
         )
         review_job = None
-        for stage in ("region_review", RELEVANCE_REVIEW_STAGE, PRODUCT_TYPE_REVIEW_STAGE):
+        for stage in (
+            "content_review",
+            "region_review",
+            RELEVANCE_REVIEW_STAGE,
+            PRODUCT_TYPE_REVIEW_STAGE,
+        ):
             found = self._job_for(item.id, v_hash, stage)
             if found is not None and found.status in {"queued", "claimed"}:
                 review_job = found
@@ -2078,6 +2083,30 @@ class MemoryIngestStore:
             job.claimed_by = None
             job.claim_lease_until = None
 
+    def _reevaluate_confirmed_product_type(
+        self,
+        item: _Item,
+        row: _ProductType,
+        now: datetime,
+        reasons: tuple[str, ...],
+    ) -> None:
+        authority = evaluate_capital_v1(
+            body_usable=item.body_usable,
+            has_source_url=item.has_source_url,
+            attachment_present=item.attachment_present,
+            product_type=row.product_type,
+            product_type_reasons=row.reason_codes,
+            facts=row.gate_facts,
+        )
+        item.disposition = authority.disposition
+        self._sync_v1_jobs_from_evaluation(item, authority, now)
+        self._ensure_queued_ai_job_v1(
+            item,
+            item.revision_hash,
+            now,
+            authority.jobs[0].reason_codes if authority.jobs else reasons,
+        )
+
     def _resolve_source_item_product_type_inner(
         self,
         *,
@@ -2119,13 +2148,8 @@ class MemoryIngestStore:
         item = self._item_by_id(source_item_id)
         if item.revision_hash != v_hash:
             raise RpcFailure("revision_mismatch")
-        source = self.sources[item.source_id]
-        if source.source_kind == SOURCE_KIND_CONTENT:
-            if (
-                v_action != PRODUCT_TYPE_ACTION_CONFIRM
-                or v_type != PRODUCT_TYPE_EVENT_PROGRAM
-            ):
-                raise RpcFailure("content_product_type_locked")
+        if item.source_id not in self.sources:
+            raise RpcFailure("source_not_found")
 
         key = (item.id, v_hash)
         existing = self.product_types.get(key)
@@ -2160,7 +2184,11 @@ class MemoryIngestStore:
                 now=now,
             )
             self._complete_product_type_review_job(item.id, v_hash, now)
-            self._ensure_queued_ai_job(item, v_hash, now, reasons)
+            row = self._product_type_row(item.id, v_hash)
+            if row is not None and self._is_v1_complete_product_type_row(row):
+                self._reevaluate_confirmed_product_type(item, row, now, reasons)
+            else:
+                self._ensure_queued_ai_job(item, v_hash, now, reasons)
             action_result = "confirmed"
         elif v_action == PRODUCT_TYPE_ACTION_OVERRIDE:
             existing.product_type = v_type  # type: ignore[union-attr]
@@ -2172,7 +2200,11 @@ class MemoryIngestStore:
             existing.memo = v_memo  # type: ignore[union-attr]
             existing.updated_at = now  # type: ignore[union-attr]
             self._complete_product_type_review_job(item.id, v_hash, now)
-            self._ensure_queued_ai_job(item, v_hash, now, reasons)
+            row = self._product_type_row(item.id, v_hash)
+            if row is not None and self._is_v1_complete_product_type_row(row):
+                self._reevaluate_confirmed_product_type(item, row, now, reasons)
+            else:
+                self._ensure_queued_ai_job(item, v_hash, now, reasons)
             action_result = "overridden"
         else:
             del self.product_types[key]

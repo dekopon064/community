@@ -364,7 +364,7 @@ class AssessmentPipelineTests(unittest.TestCase):
         self.assertEqual(item.disposition, "observe_only")
         self.assertNotIn((item.id, item.revision_hash), store.product_types)
         stages = {job.processing_stage for job in store.jobs.values()}
-        self.assertEqual(stages, {"product_type_review"})
+        self.assertEqual(stages, {"content_review"})
 
     def test_two_unknown_jobs_and_hard_fail_priority(self) -> None:
         both = _policy_connector().to_observation(
@@ -387,7 +387,12 @@ class AssessmentPipelineTests(unittest.TestCase):
             for job in store.jobs.values()
             if job.source_item_id == item.id
         }
-        self.assertEqual(stages, {"region_review", "relevance_review"})
+        self.assertEqual(stages, {"content_review"})
+        review = next(job for job in store.jobs.values() if job.source_item_id == item.id)
+        self.assertEqual(
+            set(review.reason_codes),
+            {"region_scope_unknown", "relevance_unconfirmed"},
+        )
 
         fail = _policy_connector().to_observation(
             policy_item(
@@ -438,6 +443,9 @@ class AssessmentPipelineTests(unittest.TestCase):
         item = store.items[(CANONICAL_POLICY_SOURCE, "evt")]
         stages = {job.processing_stage for job in store.jobs.values()}
         self.assertNotIn("relevance_review", stages)
+        self.assertEqual(stages, {"content_review"})
+        review = next(iter(store.jobs.values()))
+        self.assertEqual(review.reason_codes, ("region_scope_unknown",))
         self.assertEqual(item.disposition, "region_review_required")
 
     def test_living_guide_is_not_auto_created(self) -> None:
@@ -483,7 +491,8 @@ class AssessmentPipelineTests(unittest.TestCase):
         item = store.items[(CANONICAL_POLICY_SOURCE, "study")]
         self.assertEqual(item.disposition, "region_review_required")
         stages = {job.processing_stage for job in store.jobs.values()}
-        self.assertIn("relevance_review", stages)
+        self.assertEqual(stages, {"content_review"})
+        self.assertNotIn("relevance_review", stages)
 
     def test_orchestrator_uses_v4_write(self) -> None:
         store = MemoryIngestStore()

@@ -6,6 +6,7 @@ import unittest
 from ingest.models import PRODUCT_TYPE_REVIEW_STAGE, ProductTypeResult
 from ingest.product_type import (
     PRODUCT_TYPE_EVENT_PROGRAM,
+    PRODUCT_TYPE_LIVING_GUIDE,
     PRODUCT_TYPE_KIND_CONFIRMED,
     PRODUCT_TYPE_KIND_REVIEW,
     PRODUCT_TYPE_ORIGIN_CLASSIFIER,
@@ -276,7 +277,7 @@ class ProductTypeWriterAndHumanMatrixTests(unittest.TestCase):
         self.assertIsNone(_product_type_row(store, item))
         self.assertEqual(_review_jobs(store, item)[0].status, "queued")
 
-    def test_content_lock_before_noop(self) -> None:
+    def test_content_source_can_override_to_living_guide(self) -> None:
         store = MemoryIngestStore()
         started = store.start_ingest_run(CANONICAL_CONTENT_SOURCE)
         raw = load_content()
@@ -292,23 +293,15 @@ class ProductTypeWriterAndHumanMatrixTests(unittest.TestCase):
         item = store.items[(CANONICAL_CONTENT_SOURCE, record.external_key)]
         same = _confirm(store, item, PRODUCT_TYPE_EVENT_PROGRAM)
         self.assertEqual(same.action_result, "no-op")
-        for action, product_type in (
-            ("confirm", PRODUCT_TYPE_POLICY_REFERENCE),
-            ("override", PRODUCT_TYPE_POLICY_REFERENCE),
-            ("rollback", None),
-        ):
-            with self.subTest(action=action):
-                with self.assertRaises(RpcFailure) as err:
-                    store.resolve_source_item_product_type(
-                        source_item_id=item.id,
-                        revision_hash=item.revision_hash,
-                        action=action,
-                        product_type=product_type,
-                        rule_version=PRODUCT_TYPE_RULE_VERSION,
-                        reviewer=REVIEWER,
-                        memo="x",
-                    )
-                self.assertEqual(err.exception.code, "content_product_type_locked")
+        with self.assertRaises(RpcFailure) as conflict:
+            _confirm(store, item, PRODUCT_TYPE_POLICY_REFERENCE)
+        self.assertEqual(conflict.exception.code, "decision_conflict")
+        changed = _override(store, item, PRODUCT_TYPE_LIVING_GUIDE)
+        self.assertEqual(changed.action_result, "overridden")
+        self.assertEqual(
+            _product_type_row(store, item).product_type,
+            PRODUCT_TYPE_LIVING_GUIDE,
+        )
 
     def test_invalid_enum_and_stale_revision_are_not_noop(self) -> None:
         store = MemoryIngestStore()

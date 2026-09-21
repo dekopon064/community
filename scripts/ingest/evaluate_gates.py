@@ -57,9 +57,7 @@ def evaluate_capital_v1(
         reasons = product_type_reasons or ("policy_lifecycle_uncertain",)
         return EvaluationResult(
             disposition="observe_only",
-            jobs=(
-                JobPlan(stage="product_type_review", reason_codes=reasons),
-            ),
+            jobs=_content_review(reasons),
             region_status="not_applicable",
             audience_status="not_applicable",
         )
@@ -76,25 +74,15 @@ def evaluate_capital_v1(
             audience_status=audience_status,
         )
 
-    jobs: list[JobPlan] = []
+    reasons: list[str] = []
     if region_status == "review_required":
-        jobs.append(
-            JobPlan(
-                stage="region_review",
-                reason_codes=(REASON_REGION_SCOPE_UNKNOWN,),
-            )
-        )
+        reasons.append(REASON_REGION_SCOPE_UNKNOWN)
     if audience_status == "review_required":
-        jobs.append(
-            JobPlan(
-                stage="relevance_review",
-                reason_codes=(REASON_RELEVANCE_UNCONFIRMED,),
-            )
-        )
-    if jobs:
+        reasons.append(REASON_RELEVANCE_UNCONFIRMED)
+    if reasons:
         return EvaluationResult(
             disposition="region_review_required",
-            jobs=tuple(jobs),
+            jobs=_content_review(tuple(reasons)),
             region_status=region_status,
             audience_status=audience_status,
         )
@@ -134,11 +122,15 @@ def _evaluate_common(
     if not has_source_url:
         return EvaluationResult(
             disposition="observe_only",
-            jobs=(),
+            jobs=_content_review((REASON_MISSING_SOURCE_URL,)),
             region_status="not_applicable",
             audience_status="not_applicable",
         )
     return None
+
+
+def _content_review(reason_codes: tuple[str, ...]) -> tuple[JobPlan, ...]:
+    return (JobPlan(stage="content_review", reason_codes=reason_codes),)
 
 
 def _coerce_facts(
