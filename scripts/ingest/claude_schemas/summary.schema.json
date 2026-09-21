@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "machimoa-eval-summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["content_ko", "facts"],
+  "properties": {
+    "content_ko": {
+      "type": "string",
+      "minLength": 1
+    },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audience",
+        "geo_age_income",
+        "amount_period_deadline",
+        "how_to_apply"
+      ],
+      "properties": {
+        "audience": { "type": "string" },
+        "geo_age_income": { "type": "string" },
+        "amount_period_deadline": { "type": "string" },
+        "how_to_apply": { "type": "string" }
+      }
+    }
+  }
+}

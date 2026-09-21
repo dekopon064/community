@@ -1,0 +1,240 @@
+[
+  {
+    "id": "1-unusable-attachment",
+    "body_usable": false,
+    "has_source_url": false,
+    "attachment_present": true,
+    "product_type": "event_program",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "nationwide",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": ""
+    },
+    "expect_disposition": "attachment_dependent",
+    "expect_job_stages": ["content_review"],
+    "expect_region_status": "not_applicable",
+    "expect_audience_status": "not_applicable"
+  },
+  {
+    "id": "2-unusable-no-attachment",
+    "body_usable": false,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "event_program",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "nationwide",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": ""
+    },
+    "expect_disposition": "non_target",
+    "expect_job_stages": [],
+    "expect_region_status": "not_applicable",
+    "expect_audience_status": "not_applicable"
+  },
+  {
+    "id": "3-usable-missing-url",
+    "body_usable": true,
+    "has_source_url": false,
+    "attachment_present": false,
+    "product_type": "policy_reference",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "nationwide",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": "",
+      "foreign_resident_eligibility": "eligible"
+    },
+    "expect_disposition": "observe_only",
+    "expect_job_stages": [],
+    "expect_region_status": "not_applicable",
+    "expect_audience_status": "not_applicable"
+  },
+  {
+    "id": "5-unknown-product-type",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": null,
+    "facts": null,
+    "expect_disposition": "observe_only",
+    "expect_job_stages": ["product_type_review"],
+    "expect_region_status": "not_applicable",
+    "expect_audience_status": "not_applicable"
+  },
+  {
+    "id": "6-nationwide-event",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "event_program",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "nationwide",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": "nationwide_phrase",
+      "delivery_mode": "online"
+    },
+    "expect_disposition": "target",
+    "expect_job_stages": [],
+    "expect_region_status": "passed",
+    "expect_audience_status": "not_applicable"
+  },
+  {
+    "id": "7-capital-intersection",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "event_program",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "specific",
+      "eligibility_region_codes": ["11", "50"],
+      "eligibility_region_evidence": "11680,50110"
+    },
+    "expect_disposition": "target",
+    "expect_job_stages": [],
+    "expect_region_status": "passed",
+    "expect_audience_status": "not_applicable"
+  },
+  {
+    "id": "8-all-codes-outside-capital",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "event_program",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "specific",
+      "eligibility_region_codes": ["50"],
+      "eligibility_region_evidence": "50110"
+    },
+    "expect_disposition": "non_target",
+    "expect_job_stages": [],
+    "expect_region_status": "failed",
+    "expect_audience_status": "not_applicable"
+  },
+  {
+    "id": "9-unknown-region",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "event_program",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "unknown",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": ""
+    },
+    "expect_disposition": "region_review_required",
+    "expect_job_stages": ["region_review"],
+    "expect_region_status": "review_required",
+    "expect_audience_status": "not_applicable"
+  },
+  {
+    "id": "12-policy-eligible",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "policy_reference",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "nationwide",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": "",
+      "foreign_resident_eligibility": "eligible"
+    },
+    "expect_disposition": "target",
+    "expect_job_stages": [],
+    "expect_region_status": "passed",
+    "expect_audience_status": "passed"
+  },
+  {
+    "id": "13-policy-ineligible",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "policy_reference",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "nationwide",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": "",
+      "foreign_resident_eligibility": "ineligible"
+    },
+    "expect_disposition": "non_target",
+    "expect_job_stages": [],
+    "expect_region_status": "passed",
+    "expect_audience_status": "failed"
+  },
+  {
+    "id": "14-policy-audience-unknown",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "policy_reference",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "nationwide",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": "",
+      "foreign_resident_eligibility": "unknown"
+    },
+    "expect_disposition": "region_review_required",
+    "expect_job_stages": ["relevance_review"],
+    "expect_region_status": "passed",
+    "expect_audience_status": "review_required"
+  },
+  {
+    "id": "16-hard-fail-beats-unknown",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "policy_reference",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "specific",
+      "eligibility_region_codes": ["50"],
+      "eligibility_region_evidence": "50110",
+      "foreign_resident_eligibility": "unknown"
+    },
+    "expect_disposition": "non_target",
+    "expect_job_stages": [],
+    "expect_region_status": "failed",
+    "expect_audience_status": "review_required"
+  },
+  {
+    "id": "17-two-unknown-jobs",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "policy_reference",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "eligibility_scope": "unknown",
+      "eligibility_region_codes": [],
+      "eligibility_region_evidence": "",
+      "foreign_resident_eligibility": "unknown"
+    },
+    "expect_disposition": "region_review_required",
+    "expect_job_stages": ["region_review", "relevance_review"],
+    "expect_region_status": "review_required",
+    "expect_audience_status": "review_required"
+  },
+  {
+    "id": "19-living-guide-target",
+    "body_usable": true,
+    "has_source_url": true,
+    "attachment_present": false,
+    "product_type": "living_guide",
+    "facts": {
+      "schema_version": "gate-facts-v1",
+      "delivery_mode": "unknown"
+    },
+    "expect_disposition": "target",
+    "expect_job_stages": [],
+    "expect_region_status": "not_applicable",
+    "expect_audience_status": "not_applicable"
+  }
+]
