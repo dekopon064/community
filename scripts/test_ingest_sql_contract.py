@@ -1192,6 +1192,8 @@ class GateFactsSqlContractTests(unittest.TestCase):
         self.assertNotIn("living_guide", apply_v3)
         self.assertNotIn("gate_facts", apply_v3)
         self.assertNotIn("p_gate_facts", resolve_pt)
+        self.assertIn("'living_guide'", resolve_pt)
+        self.assertNotIn("content_product_type_locked", _function_body(resolve_pt))
         self.assertIn("apply_source_item_product_type", v3)
         self.assertIn("apply_ingest_review_decision", v3)
         self.assertNotIn("evaluate_source_item_gates", v3)
@@ -1227,6 +1229,15 @@ class GateFactsSqlContractTests(unittest.TestCase):
         self.assertNotIn("activity_location", evaluator)
         self.assertNotIn("nationwide_or_online", evaluator)
         self.assertNotIn("approve_ai", evaluator)
+        self.assertIn(
+            "create or replace function machimoa_review.evaluate_source_item_gates",
+            evaluator,
+        )
+        body = _function_body(evaluator)
+        self.assertNotIn("'product_type_review'", body)
+        self.assertNotIn("'region_review'", body)
+        self.assertNotIn("'relevance_review'", body)
+        self.assertIn("'content_review'", body)
         self.assertIn("delivery_mode", validate)
         for code in sorted(CAPITAL_V1_REGION_CODES):
             self.assertIn(f"'{code}'", evaluator)
@@ -1338,6 +1349,7 @@ class GateFactsSqlContractTests(unittest.TestCase):
         self.assertIn("ai_job_claimed", apply_facts)
         self.assertIn("invalid_assessment_schema_version", apply_facts)
         self.assertNotIn("p_gate_facts", resolve_pt)
+        self.assertIn("'content_review'", resolve_facts)
         self.assertIn("create function public.resolve_source_item_gate_facts", self.rpc)
         self.assertIn("create function public.upsert_source_observations_v4", self.rpc)
         self.assertNotIn("create function public.apply_source_item_gate_facts", self.rpc)
@@ -1408,6 +1420,58 @@ class GateFactsSqlContractTests(unittest.TestCase):
         self.assertIn("notify pgrst, 'reload schema'", self.rpc_down.lower())
         self.assertNotIn("backfill", self.gf.lower())
         self.assertNotIn("phase 3", self.gf.lower())
+
+
+MIN_WF = ROOT / "supabase" / "migrations" / "20260923000000_ingest_min_review_workflow.sql"
+MIN_WF_DOWN = (
+    ROOT / "supabase" / "rollback" / "20260923000000_ingest_min_review_workflow_down.sql"
+)
+
+
+class MinReviewWorkflowSqlContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sql = MIN_WF.read_text(encoding="utf-8")
+        self.down = MIN_WF_DOWN.read_text(encoding="utf-8")
+
+    def test_replaces_only_existing_private_functions(self) -> None:
+        created = [
+            match.group(2)
+            for match in _CREATE_FN.finditer(self.sql)
+            if match.group(1).lower() == "machimoa_review"
+        ]
+        self.assertEqual(
+            created,
+            [
+                "evaluate_source_item_gates",
+                "resolve_source_item_product_type",
+                "resolve_source_item_gate_facts",
+            ],
+        )
+        self.assertEqual(self.sql.lower().count("create or replace function"), 3)
+        self.assertNotIn("create table", self.sql.lower())
+        self.assertNotIn("create function public.", self.sql.lower())
+        self.assertNotIn("grant execute", self.sql.lower())
+        self.assertEqual(_private_grant_signatures(self.sql), set())
+        self.assertIn(
+            "revoke all privileges on function machimoa_review.evaluate_source_item_gates",
+            self.sql,
+        )
+        self.assertNotIn("apply_source_item_human_assessment", self.sql)
+        self.assertNotIn("insert into machimoa_review.ingest_review_decisions", self.sql)
+
+    def test_rollback_restores_origin_bodies_without_data_delete(self) -> None:
+        self.assertIn("content_product_type_locked", self.down)
+        restored_eval = _function_body(
+            self.down.split("create or replace function machimoa_review.evaluate_source_item_gates")[1]
+        )
+        self.assertIn("'product_type_review'", restored_eval)
+        self.assertIn("'region_review'", restored_eval)
+        self.assertIn("'relevance_review'", restored_eval)
+        lowered = self.down.lower()
+        self.assertNotIn("delete from machimoa_review.ingest_review_decisions", lowered)
+        self.assertNotIn("delete from machimoa_review.processing_jobs", lowered)
+        self.assertNotIn("delete from public.curations", lowered)
+        self.assertEqual(_private_grant_signatures(self.down), set())
 
 
 if __name__ == "__main__":

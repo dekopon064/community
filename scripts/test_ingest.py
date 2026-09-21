@@ -1763,7 +1763,11 @@ class AiDependencyAndRetryTests(unittest.TestCase):
         self.assertEqual(store.ai_job_counts()["completed"], 0)
         self.assertTrue(
             any(
-                job.processing_stage in {"region_review", "product_type_review"}
+                job.processing_stage in {
+                    "region_review",
+                    "product_type_review",
+                    "content_review",
+                }
                 for job in store.jobs.values()
             )
         )

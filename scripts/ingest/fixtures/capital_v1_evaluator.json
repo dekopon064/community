@@ -47,7 +47,7 @@
       "foreign_resident_eligibility": "eligible"
     },
     "expect_disposition": "observe_only",
-    "expect_job_stages": [],
+    "expect_job_stages": ["content_review"],
     "expect_region_status": "not_applicable",
     "expect_audience_status": "not_applicable"
   },
@@ -59,7 +59,7 @@
     "product_type": null,
     "facts": null,
     "expect_disposition": "observe_only",
-    "expect_job_stages": ["product_type_review"],
+    "expect_job_stages": ["content_review"],
     "expect_region_status": "not_applicable",
     "expect_audience_status": "not_applicable"
   },
@@ -128,7 +128,7 @@
       "eligibility_region_evidence": ""
     },
     "expect_disposition": "region_review_required",
-    "expect_job_stages": ["region_review"],
+    "expect_job_stages": ["content_review"],
     "expect_region_status": "review_required",
     "expect_audience_status": "not_applicable"
   },
@@ -182,7 +182,7 @@
       "foreign_resident_eligibility": "unknown"
     },
     "expect_disposition": "region_review_required",
-    "expect_job_stages": ["relevance_review"],
+    "expect_job_stages": ["content_review"],
     "expect_region_status": "passed",
     "expect_audience_status": "review_required"
   },
@@ -218,7 +218,7 @@
       "foreign_resident_eligibility": "unknown"
     },
     "expect_disposition": "region_review_required",
-    "expect_job_stages": ["region_review", "relevance_review"],
+    "expect_job_stages": ["content_review"],
     "expect_region_status": "review_required",
     "expect_audience_status": "review_required"
   },
