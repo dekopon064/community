@@ -23,12 +23,12 @@ from ingest.relevance import (
 from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
 from ingest.store import BLOCKING_REVIEW_STAGES, MemoryIngestStore
-from ingest.connectors.youthcenter_content import YouthcenterContentConnector
 from test_ingest import (
     Clock,
     load_content,
     observation_for,
     policy_item,
+    v3_content_observation,
 )
 
 REVIEWER = f"classifier:{RULE_VERSION}"
@@ -1481,12 +1481,9 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
     def test_new_usable_revision_leaves_old_content_review_stale(self) -> None:
         store = MemoryIngestStore()
         started = store.start_ingest_run(CANONICAL_CONTENT_SOURCE)
-        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         first_raw = load_content()
         first_raw["pstWholCn"] = ""
-        first = connector.to_observation(
-            first_raw, permission_status="testing_only", enabled=True
-        )
+        first = v3_content_observation(first_raw)
         self.assertEqual(first.jobs[0].stage, "content_review")
         store.upsert_source_observations(
             CANONICAL_CONTENT_SOURCE, started.run_id, [first], None
@@ -1505,9 +1502,7 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
             "<p>서울에서 열리는 한일 교류 설명회입니다. "
             "한국 거주 일본인은 참석 가능합니다.</p>"
         )
-        second = connector.to_observation(
-            second_raw, permission_status="testing_only", enabled=True
-        )
+        second = v3_content_observation(second_raw)
         self.assertEqual(second.external_key, first.external_key)
         self.assertNotEqual(second.revision_hash, old_hash)
         self.assertEqual(second.disposition, "target")

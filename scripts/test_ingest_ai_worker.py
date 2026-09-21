@@ -14,12 +14,12 @@ from ingest.ai_worker import (
     process_ai_jobs,
 )
 from ingest.constants import DEFAULT_JOB_LEASE_SECONDS
-from ingest.connectors.youthcenter_policy import YouthcenterPolicyConnector
 from ingest.models import Checkpoint, ObservationRecord, AI_STAGE
 from ingest.relevance import AXIS_JP_RESIDENTS_IN_KR, RULE_VERSION
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.source_identity import CANONICAL_POLICY_SOURCE
 from ingest.store import AI_CLAIM_LIMIT, MemoryIngestStore
+from test_ingest import observation_for
 
 SECRET_MARKER = "svc-secret-marker-DoNotLog"
 URL_QUERY_MARKER = "apiKeyNm=secret-query-marker"
@@ -46,18 +46,14 @@ def _policy_item(plcy_no: str) -> dict[str, Any]:
 
 
 def _observation(plcy_no: str) -> ObservationRecord:
-    return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
-        _policy_item(plcy_no), permission_status="testing_only", enabled=True
-    )
+    return observation_for(_policy_item(plcy_no))
 
 
 def _human_review_observation(plcy_no: str) -> ObservationRecord:
     item = _policy_item(plcy_no)
     item["plcyExplnCn"] = "서울 거주 청년을 대상으로 합니다."
     item["plcySprtCn"] = "서울 거주 청년을 대상으로 합니다."
-    return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
-        item, permission_status="testing_only", enabled=True
-    )
+    return observation_for(item)
 
 
 def _assert_v2_created_clear_target_ai(store: MemoryIngestStore, count: int) -> None:

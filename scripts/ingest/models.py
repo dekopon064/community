@@ -40,7 +40,7 @@ ProcessingStage = Literal[
     "relevance_review",
     "product_type_review",
 ]
-ProductType = Literal["event_program", "policy_reference"]
+ProductType = Literal["event_program", "policy_reference", "living_guide"]
 ProductTypeAction = Literal["confirm", "override", "rollback"]
 JobStatus = Literal["queued", "claimed", "completed", "failed", "cancelled"]
 ReviewType = Literal["region", "relevance"]
@@ -172,6 +172,9 @@ class ObservationRecord:
     relationships: tuple[RelationshipPlan, ...] = ()
     classifier_decision: Mapping[str, Any] | None = None
     product_type_classification: Mapping[str, Any] | None = None
+    gate_facts: Mapping[str, Any] | None = None
+    assessment_schema_version: str | None = None
+    evaluated_profile: str | None = None
 
     def to_rpc_item(self) -> dict[str, Any]:
         payload = {
@@ -210,6 +213,12 @@ class ObservationRecord:
             payload["product_type_classification"] = dict(
                 self.product_type_classification
             )
+        if self.gate_facts is not None:
+            payload["gate_facts"] = dict(self.gate_facts)
+        if self.assessment_schema_version is not None:
+            payload["assessment_schema_version"] = self.assessment_schema_version
+        if self.evaluated_profile is not None:
+            payload["evaluated_profile"] = self.evaluated_profile
         return payload
 
 
@@ -247,6 +256,21 @@ class ProductTypeResult:
     review_job_status: str | None
     ai_job_id: str | None
     ai_job_status: str | None
+    action_result: str
+
+
+@dataclass(frozen=True)
+class GateFactsResult:
+    source_item_id: str
+    revision_hash: str
+    product_type: str
+    disposition: str
+    assessment_schema_version: str
+    evaluated_profile: str
+    ai_job_id: str | None
+    ai_job_status: str | None
+    review_job_id: str | None
+    review_job_status: str | None
     action_result: str
 
 

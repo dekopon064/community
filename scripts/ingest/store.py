@@ -28,6 +28,7 @@ from ingest.models import (
     CLASSIFIER_DECISION_KEYS,
     CLASSIFIER_REVIEWER_PREFIX,
     FinishRunResult,
+    GateFactsResult,
     ObservationRecord,
     ObservationResult,
     PRODUCT_TYPE_REVIEW_STAGE,
@@ -53,6 +54,15 @@ from ingest.product_type import (
     PRODUCT_TYPE_ORIGIN_HUMAN,
     PRODUCT_TYPE_RULE_VERSION,
     PRODUCT_TYPES,
+)
+from ingest.assessment import evaluate_proposal, propose_assessment
+from ingest.evaluate_gates import CAPITAL_V1_PROFILE, evaluate_capital_v1
+from ingest.gate_facts import (
+    GATE_FACTS_SCHEMA_VERSION,
+    InvalidGateFacts,
+    is_complete_v1_facts,
+    is_legacy_facts_row,
+    parse_gate_facts,
 )
 from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import (
@@ -104,6 +114,15 @@ class IngestStore(Protocol):
         ...
 
     def upsert_source_observations(
+        self,
+        source_id: str,
+        run_id: str,
+        records: list[ObservationRecord],
+        next_checkpoint: Checkpoint | None,
+    ) -> list[ObservationResult]:
+        ...
+
+    def upsert_source_observations_v4(
         self,
         source_id: str,
         run_id: str,
@@ -186,6 +205,18 @@ class IngestStore(Protocol):
         reviewer: str,
         memo: str | None = None,
     ) -> ProductTypeResult:
+        ...
+
+    def resolve_source_item_gate_facts(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        gate_facts: dict[str, Any],
+        assessment_schema_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> GateFactsResult:
         ...
 
     def set_source_permission(
@@ -299,6 +330,10 @@ class _ProductType:
     memo: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    gate_facts: dict[str, Any] | None = None
+    assessment_schema_version: str | None = None
+    evaluated_profile: str | None = None
+    evaluated_at: datetime | None = None
 
 
 @dataclass
@@ -500,6 +535,140 @@ class MemoryIngestStore:
             self.relationships = pending_rels
             self._apply_product_type_classifications(source_id, records, results)
             self._apply_classifier_approvals(source_id, records, results)
+            run.batches_ok += 1
+            return results
+        except Exception:
+            self.items = snapshot["items"]
+            self.jobs = snapshot["jobs"]
+            self.decisions = snapshot["decisions"]
+            self.product_types = snapshot["product_types"]
+            self.relationships = snapshot["relationships"]
+            sync.committed_checkpoint = snapshot["checkpoint"]
+            sync.lease_expires_at = snapshot["lease_expires_at"]
+            run.batches_ok = snapshot["batches_ok"]
+            raise
+
+    def upsert_source_observations_v4(
+        self,
+        source_id: str,
+        run_id: str,
+        records: list[ObservationRecord],
+        next_checkpoint: Checkpoint | None,
+    ) -> list[ObservationResult]:
+        now = self._clock()
+        self._require_active_lease(source_id, run_id, now)
+        encoded = repr([record.to_rpc_item() for record in records]).encode("utf-8")
+        if len(encoded) > MAX_BATCH_BYTES * 16:
+            raise ValueError("batch_too_large")
+        source = self.sources[source_id]
+        assessed: list[ObservationRecord] = []
+        for record in records:
+            self._reject_v4_input(record)
+            proposal = propose_assessment(record, source_kind=source.source_kind)
+            evaluation = evaluate_proposal(record, proposal)
+            rel_jobs = tuple(
+                job for job in record.jobs if job.stage == "relationship_review"
+            )
+            classification = None
+            if proposal.product_type_classification is not None:
+                classification = proposal.product_type_classification.to_payload()
+            facts_payload = None
+            schema = None
+            profile = None
+            if proposal.gate_facts is not None:
+                facts_payload = proposal.gate_facts.to_payload()
+                schema = GATE_FACTS_SCHEMA_VERSION
+                profile = CAPITAL_V1_PROFILE
+            assessed.append(
+                replace(
+                    record,
+                    disposition=evaluation.disposition,  # type: ignore[arg-type]
+                    jobs=evaluation.jobs + rel_jobs,
+                    classifier_decision=None,
+                    product_type_classification=classification,
+                    gate_facts=facts_payload,
+                    assessment_schema_version=schema,
+                    evaluated_profile=profile,
+                )
+            )
+
+        sync = self.sync[source_id]
+        run = self.runs[run_id]
+        snapshot = {
+            "items": copy.deepcopy(self.items),
+            "jobs": copy.deepcopy(self.jobs),
+            "decisions": copy.deepcopy(self.decisions),
+            "product_types": copy.deepcopy(self.product_types),
+            "relationships": copy.deepcopy(self.relationships),
+            "checkpoint": copy.deepcopy(sync.committed_checkpoint),
+            "lease_expires_at": sync.lease_expires_at,
+            "batches_ok": run.batches_ok,
+        }
+        try:
+            pending_items = copy.deepcopy(self.items)
+            pending_jobs = copy.deepcopy(self.jobs)
+            pending_rels = copy.deepcopy(self.relationships)
+            results: list[ObservationResult] = []
+            seen_keys: set[str] = set()
+
+            for index, record in enumerate(assessed):
+                if not record.external_key:
+                    raise ValueError("external_key_required")
+                if contains_forbidden_attachment_key(record.to_rpc_item()):
+                    raise ValueError("forbidden_attachment_key")
+                duplicate = record.external_key in seen_keys
+                seen_keys.add(record.external_key)
+                key = (source_id, record.external_key)
+                existing = pending_items.get(key)
+                if existing is None:
+                    outcome = "new"
+                    item_id = str(uuid.uuid4())
+                    pending_items[key] = _item_from_record(
+                        item_id, source_id, record, run_id, now, now
+                    )
+                elif existing.revision_hash != record.revision_hash:
+                    outcome = "changed"
+                    item_id = existing.id
+                    pending_items[key] = _item_from_record(
+                        item_id,
+                        source_id,
+                        record,
+                        run_id,
+                        existing.first_seen_at,
+                        now,
+                    )
+                else:
+                    outcome = "unchanged"
+                    item_id = existing.id
+                    updated = existing
+                    updated.last_seen_at = now
+                    updated.last_run_id = run_id
+                    pending_items[key] = updated
+
+                if outcome in {"new", "changed"} and not duplicate:
+                    _insert_jobs(pending_jobs, item_id, record, now)
+                    _insert_relationships(
+                        pending_rels, source_id, record.external_key, record
+                    )
+
+                results.append(
+                    ObservationResult(
+                        input_index=index,
+                        external_key=record.external_key,
+                        outcome=outcome,  # type: ignore[arg-type]
+                        duplicate_in_batch=duplicate,
+                        skipped_streak=duplicate,
+                    )
+                )
+
+            sync.committed_checkpoint = (
+                next_checkpoint.to_json() if next_checkpoint is not None else None
+            )
+            sync.lease_expires_at = now + timedelta(seconds=run.lease_seconds)
+            self.items = pending_items
+            self.jobs = pending_jobs
+            self.relationships = pending_rels
+            self._apply_v4_product_types(source_id, assessed, results, now)
             run.batches_ok += 1
             return results
         except Exception:
@@ -946,6 +1115,118 @@ class MemoryIngestStore:
             self.product_types = snapshot["product_types"]
             raise
 
+    def resolve_source_item_gate_facts(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        gate_facts: dict[str, Any],
+        assessment_schema_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> GateFactsResult:
+        snapshot = {
+            "items": copy.deepcopy(self.items),
+            "jobs": copy.deepcopy(self.jobs),
+            "product_types": copy.deepcopy(self.product_types),
+        }
+        try:
+            return self._resolve_source_item_gate_facts_inner(
+                source_item_id=source_item_id,
+                revision_hash=revision_hash,
+                gate_facts=gate_facts,
+                assessment_schema_version=assessment_schema_version,
+                reviewer=reviewer,
+                memo=memo,
+            )
+        except Exception:
+            self.items = snapshot["items"]
+            self.jobs = snapshot["jobs"]
+            self.product_types = snapshot["product_types"]
+            raise
+
+    def _resolve_source_item_gate_facts_inner(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        gate_facts: dict[str, Any],
+        assessment_schema_version: str,
+        reviewer: str,
+        memo: str | None,
+    ) -> GateFactsResult:
+        now = self._clock()
+        v_hash = (revision_hash or "").strip()
+        v_reviewer = (reviewer or "").strip()
+        v_schema = (assessment_schema_version or "").strip()
+        v_memo = (memo or "").strip() or None
+        if not source_item_id:
+            raise RpcFailure("source_item_not_found")
+        if len(v_hash) != 64 or any(ch not in "0123456789abcdef" for ch in v_hash):
+            raise RpcFailure("revision_mismatch")
+        if not (1 <= len(v_reviewer) <= 128):
+            raise RpcFailure("invalid_reviewer")
+        if v_memo is not None and len(v_memo) > 500:
+            raise RpcFailure("invalid_memo")
+        if v_schema != GATE_FACTS_SCHEMA_VERSION:
+            raise RpcFailure("invalid_assessment_schema_version")
+        item = self._item_by_id(source_item_id)
+        if item.revision_hash != v_hash:
+            raise RpcFailure("revision_mismatch")
+        row = self._product_type_row(item.id, v_hash)
+        if row is None:
+            raise RpcFailure("product_type_not_confirmed")
+        try:
+            parsed_facts = parse_gate_facts(row.product_type, gate_facts)
+        except InvalidGateFacts as exc:
+            raise RpcFailure(exc.code) from None
+        ai_job = self._job_for(item.id, v_hash, AI_STAGE)
+        if ai_job is not None and self._is_live_claimed(ai_job, now):
+            raise RpcFailure("ai_job_claimed")
+        row.gate_facts = parsed_facts.to_payload()
+        row.assessment_schema_version = GATE_FACTS_SCHEMA_VERSION
+        row.evaluated_profile = CAPITAL_V1_PROFILE
+        row.evaluated_at = now
+        row.reviewer = v_reviewer
+        row.memo = v_memo
+        row.updated_at = now
+        authority = evaluate_capital_v1(
+            body_usable=item.body_usable,
+            has_source_url=item.has_source_url,
+            attachment_present=item.attachment_present,
+            product_type=row.product_type,
+            product_type_reasons=row.reason_codes,
+            facts=row.gate_facts,
+        )
+        item.disposition = authority.disposition
+        self._sync_v1_jobs_from_evaluation(item, authority, now)
+        self._ensure_queued_ai_job_v1(
+            item,
+            v_hash,
+            now,
+            authority.jobs[0].reason_codes if authority.jobs else (),
+        )
+        review_job = None
+        for stage in ("region_review", RELEVANCE_REVIEW_STAGE, PRODUCT_TYPE_REVIEW_STAGE):
+            found = self._job_for(item.id, v_hash, stage)
+            if found is not None and found.status in {"queued", "claimed"}:
+                review_job = found
+                break
+        ai_job = self._job_for(item.id, v_hash, AI_STAGE)
+        return GateFactsResult(
+            source_item_id=item.id,
+            revision_hash=v_hash,
+            product_type=row.product_type,
+            disposition=item.disposition,
+            assessment_schema_version=GATE_FACTS_SCHEMA_VERSION,
+            evaluated_profile=CAPITAL_V1_PROFILE,
+            ai_job_id=None if ai_job is None else ai_job.id,
+            ai_job_status=None if ai_job is None else ai_job.status,
+            review_job_id=None if review_job is None else review_job.id,
+            review_job_status=None if review_job is None else review_job.status,
+            action_result="confirmed",
+        )
+
     def publish_candidate(
         self,
         *,
@@ -1161,17 +1442,73 @@ class MemoryIngestStore:
             return None
         if item.revision_hash != job.revision_hash:
             return None
+        if self._legacy_ai_ready(item, job.revision_hash):
+            return item
+        if self._v1_ai_ready(item, job.revision_hash):
+            return item
+        return None
+
+    def _product_type_row(self, item_id: str, revision_hash: str) -> _ProductType | None:
+        return self.product_types.get((item_id, revision_hash))
+
+    def _is_legacy_product_type_row(self, row: _ProductType) -> bool:
+        return is_legacy_facts_row(
+            gate_facts=row.gate_facts,
+            assessment_schema_version=row.assessment_schema_version,
+            evaluated_profile=row.evaluated_profile,
+            evaluated_at=row.evaluated_at,
+        )
+
+    def _is_v1_complete_product_type_row(self, row: _ProductType) -> bool:
+        return is_complete_v1_facts(
+            product_type=row.product_type,
+            gate_facts=row.gate_facts,
+            assessment_schema_version=row.assessment_schema_version,
+            evaluated_profile=row.evaluated_profile,
+            evaluated_at=row.evaluated_at,
+            expected_profile=CAPITAL_V1_PROFILE,
+        )
+
+    def _legacy_ai_ready(self, item: _Item, revision_hash: str) -> bool:
         if item.disposition != "target":
-            return None
+            return False
+        if item.revision_hash != revision_hash:
+            return False
         if not item.body_usable or not item.has_source_url:
-            return None
-        if not self._has_approve_ai(job.source_item_id, job.revision_hash):
-            return None
-        if not self._has_confirmed_product_type(job.source_item_id, job.revision_hash):
-            return None
-        if self._has_unresolved_blocking_review(job.source_item_id, job.revision_hash):
-            return None
-        return item
+            return False
+        row = self._product_type_row(item.id, revision_hash)
+        if row is None or not self._is_legacy_product_type_row(row):
+            return False
+        if not self._has_approve_ai(item.id, revision_hash):
+            return False
+        if self._has_unresolved_blocking_review(item.id, revision_hash):
+            return False
+        return True
+
+    def _v1_ai_ready(self, item: _Item, revision_hash: str) -> bool:
+        if item.disposition != "target":
+            return False
+        if item.revision_hash != revision_hash:
+            return False
+        if not item.body_usable or not item.has_source_url:
+            return False
+        row = self._product_type_row(item.id, revision_hash)
+        if row is None or not self._is_v1_complete_product_type_row(row):
+            return False
+        if self._has_unresolved_blocking_review(item.id, revision_hash):
+            return False
+        try:
+            evaluation = evaluate_capital_v1(
+                body_usable=item.body_usable,
+                has_source_url=item.has_source_url,
+                attachment_present=item.attachment_present,
+                product_type=row.product_type,
+                product_type_reasons=row.reason_codes,
+                facts=row.gate_facts,
+            )
+        except InvalidGateFacts:
+            return False
+        return evaluation.disposition == "target"
 
     def _has_review_decision(
         self, item_id: str, revision_hash: str, review_type: str, decision: str
@@ -1211,21 +1548,12 @@ class MemoryIngestStore:
         return True
 
     def _can_ensure_ai_job(self, item: _Item, revision_hash: str) -> bool:
-        if item.disposition != "target":
-            return False
-        if item.revision_hash != revision_hash:
-            return False
-        if not item.body_usable or not item.has_source_url:
-            return False
         if self._has_reject_decision(item.id, revision_hash):
             return False
-        if not self._has_approve_ai(item.id, revision_hash):
-            return False
-        if not self._has_confirmed_product_type(item.id, revision_hash):
-            return False
-        if self._has_unresolved_blocking_review(item.id, revision_hash):
-            return False
-        return True
+        return self._legacy_ai_ready(item, revision_hash)
+
+    def _can_ensure_ai_job_v1(self, item: _Item, revision_hash: str) -> bool:
+        return self._v1_ai_ready(item, revision_hash)
 
     def _requeue_ai_job(
         self, job: _Job, now: datetime, reasons: tuple[str, ...]
@@ -1251,6 +1579,33 @@ class MemoryIngestStore:
                 raise RpcFailure("ai_job_malformed_lease")
             return
         if not self._can_ensure_ai_job(item, revision_hash):
+            return
+        if job is None:
+            self._insert_job(item.id, revision_hash, AI_STAGE, now, reasons)
+            return
+        if job.status == "cancelled":
+            self._requeue_ai_job(job, now, reasons)
+            return
+        if self._is_lease_expired_claimed(job, now):
+            self._requeue_ai_job(job, now, reasons)
+
+    def _ensure_queued_ai_job_v1(
+        self,
+        item: _Item,
+        revision_hash: str,
+        now: datetime,
+        reasons: tuple[str, ...],
+    ) -> None:
+        job = self._job_for(item.id, revision_hash, AI_STAGE)
+        if job is not None and self._is_malformed_claimed(job):
+            if self._can_ensure_ai_job_v1(item, revision_hash):
+                raise RpcFailure("ai_job_malformed_lease")
+            return
+        if not self._can_ensure_ai_job_v1(item, revision_hash):
+            if job is not None and (
+                job.status == "queued" or self._is_lease_expired_claimed(job, now)
+            ):
+                self._cancel_ai_job(job, reasons or ("v1_not_ai_ready",))
             return
         if job is None:
             self._insert_job(item.id, revision_hash, AI_STAGE, now, reasons)
@@ -1373,6 +1728,20 @@ class MemoryIngestStore:
             return
         if meta is not None:
             self._parsed_product_type_classification(meta)
+
+    def _reject_v4_input(self, record: ObservationRecord) -> None:
+        if any(job.stage == AI_STAGE for job in record.jobs):
+            raise RpcFailure("ai_job_not_allowed_in_upsert")
+        if any(job.stage == PRODUCT_TYPE_REVIEW_STAGE for job in record.jobs):
+            raise RpcFailure("product_type_review_not_allowed_in_upsert")
+        if record.classifier_decision is not None:
+            raise RpcFailure("classifier_metadata_forbidden")
+        allowed_jobs = {"relationship_review"}
+        extra_jobs = [job.stage for job in record.jobs if job.stage not in allowed_jobs]
+        if extra_jobs:
+            raise RpcFailure("invalid_classifier_decision")
+        if record.product_type_classification is not None:
+            self._parsed_product_type_classification(record.product_type_classification)
 
     def _parsed_product_type_classification(self, raw: object) -> dict[str, Any]:
         if not isinstance(raw, dict):
@@ -1561,6 +1930,10 @@ class MemoryIngestStore:
         reviewer: str,
         memo: str | None,
         now: datetime,
+        gate_facts: dict[str, Any] | None = None,
+        assessment_schema_version: str | None = None,
+        evaluated_profile: str | None = None,
+        evaluated_at: datetime | None = None,
     ) -> _ProductType:
         row = _ProductType(
             source_item_id=item.id,
@@ -1574,9 +1947,104 @@ class MemoryIngestStore:
             memo=memo,
             created_at=now,
             updated_at=now,
+            gate_facts=None if gate_facts is None else dict(gate_facts),
+            assessment_schema_version=assessment_schema_version,
+            evaluated_profile=evaluated_profile,
+            evaluated_at=evaluated_at,
         )
         self.product_types[(item.id, item.revision_hash)] = row
         return row
+
+    def _apply_v4_product_types(
+        self,
+        source_id: str,
+        records: list[ObservationRecord],
+        results: list[ObservationResult],
+        now: datetime,
+    ) -> None:
+        for record, result in zip(records, results):
+            if result.duplicate_in_batch:
+                continue
+            if result.outcome not in {"new", "changed"}:
+                continue
+            item = self.items[(source_id, record.external_key)]
+            if item.revision_hash != record.revision_hash:
+                raise RpcFailure("revision_mismatch")
+            key = (item.id, item.revision_hash)
+            if key in self.product_types:
+                self._ensure_queued_ai_job_v1(item, item.revision_hash, now, ())
+                continue
+            if record.product_type_classification is None:
+                self._ensure_queued_ai_job_v1(item, item.revision_hash, now, ())
+                continue
+            parsed = self._parsed_product_type_classification(
+                record.product_type_classification
+            )
+            if parsed["kind"] == PRODUCT_TYPE_KIND_REVIEW:
+                self._ensure_queued_ai_job_v1(item, item.revision_hash, now, ())
+                continue
+            if record.gate_facts is None:
+                raise RpcFailure("invalid_gate_facts")
+            try:
+                facts = parse_gate_facts(parsed["product_type"], record.gate_facts)
+            except InvalidGateFacts as exc:
+                raise RpcFailure(exc.code) from None
+            self._insert_product_type(
+                item,
+                parsed,
+                origin=PRODUCT_TYPE_ORIGIN_CLASSIFIER,
+                reviewer=f"{CLASSIFIER_REVIEWER_PREFIX}{parsed['rule_version']}",
+                memo=None,
+                now=now,
+                gate_facts=facts.to_payload(),
+                assessment_schema_version=GATE_FACTS_SCHEMA_VERSION,
+                evaluated_profile=CAPITAL_V1_PROFILE,
+                evaluated_at=now,
+            )
+            persisted = self.product_types[key]
+            authority = evaluate_capital_v1(
+                body_usable=item.body_usable,
+                has_source_url=item.has_source_url,
+                attachment_present=item.attachment_present,
+                product_type=persisted.product_type,
+                product_type_reasons=persisted.reason_codes,
+                facts=persisted.gate_facts,
+            )
+            item.disposition = authority.disposition
+            self._sync_v1_jobs_from_evaluation(item, authority, now)
+            self._ensure_queued_ai_job_v1(
+                item, item.revision_hash, now, authority.jobs[0].reason_codes if authority.jobs else ()
+            )
+
+    def _sync_v1_jobs_from_evaluation(
+        self, item: _Item, evaluation: Any, now: datetime
+    ) -> None:
+        wanted = {job.stage: job.reason_codes for job in evaluation.jobs}
+        for stage in (
+            "region_review",
+            RELEVANCE_REVIEW_STAGE,
+            PRODUCT_TYPE_REVIEW_STAGE,
+            "content_review",
+        ):
+            job = self._job_for(item.id, item.revision_hash, stage)
+            if stage in wanted:
+                if job is None:
+                    self._insert_job(
+                        item.id, item.revision_hash, stage, now, wanted[stage]
+                    )
+                elif job.status not in {"queued", "claimed"}:
+                    job.status = "queued"
+                    job.available_at = now
+                    job.claimed_by = None
+                    job.claim_lease_until = None
+                    job.completed_at = None
+                    job.next_retry_at = None
+                    job.reason_codes = wanted[stage]
+            elif job is not None and job.status in {"queued", "claimed"}:
+                job.status = "completed"
+                job.completed_at = now
+                job.claimed_by = None
+                job.claim_lease_until = None
 
     def _ensure_product_type_review_job(
         self,

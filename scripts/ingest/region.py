@@ -261,3 +261,47 @@ def classify_policy_disposition(policy: dict[str, Any]) -> Disposition:
     if scope == "noncapital":
         return "non_target"
     return "region_review_required"
+
+
+def _normalize_common_region_codes(raw: object) -> tuple[str, ...]:
+    """5-digit zip tokens → 2-digit common codes. Do not infer from place names."""
+    tokens = _five_digit_tokens(raw)
+    if tokens:
+        seen: list[str] = []
+        for token in tokens:
+            prefix = token[:2]
+            if prefix not in seen:
+                seen.append(prefix)
+        return tuple(seen)
+    text = str(raw or "").strip()
+    if not text:
+        return ()
+    seen: list[str] = []
+    for part in re.split(r"[,\s|/]+", text):
+        piece = part.strip()
+        if len(piece) == 2 and piece.isdigit() and piece not in seen:
+            seen.append(piece)
+    return tuple(seen)
+
+
+def extract_eligibility_facts(
+    *,
+    zip_cd: object,
+    text: str,
+    extra_region_raw: object = None,
+) -> tuple[str, tuple[str, ...], str]:
+    """V1 eligibility scope/codes/evidence. Place text is never eligibility."""
+    body = re.sub(r"\s+", " ", text or "")
+    nationwide = _has_phrase(body, _NATIONWIDE_PHRASES)
+    codes = _normalize_common_region_codes(zip_cd)
+    evidence = str(zip_cd or "").strip()[:200]
+    if not codes and extra_region_raw is not None:
+        extra_codes = _normalize_common_region_codes(extra_region_raw)
+        if extra_codes:
+            codes = extra_codes
+            evidence = str(extra_region_raw or "").strip()[:200]
+    if codes:
+        return "specific", codes, evidence
+    if nationwide:
+        return "nationwide", (), evidence
+    return "unknown", (), evidence

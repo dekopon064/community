@@ -61,6 +61,11 @@ SAFE_RPC_MESSAGES = frozenset(
         "product_type_review_not_allowed_in_upsert",
         "ai_job_malformed_lease",
         "invalid_period_signals",
+        "invalid_gate_facts",
+        "gate_facts_incomplete",
+        "invalid_assessment_schema_version",
+        "product_type_not_confirmed",
+        "invalid_evaluated_profile",
     }
 )
 

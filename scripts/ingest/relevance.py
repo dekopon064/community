@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from ingest.models import (
     APPROVE_REGION_SCOPES,
@@ -220,6 +220,51 @@ def classify_content_relevance(title: str, body: str) -> RelevanceResult:
     if not confirmed:
         reasons.append(REASON_RELEVANCE_UNCONFIRMED)
     return RelevanceResult(confirmed_axes=confirmed, reason_codes=tuple(reasons))
+
+
+ForeignResidentEligibility = Literal["eligible", "ineligible", "unknown"]
+
+_RESIDENT_AMBIGUOUS = (
+    "모든 주민",
+    "지역 주민",
+    "거주 주민",
+    "해당 지역 주민",
+)
+
+_CO_ELIGIBLE = (
+    re.compile(
+        r"(국민|내국인).{0,16}외국인.{0,24}(모두|함께)?.{0,12}(참여|신청|이용)\s*가능"
+    ),
+    re.compile(
+        r"외국인.{0,16}(국민|내국인).{0,24}(모두|함께)?.{0,12}(참여|신청|이용)\s*가능"
+    ),
+    re.compile(r"(국민|내국인).{0,8}(과|및|와)\s*외국인.{0,16}(참여|신청|이용)\s*가능"),
+)
+
+
+def _has_co_eligible_listing(text: str) -> bool:
+    body = text or ""
+    return any(pattern.search(body) for pattern in _CO_ELIGIBLE)
+
+
+def classify_foreign_resident_eligibility(text: str) -> ForeignResidentEligibility:
+    """V1 policy audience fact. kr_* axes are not gates."""
+    body = text or ""
+    if _has_co_eligible_listing(body):
+        return "eligible"
+    explicit_eligible = _positive_without_negation(
+        body, _JP_RESIDENT_POS + _FOREIGN_RESIDENT_POS, _NATIONALITY_LOCK
+    )
+    exclusive = _has_national_exclusive_limit(body) or any(
+        phrase in body for phrase in _NATIONALITY_LOCK
+    )
+    if exclusive:
+        return "ineligible"
+    if explicit_eligible:
+        return "eligible"
+    if any(phrase in body for phrase in _RESIDENT_AMBIGUOUS):
+        return "unknown"
+    return "unknown"
 
 
 def region_allows_mvp(scope: RegionScope) -> bool:

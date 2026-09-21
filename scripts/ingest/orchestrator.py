@@ -237,7 +237,7 @@ def run_connector(
 
             if not batch.items:
                 try:
-                    store.upsert_source_observations(
+                    store.upsert_source_observations_v4(
                         source_id, run_id, [], batch.next_checkpoint
                     )
                 except LeaseLost:
@@ -251,7 +251,7 @@ def run_connector(
                 break
 
             try:
-                results = store.upsert_source_observations(
+                results = store.upsert_source_observations_v4(
                     source_id, run_id, records, batch.next_checkpoint
                 )
             except LeaseLost:

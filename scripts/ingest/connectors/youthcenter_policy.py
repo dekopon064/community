@@ -25,11 +25,6 @@ from ingest.models import (
     ObservationRecord,
     OrderingCapability,
 )
-from ingest.product_type import (
-    classify_policy_product_type,
-    product_type_classification_payload,
-)
-from ingest.relevance import classifier_decision_metadata, screen_policy
 from ingest.sanitize import html_to_plain_text, is_http_url
 from ingest.source_identity import (
     CANONICAL_POLICY_SOURCE,
@@ -86,6 +81,7 @@ NORMALIZED_KEYS = MIN_FIELD_KEYS + (
     "mclsfNm",
     "polyBizSecd",
     "rgLcnCd",
+    "activity_location_text",
 )
 
 REVISION_HASH_FIELDS = (
@@ -218,31 +214,19 @@ class YouthcenterPolicyConnector(BatchConnector):
         source_url = select_policy_source_url(cleaned)
         created = parse_source_datetime(cleaned.get("frstRegDt"))
         updated = parse_source_datetime(cleaned.get("lastMdfcnDt"))
-        title = html_to_plain_text(cleaned.get("plcyNm"))
         body = html_to_plain_text(
             f"{cleaned.get('plcyExplnCn') or ''}\n\n{cleaned.get('plcySprtCn') or ''}"
         )
-        screening = screen_policy(
-            cleaned,
-            f"{title}\n{body}",
-            body_usable=bool(body),
+        normalized = _copy_keys(cleaned, NORMALIZED_KEYS)
+        normalized["source_url"] = source_url
+        normalized["plain_text"] = body
+        normalized["activity_location_text"] = (
+            html_to_plain_text(cleaned.get("activity_location_text") or "") or None
         )
-        disposition = screening.disposition
-        normalized = None
-        if disposition != "non_target":
-            normalized = _copy_keys(cleaned, NORMALIZED_KEYS)
-            normalized["source_url"] = source_url
-            normalized["plain_text"] = body
-        jobs = policy_job_plan(disposition, reason_codes=screening.reason_codes)
-        product_type_classification = None
-        if disposition == "target":
-            product_type_classification = product_type_classification_payload(
-                classify_policy_product_type(f"{title}\n{body}")
-            )
         return ObservationRecord(
             external_key=external_key,
             revision_hash=policy_revision_hash(cleaned, source_url),
-            disposition=disposition,  # type: ignore[arg-type]
+            disposition="observe_only",
             min_fields=_copy_keys(cleaned, MIN_FIELD_KEYS),
             normalized_payload=normalized,
             source_created_at=created.value,
@@ -256,9 +240,9 @@ class YouthcenterPolicyConnector(BatchConnector):
             attachment_present=attachment.present,
             attachment_length=attachment.length,
             is_data_url=attachment.is_data_url,
-            jobs=jobs,
-            classifier_decision=classifier_decision_metadata(screening),
-            product_type_classification=product_type_classification,
+            jobs=(),
+            classifier_decision=None,
+            product_type_classification=None,
         )
 
     def _api_key(self) -> str:

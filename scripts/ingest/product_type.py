@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 PRODUCT_TYPE_EVENT_PROGRAM = "event_program"
 PRODUCT_TYPE_POLICY_REFERENCE = "policy_reference"
+PRODUCT_TYPE_LIVING_GUIDE = "living_guide"
 PRODUCT_TYPE_REVIEW_STAGE = "product_type_review"
 PRODUCT_TYPE_RULE_VERSION = "product-type-v1"
 PRODUCT_TYPE_KIND_CONFIRMED = "confirmed"
@@ -24,6 +25,14 @@ REASON_POLICY_CONFLICT = "policy_lifecycle_conflict"
 REASON_END_DATE_ABSENT = "end_date_absent_not_reference"
 
 PRODUCT_TYPES: frozenset[str] = frozenset(
+    {
+        PRODUCT_TYPE_EVENT_PROGRAM,
+        PRODUCT_TYPE_POLICY_REFERENCE,
+        PRODUCT_TYPE_LIVING_GUIDE,
+    }
+)
+# V1 classifier may confirm event/policy only. living_guide is stored, never auto-proposed.
+PROPOSED_PRODUCT_TYPES: frozenset[str] = frozenset(
     {PRODUCT_TYPE_EVENT_PROGRAM, PRODUCT_TYPE_POLICY_REFERENCE}
 )
 PRODUCT_TYPE_ORIGINS: frozenset[str] = frozenset(
@@ -105,12 +114,18 @@ def _matched_signals(text: str, signals: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def classify_content_product_type() -> ProductTypeClassification:
+    """v3 content lock helper. V1 assessment does not call this."""
     return ProductTypeClassification(
         kind=PRODUCT_TYPE_KIND_CONFIRMED,
         product_type=PRODUCT_TYPE_EVENT_PROGRAM,
         reason_codes=(REASON_CONTENT_FIXED,),
         period_signals=(),
     )
+
+
+def propose_product_type(text: str) -> ProductTypeClassification:
+    """V1 product type proposal. living_guide is never auto-confirmed."""
+    return classify_policy_product_type(text)
 
 
 def classify_policy_product_type(text: str) -> ProductTypeClassification:

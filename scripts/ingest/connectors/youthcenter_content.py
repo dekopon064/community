@@ -26,11 +26,6 @@ from ingest.models import (
     OrderingCapability,
     RelationshipPlan,
 )
-from ingest.product_type import (
-    classify_content_product_type,
-    product_type_classification_payload,
-)
-from ingest.relevance import classifier_decision_metadata, screen_content
 from ingest.sanitize import body_is_usable, extract_http_urls, html_to_plain_text, is_http_url
 from ingest.source_identity import (
     CANONICAL_CONTENT_SOURCE,
@@ -39,7 +34,6 @@ from ingest.source_identity import (
     CONTENT_CURATION_SOURCE,
     PROVIDER_YOUTHCENTER,
     SOURCE_KIND_CONTENT,
-    allows_internal_processing,
 )
 
 CONTENT_LIST_URL = "https://www.youthcenter.go.kr/go/ythip/getContent"
@@ -255,26 +249,15 @@ class YouthcenterContentConnector(BatchConnector):
         title = html_to_plain_text(cleaned.get("pstTtl"))
         source_url = select_content_source_url(cleaned, plain, hrefs)
         usable = body_is_usable(plain)
-        permission_ok = allows_internal_processing(permission_status, enabled=enabled)
-        screening = screen_content(title, plain, body_usable=usable)
-        disposition, jobs = content_job_and_flags(
-            body_usable=usable,
-            has_source_url=source_url is not None,
-            attachment_present=attachment.present,
-            permission_ok=permission_ok,
-            region_scope=screening.region_scope,
-            relevance_confirmed=screening.relevance.confirmed,
-            screening_reasons=screening.reason_codes,
+        del permission_status, enabled
+        relationships = policy_relationship_candidates(
+            title=title,
+            plain_text=plain,
+            known_policies=self.known_policies,
         )
-        relationships = ()
-        if disposition != "non_target":
-            relationships = policy_relationship_candidates(
-                title=title,
-                plain_text=plain,
-                known_policies=self.known_policies,
-            )
+        jobs: tuple[JobPlan, ...] = ()
         if relationships:
-            jobs = jobs + (
+            jobs = (
                 JobPlan(stage="relationship_review", reason_codes=("policy_link_candidate",)),
             )
         created = parse_source_datetime(
@@ -291,13 +274,17 @@ class YouthcenterContentConnector(BatchConnector):
             "pstTtl": title,
             "plain_text": plain,
             "source_url": source_url,
+            "activity_location_text": html_to_plain_text(
+                cleaned.get("activity_location_text") or ""
+            )
+            or None,
         }
         return ObservationRecord(
             external_key=content_external_key(cleaned),
             revision_hash=content_revision_hash(
                 cleaned, plain_text=plain, source_url=source_url
             ),
-            disposition=disposition,  # type: ignore[arg-type]
+            disposition="observe_only",
             min_fields={
                 "bbsSn": cleaned.get("bbsSn"),
                 "pstSn": cleaned.get("pstSn"),
@@ -317,16 +304,8 @@ class YouthcenterContentConnector(BatchConnector):
             is_data_url=attachment.is_data_url,
             jobs=jobs,
             relationships=relationships,
-            classifier_decision=(
-                classifier_decision_metadata(screening)
-                if disposition == "target"
-                else None
-            ),
-            product_type_classification=(
-                product_type_classification_payload(classify_content_product_type())
-                if disposition == "target"
-                else None
-            ),
+            classifier_decision=None,
+            product_type_classification=None,
         )
 
     def _api_key(self) -> str:

@@ -21,7 +21,7 @@ from ingest.product_type import (
 from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
 from ingest.store import MemoryIngestStore
-from test_ingest import Clock, load_content, observation_for, policy_item
+from test_ingest import Clock, load_content, observation_for, policy_item, v3_content_observation
 from test_ingest_review_decision import (
     _approve,
     _clear_fit,
@@ -121,17 +121,13 @@ class ProductTypeValueAndClassifierTests(unittest.TestCase):
     def test_content_target_upsert_inserts_event_program(self) -> None:
         store = MemoryIngestStore()
         started = store.start_ingest_run(CANONICAL_CONTENT_SOURCE)
-        from ingest.connectors.youthcenter_content import YouthcenterContentConnector
-
         raw = load_content()
         raw["pstTtl"] = "서울 한일 교류 설명회"
         raw["pstWholCn"] = (
             "<p>서울에서 열리는 한일 교류 설명회입니다. "
             "한국 거주 일본인은 참석 가능합니다.</p>"
         )
-        record = YouthcenterContentConnector(
-            api_key_provider=lambda: "unused"
-        ).to_observation(raw, permission_status="testing_only", enabled=True)
+        record = v3_content_observation(raw)
         self.assertEqual(record.disposition, "target")
         self.assertEqual(
             record.product_type_classification["product_type"],
@@ -283,17 +279,13 @@ class ProductTypeWriterAndHumanMatrixTests(unittest.TestCase):
     def test_content_lock_before_noop(self) -> None:
         store = MemoryIngestStore()
         started = store.start_ingest_run(CANONICAL_CONTENT_SOURCE)
-        from ingest.connectors.youthcenter_content import YouthcenterContentConnector
-
         raw = load_content()
         raw["pstTtl"] = "서울 한일 교류 설명회"
         raw["pstWholCn"] = (
             "<p>서울에서 열리는 한일 교류 설명회입니다. "
             "한국 거주 일본인은 참석 가능합니다.</p>"
         )
-        record = YouthcenterContentConnector(
-            api_key_provider=lambda: "unused"
-        ).to_observation(raw, permission_status="testing_only", enabled=True)
+        record = v3_content_observation(raw)
         store.upsert_source_observations(
             CANONICAL_CONTENT_SOURCE, started.run_id, [record], None
         )

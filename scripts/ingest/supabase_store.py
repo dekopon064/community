@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import replace
 from typing import Any
 
+from ingest.assessment import propose_assessment, proposal_payload
 from ingest.constants import (
     AI_CLAIM_LIMIT,
     DEFAULT_JOB_LEASE_SECONDS,
     DEFAULT_LEASE_SECONDS,
 )
+from ingest.evaluate_gates import CAPITAL_V1_PROFILE
+from ingest.gate_facts import GATE_FACTS_SCHEMA_VERSION
 from ingest.models import (
     AI_STAGE,
     Checkpoint,
     ClaimedJob,
     FinishRunResult,
+    GateFactsResult,
     ObservationRecord,
     ObservationResult,
     ProcessingStage,
@@ -95,11 +100,25 @@ PRODUCT_TYPE_RESULT_FIELDS = (
     "ai_job_status",
     "action_result",
 )
+GATE_FACTS_RESULT_FIELDS = (
+    "source_item_id",
+    "revision_hash",
+    "product_type",
+    "disposition",
+    "assessment_schema_version",
+    "evaluated_profile",
+    "ai_job_id",
+    "ai_job_status",
+    "review_job_id",
+    "review_job_status",
+    "action_result",
+)
 RECONCILE_FIELDS = ("action_result",) + REVIEW_DECISION_FIELDS
 
 GET_INGEST_SOURCE = "get_ingest_source"
 START_INGEST_RUN = "start_ingest_run"
 UPSERT_SOURCE_OBSERVATIONS = "upsert_source_observations_v3"
+UPSERT_SOURCE_OBSERVATIONS_V4 = "upsert_source_observations_v4"
 FINISH_INGEST_RUN = "finish_ingest_run"
 CLAIM_PROCESSING_JOBS = "claim_processing_jobs"
 COMPLETE_PROCESSING_JOB = "complete_processing_job"
@@ -107,6 +126,25 @@ FAIL_PROCESSING_JOB = "fail_processing_job"
 RESOLVE_INGEST_REVIEW_DECISION = "resolve_ingest_review_decision"
 RECONCILE_QUEUED_AI_JOB = "reconcile_queued_ai_job"
 RESOLVE_SOURCE_ITEM_PRODUCT_TYPE = "resolve_source_item_product_type"
+RESOLVE_SOURCE_ITEM_GATE_FACTS = "resolve_source_item_gate_facts"
+
+
+def _v4_proposal_record(record: ObservationRecord) -> ObservationRecord:
+    proposal = propose_assessment(record)
+    facts_payload = None if proposal.gate_facts is None else proposal.gate_facts.to_payload()
+    schema = None
+    profile = None
+    if facts_payload is not None:
+        schema = GATE_FACTS_SCHEMA_VERSION
+        profile = CAPITAL_V1_PROFILE
+    return replace(
+        record,
+        classifier_decision=None,
+        product_type_classification=proposal_payload(proposal),
+        gate_facts=facts_payload,
+        assessment_schema_version=schema,
+        evaluated_profile=profile,
+    )
 
 
 def ingest_client_options(client_options_cls: Any) -> Any:
@@ -369,6 +407,54 @@ class SupabaseIngestStore:
             )
         return results
 
+    def upsert_source_observations_v4(
+        self,
+        source_id: str,
+        run_id: str,
+        records: list[ObservationRecord],
+        next_checkpoint: Checkpoint | None,
+    ) -> list[ObservationResult]:
+        proposed = [_v4_proposal_record(record) for record in records]
+        data = _rpc_data(
+            self._client,
+            UPSERT_SOURCE_OBSERVATIONS_V4,
+            {
+                "p_source_id": source_id,
+                "p_run_id": run_id,
+                "p_items": [record.to_rpc_item() for record in proposed],
+                "p_next_checkpoint": None
+                if next_checkpoint is None
+                else next_checkpoint.to_json(),
+            },
+        )
+        rows = _require_list(data)
+        if len(rows) != len(records):
+            raise RpcAmbiguous()
+        results: list[ObservationResult] = []
+        for index, (record, row) in enumerate(zip(records, rows)):
+            if type(row) is not dict:
+                raise RpcAmbiguous()
+            _require_keys(row, UPSERT_FIELDS)
+            if _exact_int(row["input_index"]) != index:
+                raise RpcAmbiguous()
+            external_key = _exact_str(row["external_key"])
+            if external_key != record.external_key:
+                raise RpcAmbiguous()
+            outcome = row["outcome"]
+            if type(outcome) is not str or outcome not in ALLOWED_OUTCOMES:
+                raise RpcAmbiguous()
+            duplicate = _exact_bool(row["duplicate_in_batch"])
+            results.append(
+                ObservationResult(
+                    input_index=index,
+                    external_key=external_key,
+                    outcome=outcome,
+                    duplicate_in_batch=duplicate,
+                    skipped_streak=duplicate,
+                )
+            )
+        return results
+
     def finish_ingest_run(
         self,
         run_id: str,
@@ -576,6 +662,44 @@ class SupabaseIngestStore:
             ai_job_id=_optional_uuid(row["ai_job_id"]),
             ai_job_status=_optional_str(row["ai_job_status"]),
             action_result=action_result,
+        )
+
+    def resolve_source_item_gate_facts(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        gate_facts: dict[str, Any],
+        assessment_schema_version: str,
+        reviewer: str,
+        memo: str | None = None,
+    ) -> GateFactsResult:
+        data = _rpc_data(
+            self._client,
+            RESOLVE_SOURCE_ITEM_GATE_FACTS,
+            {
+                "p_source_item_id": source_item_id,
+                "p_revision_hash": revision_hash,
+                "p_gate_facts": dict(gate_facts),
+                "p_assessment_schema_version": assessment_schema_version,
+                "p_reviewer": reviewer,
+                "p_memo": memo,
+            },
+        )
+        row = _one_row(data)
+        _require_keys(row, GATE_FACTS_RESULT_FIELDS)
+        return GateFactsResult(
+            source_item_id=_uuid_str(row["source_item_id"]),
+            revision_hash=_revision_hash(row["revision_hash"]),
+            product_type=_nonempty_str(row["product_type"]),
+            disposition=_nonempty_str(row["disposition"]),
+            assessment_schema_version=_nonempty_str(row["assessment_schema_version"]),
+            evaluated_profile=_nonempty_str(row["evaluated_profile"]),
+            ai_job_id=_optional_uuid(row["ai_job_id"]),
+            ai_job_status=_optional_str(row["ai_job_status"]),
+            review_job_id=_optional_uuid(row["review_job_id"]),
+            review_job_status=_optional_str(row["review_job_status"]),
+            action_result=_nonempty_str(row["action_result"]),
         )
 
     def set_source_permission(

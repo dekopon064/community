@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import unittest
 
 from ingest.constants import AI_MAX_ATTEMPTS, LEASE_SECONDS_MAX, LEASE_SECONDS_MIN
+from ingest.evaluate_gates import (
+    CAPITAL_V1_PROFILE,
+    CAPITAL_V1_REGION_CODES,
+    EVALUATOR_CONTRACT_ID,
+    REASON_ATTACHMENT_DEPENDENT,
+    REASON_MISSING_SOURCE_URL,
+    REASON_REGION_SCOPE_UNKNOWN,
+    REASON_RELEVANCE_UNCONFIRMED,
+)
+from ingest.gate_facts import FORBIDDEN_FACT_KEYS, GATE_FACTS_SCHEMA_VERSION
 from ingest.source_identity import ALLOWED_PERMISSION_TRANSITIONS
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -473,6 +484,13 @@ def _latest_fn(schema: str, name: str) -> str:
     following = [match for match in matches if match.start() > start]
     end = following[0].start() if following else len(combined)
     return combined[start:end]
+
+
+def _function_body(sql: str) -> str:
+    parts = sql.split("$function$")
+    if len(parts) < 2:
+        raise AssertionError("missing function body")
+    return parts[1]
 
 _WS = re.compile(r"\s+")
 _PRIVATE_GRANT_RE = re.compile(
@@ -1131,6 +1149,265 @@ class ProductTypeSqlContractTests(unittest.TestCase):
         self.assertNotIn("phase 3", self.pt.lower())
         self.assertIn("notify pgrst, 'reload schema'", self.rpc.lower())
         self.assertIn("notify pgrst, 'reload schema'", self.rpc_down.lower())
+
+
+GF = ROOT / "supabase" / "migrations" / "20260921000000_ingest_gate_facts.sql"
+GF_RPC = ROOT / "supabase" / "migrations" / "20260921000001_ingest_gate_facts_rpc_adapters.sql"
+GF_DOWN = ROOT / "supabase" / "rollback" / "20260921000000_ingest_gate_facts_down.sql"
+GF_RPC_DOWN = ROOT / "supabase" / "rollback" / "20260921000001_ingest_gate_facts_rpc_adapters_down.sql"
+EVALUATOR_FIXTURE = (
+    ROOT / "scripts" / "ingest" / "fixtures" / "capital_v1_evaluator.json"
+)
+
+
+class GateFactsSqlContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.gf = GF.read_text(encoding="utf-8")
+        self.rpc = GF_RPC.read_text(encoding="utf-8")
+        self.down = GF_DOWN.read_text(encoding="utf-8")
+        self.rpc_down = GF_RPC_DOWN.read_text(encoding="utf-8")
+
+    def test_nullable_versioned_facts_not_empty_object_default(self) -> None:
+        self.assertIn("add column gate_facts pg_catalog.jsonb", self.gf)
+        self.assertIn("add column assessment_schema_version pg_catalog.text", self.gf)
+        self.assertIn("add column evaluated_profile pg_catalog.text", self.gf)
+        self.assertIn("add column evaluated_at pg_catalog.timestamptz", self.gf)
+        self.assertNotIn("gate_facts jsonb not null default '{}'", self.gf.lower())
+        self.assertNotIn("default '{}'::pg_catalog.jsonb", self.gf.lower())
+        self.assertIn("source_item_product_types_gate_state_ck", self.gf)
+        self.assertIn("gate_facts is null", self.gf)
+        self.assertIn("gate_facts <> '{}'::pg_catalog.jsonb", self.gf)
+        self.assertIn("'living_guide'", self.gf)
+        self.assertIn("product_type in ('event_program', 'policy_reference', 'living_guide')", self.gf)
+        for key in FORBIDDEN_FACT_KEYS:
+            self.assertIn(f"'{key}'", self.gf)
+
+    def test_v3_product_type_target_contract_unchanged(self) -> None:
+        apply_v3 = _latest_fn("machimoa_review", "apply_source_item_product_type")
+        resolve_pt = _latest_fn("machimoa_review", "resolve_source_item_product_type")
+        v3 = _latest_fn("machimoa_review", "upsert_source_observations_v3")
+        v2 = _latest_fn("machimoa_review", "upsert_source_observations_v2")
+        self.assertIn("if v_item.disposition is distinct from 'target' then", apply_v3)
+        self.assertIn("content_product_type_locked", apply_v3)
+        self.assertNotIn("living_guide", apply_v3)
+        self.assertNotIn("gate_facts", apply_v3)
+        self.assertNotIn("p_gate_facts", resolve_pt)
+        self.assertIn("apply_source_item_product_type", v3)
+        self.assertIn("apply_ingest_review_decision", v3)
+        self.assertNotIn("evaluate_source_item_gates", v3)
+        self.assertNotIn("upsert_source_observations_v4", v3)
+        self.assertNotIn("apply_source_item_product_type", v2)
+
+    def test_v4_upsert_persists_proposal_and_uses_db_evaluator(self) -> None:
+        v4 = _latest_fn("machimoa_review", "upsert_source_observations_v4")
+        apply_v4 = _latest_fn("machimoa_review", "apply_source_item_product_type_v4")
+        self.assertIn("machimoa_review.upsert_source_observations(", v4)
+        self.assertIn("apply_source_item_product_type_v4", v4)
+        self.assertIn("apply_source_item_evaluation", v4)
+        self.assertNotIn("apply_source_item_product_type(", v4)
+        self.assertNotIn("apply_ingest_review_decision", v4)
+        self.assertNotIn("approve_ai", v4)
+        self.assertNotIn("classifier_metadata_required", v4)
+        self.assertNotIn("product_type_metadata_forbidden", v4)
+        self.assertNotIn("product_type_metadata_required", v4)
+        self.assertIn("classifier_metadata_forbidden", v4)
+        self.assertIn("'living_guide'", apply_v4)
+        self.assertNotIn("content_product_type_locked", apply_v4)
+        self.assertNotIn("disposition is distinct from 'target'", apply_v4)
+        self.assertIn("'capital_v1'", apply_v4)
+        self.assertIn("'gate-facts-v1'", apply_v4)
+
+    def test_python_evaluator_mirror_tokens_and_fixture_parity(self) -> None:
+        evaluator = _latest_fn("machimoa_review", "evaluate_source_item_gates")
+        validate = _latest_fn("machimoa_review", "validate_gate_facts")
+        self.assertIn(EVALUATOR_CONTRACT_ID, evaluator)
+        self.assertIn(f"'{CAPITAL_V1_PROFILE}'", evaluator)
+        self.assertIn(f"'{GATE_FACTS_SCHEMA_VERSION}'", validate)
+        self.assertNotIn("delivery_mode", evaluator)
+        self.assertNotIn("activity_location", evaluator)
+        self.assertNotIn("nationwide_or_online", evaluator)
+        self.assertNotIn("approve_ai", evaluator)
+        self.assertIn("delivery_mode", validate)
+        for code in sorted(CAPITAL_V1_REGION_CODES):
+            self.assertIn(f"'{code}'", evaluator)
+        for token in (
+            REASON_ATTACHMENT_DEPENDENT,
+            REASON_MISSING_SOURCE_URL,
+            REASON_REGION_SCOPE_UNKNOWN,
+            REASON_RELEVANCE_UNCONFIRMED,
+            "passed",
+            "failed",
+            "review_required",
+            "not_applicable",
+            "attachment_dependent",
+            "non_target",
+            "observe_only",
+            "region_review_required",
+            "target",
+            "living_guide",
+            "policy_reference",
+            "event_program",
+        ):
+            self.assertIn(f"'{token}'", evaluator)
+        cases = json.loads(EVALUATOR_FIXTURE.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(cases), 14)
+        for case in cases:
+            self.assertIn(f"'{case['expect_disposition']}'", evaluator)
+            self.assertIn(f"'{case['expect_region_status']}'", evaluator)
+            self.assertIn(f"'{case['expect_audience_status']}'", evaluator)
+            for stage in case["expect_job_stages"]:
+                self.assertIn(f"'{stage}'", evaluator)
+
+    def test_ensure_ai_and_claim_split_legacy_and_v1_paths(self) -> None:
+        ensure = _latest_fn("machimoa_review", "ensure_ai_enrichment_job")
+        claim = _latest_fn("machimoa_review", "claim_processing_jobs")
+        for body in (ensure, claim):
+            self.assertIn("gate_facts is null", body)
+            self.assertIn("gate_facts <> '{}'::pg_catalog.jsonb", body)
+            self.assertIn("'capital_v1'", body)
+            self.assertIn("'gate-facts-v1'", body)
+            self.assertIn("approve_ai", body)
+            self.assertIn("ingest_review_decisions", body)
+            self.assertIn("source_item_product_types", body)
+            self.assertIn("claim_lease_until <= v_now", body)
+            self.assertNotIn("claim_lease_until < v_now", body)
+        self.assertIn("v_legacy_ready or v_v1_ready", ensure)
+        self.assertIn("ai_job_malformed_lease", ensure)
+        self.assertIn("status = 'cancelled'", ensure)
+        self.assertNotIn("status = 'expired'", ensure)
+        self.assertIn("gate_facts_row_is_complete_v1", claim)
+        self.assertIn("gate_facts_row_is_complete_v1", ensure)
+        complete = _latest_fn("machimoa_review", "gate_facts_row_is_complete_v1")
+        self.assertIn("p_gate_facts = '{}'::pg_catalog.jsonb", complete)
+        self.assertIn("'gate-facts-v1'", complete)
+        self.assertIn("p_expected_profile", complete)
+
+    def test_ensure_and_claim_v1_recheck_evaluator_target(self) -> None:
+        ensure = _function_body(_latest_fn("machimoa_review", "ensure_ai_enrichment_job"))
+        claim = _function_body(_latest_fn("machimoa_review", "claim_processing_jobs"))
+        self.assertEqual(ensure.count("machimoa_review.evaluate_source_item_gates("), 1)
+        self.assertEqual(claim.count("machimoa_review.evaluate_source_item_gates("), 1)
+        legacy_ensure = ensure.split("v_legacy_ready :=")[1].split("v_v1_ready :=")[0]
+        v1_ensure = ensure.split("v_v1_ready :=")[1].split("v_ready :=")[0]
+        self.assertNotIn("evaluate_source_item_gates", legacy_ensure)
+        self.assertIn("approve_ai", legacy_ensure)
+        self.assertIn("gate_facts is null", legacy_ensure)
+        self.assertIn("evaluate_source_item_gates", v1_ensure)
+        self.assertIn("ev.disposition is not distinct from 'target'", v1_ensure)
+        self.assertRegex(
+            v1_ensure,
+            r"evaluate_source_item_gates\(\s*"
+            r"v_item\.body_usable,\s*"
+            r"v_item\.has_source_url,\s*"
+            r"v_item\.attachment_present,\s*"
+            r"pt\.product_type,\s*"
+            r"pt\.reason_codes,\s*"
+            r"pt\.gate_facts\s*\)",
+        )
+        claim_legacy = claim.split("or (")[0]
+        self.assertNotIn("evaluate_source_item_gates", claim_legacy)
+        self.assertIn("gate_facts is null", claim)
+        self.assertIn("approve_ai", claim)
+        self.assertIn("ev.disposition is not distinct from 'target'", claim)
+        self.assertRegex(
+            claim,
+            r"evaluate_source_item_gates\(\s*"
+            r"si\.body_usable,\s*"
+            r"si\.has_source_url,\s*"
+            r"si\.attachment_present,\s*"
+            r"pt\.product_type,\s*"
+            r"pt\.reason_codes,\s*"
+            r"pt\.gate_facts\s*\)",
+        )
+        restored_ensure = self.down.split(
+            "create or replace function machimoa_review.ensure_ai_enrichment_job"
+        )[1].split("drop function")[0]
+        restored_claim = self.down.split(
+            "create or replace function machimoa_review.claim_processing_jobs"
+        )[1].split("create or replace function")[0]
+        self.assertNotIn("evaluate_source_item_gates", restored_ensure)
+        self.assertNotIn("evaluate_source_item_gates", restored_claim)
+
+    def test_resolve_gate_facts_is_separate_from_product_type_rpc(self) -> None:
+        resolve_facts = _latest_fn("machimoa_review", "resolve_source_item_gate_facts")
+        apply_facts = _latest_fn("machimoa_review", "apply_source_item_gate_facts")
+        resolve_pt = _latest_fn("machimoa_review", "resolve_source_item_product_type")
+        self.assertIn("apply_source_item_gate_facts", resolve_facts)
+        self.assertIn("product_type_not_confirmed", apply_facts)
+        self.assertIn("apply_source_item_evaluation", apply_facts)
+        self.assertIn("ai_job_claimed", apply_facts)
+        self.assertIn("invalid_assessment_schema_version", apply_facts)
+        self.assertNotIn("p_gate_facts", resolve_pt)
+        self.assertIn("create function public.resolve_source_item_gate_facts", self.rpc)
+        self.assertIn("create function public.upsert_source_observations_v4", self.rpc)
+        self.assertNotIn("create function public.apply_source_item_gate_facts", self.rpc)
+        self.assertNotIn("create function public.evaluate_source_item_gates", self.rpc)
+        self.assertNotIn("create function public.apply_source_item_product_type_v4", self.rpc)
+        self.assertNotIn(
+            "create function public.apply_source_item_product_type", self.rpc
+        )
+        self.assertEqual(_private_grant_signatures(self.gf), set())
+        self.assertEqual(_private_grant_signatures(self.rpc), set())
+        self.assertIn("to service_role", self.rpc.lower())
+        self.assertNotIn("to anon", self.rpc.lower())
+        self.assertNotIn("to authenticated", self.rpc.lower())
+        self.assertNotIn("grant select on table", self.rpc.lower())
+        self.assertIn("set search_path = ''", resolve_facts)
+        self.assertIn("security definer", resolve_facts.lower())
+
+    def test_rollback_fail_closed_and_restores_legacy_ai_predicates(self) -> None:
+        for sql in (self.down, self.rpc_down):
+            lowered = sql.lower()
+            first_drop = min(
+                pos
+                for pos in (lowered.find("drop function"), lowered.find("drop table"))
+                if pos >= 0
+            )
+            lock_pt = lowered.find("lock table machimoa_review.source_item_product_types")
+            lock_jobs = lowered.find("lock table machimoa_review.processing_jobs")
+            error = lowered.find("raise exception 'rollback_gate_facts_data_present'")
+            self.assertGreater(lock_pt, 0)
+            self.assertGreater(lock_jobs, lock_pt)
+            self.assertGreater(error, lock_jobs)
+            self.assertLess(error, first_drop)
+            self.assertEqual(lowered.count("rollback_gate_facts_data_present"), 2)
+            self.assertNotIn("delete from machimoa_review.source_items", lowered)
+            self.assertNotIn("delete from machimoa_review.curation_candidates", lowered)
+            self.assertNotIn("delete from public.curations", lowered)
+            self.assertNotIn("delete from machimoa_review.ingest_review_decisions", lowered)
+            self.assertNotIn("backfill", lowered)
+            self.assertNotIn("phase 3", lowered)
+        self.assertIn(
+            "drop function if exists public.upsert_source_observations_v4",
+            self.rpc_down,
+        )
+        self.assertIn(
+            "drop function if exists public.resolve_source_item_gate_facts",
+            self.rpc_down,
+        )
+        self.assertNotIn("drop function if exists machimoa_review", self.rpc_down.lower())
+        restored_claim = self.down.split(
+            "create or replace function machimoa_review.claim_processing_jobs"
+        )[1].split("create or replace function")[0]
+        self.assertIn("approve_ai", restored_claim)
+        self.assertIn("source_item_product_types", restored_claim)
+        self.assertNotIn("capital_v1", restored_claim)
+        self.assertNotIn("gate-facts-v1", restored_claim)
+        restored_ensure = self.down.split(
+            "create or replace function machimoa_review.ensure_ai_enrichment_job"
+        )[1].split("drop function")[0]
+        self.assertIn("approve_ai", restored_ensure)
+        self.assertNotIn("v_v1_ready", restored_ensure)
+        self.assertNotIn("capital_v1", restored_ensure)
+        self.assertIn("drop column if exists gate_facts", self.down)
+        self.assertIn(
+            "check (product_type in ('event_program', 'policy_reference'))",
+            self.down,
+        )
+        self.assertIn("notify pgrst, 'reload schema'", self.rpc.lower())
+        self.assertIn("notify pgrst, 'reload schema'", self.rpc_down.lower())
+        self.assertNotIn("backfill", self.gf.lower())
+        self.assertNotIn("phase 3", self.gf.lower())
 
 
 if __name__ == "__main__":

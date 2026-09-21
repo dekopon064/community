@@ -11,6 +11,7 @@ import sys
 import time
 import traceback
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -44,6 +45,7 @@ from ingest.connectors.youthcenter_content import (
 from ingest.connectors.youthcenter_policy import (
     POLICY_PAGE_SIZE,
     YouthcenterPolicyConnector,
+    policy_job_plan,
 )
 from ingest.constants import (
     AI_MAX_ATTEMPTS,
@@ -74,6 +76,11 @@ from ingest.orchestrator import (
     run_ingest,
 )
 from ingest.region import classify_eligibility, classify_policy_disposition, classify_region_scope
+from ingest.product_type import (
+    classify_content_product_type,
+    classify_policy_product_type,
+    product_type_classification_payload,
+)
 from ingest.relevance import (
     AXIS_FOREIGN_RESIDENTS_IN_KR,
     AXIS_JP_RESIDENTS_IN_KR,
@@ -82,6 +89,8 @@ from ingest.relevance import (
     RULE_VERSION,
     classify_content_relevance,
     classify_policy_relevance,
+    classifier_decision_metadata,
+    screen_content,
     screen_policy,
 )
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
@@ -286,8 +295,70 @@ def policy_item(
 
 
 def observation_for(item: dict[str, Any]) -> ObservationRecord:
-    return YouthcenterPolicyConnector(api_key_provider=lambda: "unused").to_observation(
+    """v3 regression helper. Live connectors no longer screen."""
+    normalized = YouthcenterPolicyConnector(
+        api_key_provider=lambda: "unused"
+    ).to_observation(item, permission_status="testing_only", enabled=True)
+    title = html_to_plain_text(item.get("plcyNm"))
+    body = html_to_plain_text(
+        f"{item.get('plcyExplnCn') or ''}\n\n{item.get('plcySprtCn') or ''}"
+    )
+    screening = screen_policy(item, f"{title}\n{body}", body_usable=bool(body))
+    disposition = screening.disposition
+    payload = None if disposition == "non_target" else normalized.normalized_payload
+    jobs = policy_job_plan(disposition, reason_codes=screening.reason_codes)
+    product_type_classification = None
+    if disposition == "target":
+        product_type_classification = product_type_classification_payload(
+            classify_policy_product_type(f"{title}\n{body}")
+        )
+    return replace(
+        normalized,
+        disposition=disposition,  # type: ignore[arg-type]
+        normalized_payload=payload,
+        jobs=jobs,
+        classifier_decision=classifier_decision_metadata(screening),
+        product_type_classification=product_type_classification,
+    )
+
+
+def v3_content_observation(item: dict[str, Any]) -> ObservationRecord:
+    """v3 regression helper for content lock/upsert tests."""
+    from ingest.models import JobPlan
+
+    connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+    normalized = connector.to_observation(
         item, permission_status="testing_only", enabled=True
+    )
+    title = html_to_plain_text(item.get("pstTtl"))
+    plain = str((normalized.normalized_payload or {}).get("plain_text") or "")
+    screening = screen_content(title, plain, body_usable=normalized.body_usable)
+    disposition, jobs = content_job_and_flags(
+        body_usable=normalized.body_usable,
+        has_source_url=normalized.has_source_url,
+        attachment_present=normalized.attachment_present,
+        permission_ok=True,
+        region_scope=screening.region_scope,
+        relevance_confirmed=screening.relevance.confirmed,
+        screening_reasons=screening.reason_codes,
+    )
+    if normalized.relationships:
+        jobs = jobs + (
+            JobPlan(stage="relationship_review", reason_codes=("policy_link_candidate",)),
+        )
+    product_type_classification = None
+    classifier_decision = None
+    if disposition == "target":
+        product_type_classification = product_type_classification_payload(
+            classify_content_product_type()
+        )
+        classifier_decision = classifier_decision_metadata(screening)
+    return replace(
+        normalized,
+        disposition=disposition,  # type: ignore[arg-type]
+        jobs=jobs,
+        classifier_decision=classifier_decision,
+        product_type_classification=product_type_classification,
     )
 
 
@@ -356,6 +427,10 @@ class _SpyStore(MemoryIngestStore):
     def upsert_source_observations(self, *args: Any, **kwargs: Any) -> Any:
         self.upsert_calls += 1
         return super().upsert_source_observations(*args, **kwargs)
+
+    def upsert_source_observations_v4(self, *args: Any, **kwargs: Any) -> Any:
+        self.upsert_calls += 1
+        return super().upsert_source_observations_v4(*args, **kwargs)
 
 
 def _ai_deps(**overrides: Any) -> dict[str, Any]:
@@ -786,11 +861,21 @@ class PolicyRelevanceTests(unittest.TestCase):
 
 
 class ContentScreeningTests(unittest.TestCase):
-    def test_generic_fixture_is_review_not_ai(self) -> None:
+    def test_connector_does_not_screen_or_attach_classifier_decision(self) -> None:
         connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         record = connector.to_observation(
             load_content(), permission_status="testing_only", enabled=True
         )
+        self.assertIsNone(record.classifier_decision)
+        self.assertIsNone(record.product_type_classification)
+        self.assertTrue(all(job.stage != "ai_enrichment" for job in record.jobs))
+        self.assertTrue(all(job.stage != "region_review" for job in record.jobs))
+        self.assertTrue(record.body_usable)
+        self.assertIsNotNone(record.normalized_payload)
+        self.assertIn("activity_location_text", record.normalized_payload or {})
+
+    def test_generic_fixture_is_review_not_ai(self) -> None:
+        record = v3_content_observation(load_content())
         self.assertEqual(record.disposition, "region_review_required")
         self.assertEqual(record.jobs[0].stage, "region_review")
         self.assertTrue(all(job.stage != "content_review" for job in record.jobs))
@@ -799,51 +884,39 @@ class ContentScreeningTests(unittest.TestCase):
         self.assertIsNotNone(record.normalized_payload)
 
     def test_c1_noncapital_content_has_no_ai_job(self) -> None:
-        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
-        record = connector.to_observation(
-            load_noncapital_content(), permission_status="testing_only", enabled=True
-        )
+        record = v3_content_observation(load_noncapital_content())
         self.assertEqual(record.disposition, "non_target")
         self.assertEqual(record.jobs, ())
         self.assertIsNotNone(record.normalized_payload)
         self.assertEqual(record.external_key, "syn-c1:jeju-1")
 
     def test_noncapital_empty_body_has_no_review_job(self) -> None:
-        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         item = load_noncapital_content()
         item["pstWholCn"] = ""
-        record = connector.to_observation(
-            item, permission_status="testing_only", enabled=True
-        )
+        record = v3_content_observation(item)
         self.assertEqual(record.disposition, "non_target")
         self.assertEqual(record.jobs, ())
         self.assertFalse(record.body_usable)
         self.assertIsNotNone(record.normalized_payload)
 
     def test_noncapital_missing_source_url_has_no_review_job(self) -> None:
-        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         item = load_noncapital_content()
         item["pstUrlAddr"] = None
         item["pstWholCn"] = "<p>제주 서귀포시 거주 청년만 현장 참여할 수 있습니다.</p>"
-        record = connector.to_observation(
-            item, permission_status="testing_only", enabled=True
-        )
+        record = v3_content_observation(item)
         self.assertFalse(record.has_source_url)
         self.assertEqual(record.disposition, "non_target")
         self.assertEqual(record.jobs, ())
         self.assertIsNotNone(record.normalized_payload)
 
     def test_content_capital_exchange_is_target_without_ai_job(self) -> None:
-        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         item = load_content()
         item["pstTtl"] = "서울 한일 교류 설명회"
         item["pstWholCn"] = (
             "<p>서울에서 열리는 한일 교류 설명회입니다. "
             "한국 거주 일본인은 참석 가능합니다.</p>"
         )
-        record = connector.to_observation(
-            item, permission_status="testing_only", enabled=True
-        )
+        record = v3_content_observation(item)
         relevance = classify_content_relevance(
             "서울 한일 교류 설명회",
             "서울에서 열리는 한일 교류 설명회입니다. 한국 거주 일본인은 참석 가능합니다.",
@@ -1442,14 +1515,17 @@ class ContentConnectorTests(unittest.TestCase):
         self.assertNotIn("atchFile", dumped)
 
     def test_empty_pstwholcn_with_attachment_stays_content_review(self) -> None:
-        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         item = load_content()
         item["pstWholCn"] = ""
-        record = connector.to_observation(
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        raw = connector.to_observation(
             item, permission_status="testing_only", enabled=True
         )
-        self.assertFalse(record.body_usable)
-        self.assertTrue(record.attachment_present)
+        self.assertFalse(raw.body_usable)
+        self.assertTrue(raw.attachment_present)
+        self.assertIsNone(raw.classifier_decision)
+        self.assertEqual(raw.jobs, ())
+        record = v3_content_observation(item)
         self.assertEqual(record.disposition, "attachment_dependent")
         self.assertEqual(record.jobs[0].stage, "content_review")
         self.assertIn("attachment_dependent", record.jobs[0].reason_codes)
@@ -1468,14 +1544,16 @@ class ContentConnectorTests(unittest.TestCase):
         self.assertIn("pstWholCn", fixture)
 
     def test_missing_source_url_creates_content_review(self) -> None:
-        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
         item = load_content()
         item["pstUrlAddr"] = None
         item["pstWholCn"] = "<p>본문만 있고 링크는 없습니다. 충분한 텍스트입니다.</p>"
-        record = connector.to_observation(
+        connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
+        raw = connector.to_observation(
             item, permission_status="testing_only", enabled=True
         )
-        self.assertFalse(record.has_source_url)
+        self.assertFalse(raw.has_source_url)
+        self.assertEqual(raw.jobs, ())
+        record = v3_content_observation(item)
         self.assertEqual(record.jobs[0].stage, "content_review")
         self.assertIn("missing_source_url", record.jobs[0].reason_codes)
 
@@ -1684,7 +1762,10 @@ class AiDependencyAndRetryTests(unittest.TestCase):
         self.assertEqual(store.ai_job_counts()["queued"], 0)
         self.assertEqual(store.ai_job_counts()["completed"], 0)
         self.assertTrue(
-            any(job.processing_stage == "region_review" for job in store.jobs.values())
+            any(
+                job.processing_stage in {"region_review", "product_type_review"}
+                for job in store.jobs.values()
+            )
         )
 
     def test_latest_revision_skip_completes_without_enqueue(self) -> None:
