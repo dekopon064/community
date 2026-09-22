@@ -1,4 +1,4 @@
-"""AI worker Class A/B tests. 실제 Gemini·Supabase를 쓰지 않는다."""
+"""AI worker Class A/B tests. 실제 Anthropic API·Supabase를 쓰지 않는다."""
 
 from __future__ import annotations
 

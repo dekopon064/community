@@ -351,7 +351,7 @@ class ClaudeContractTests(unittest.TestCase):
             assert_request_contract(params, stage="summary")
         self.assertEqual(caught.exception.code, "ai_sampling_forbidden")
 
-    def test_module_does_not_import_gemini_or_fetch(self) -> None:
+    def test_module_has_no_legacy_provider_imports(self) -> None:
         import ingest.ai_claude as module
 
         source = inspect.getsource(module)

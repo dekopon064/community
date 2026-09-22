@@ -66,7 +66,7 @@ def run_ingest_architecture(
     run_ai: bool = True,
     ai_limit: int = AI_CLAIM_LIMIT,
 ) -> IngestArchitectureResult:
-    """실제 API·Gemini·DB는 주입된 의존성이 있을 때만 호출된다."""
+    """실제 API·Anthropic·DB는 주입된 의존성이 있을 때만 호출된다."""
     sleeper = PRODUCTION_SLEEP if sleep is None else sleep
     results = run_ingest(connectors, store, sleep=sleeper)
 

@@ -1,4 +1,4 @@
-"""ingest 단위·통합 테스트. 운영 API·Gemini·Supabase에 연결하지 않는다."""
+"""ingest 단위·통합 테스트. 운영 API·Anthropic·Supabase에 연결하지 않는다."""
 
 from __future__ import annotations
 
