@@ -85,6 +85,7 @@ REVIEW_TYPE_TO_STAGE = {
     "region": "region_review",
     "relevance": RELEVANCE_REVIEW_STAGE,
     "content": "content_review",
+    "product_type": PRODUCT_TYPE_REVIEW_STAGE,
 }
 BLOCKING_REVIEW_STAGES = frozenset(
     {
@@ -261,6 +262,10 @@ class _Candidate:
     source: str
     source_item_id: str
     source_revision_hash: str
+    review_status: str = "pending"
+    review_notes: str | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
 
 
 @dataclass
@@ -849,6 +854,7 @@ class MemoryIngestStore:
             "jobs": copy.deepcopy(self.jobs),
             "decisions": copy.deepcopy(self.decisions),
             "candidates": copy.deepcopy(self.candidates),
+            "publications": copy.deepcopy(self.publications),
         }
         try:
             return self._apply_ingest_review_decision_inner(
@@ -868,6 +874,7 @@ class MemoryIngestStore:
             self.jobs = snapshot["jobs"]
             self.decisions = snapshot["decisions"]
             self.candidates = snapshot["candidates"]
+            self.publications = snapshot["publications"]
             raise
 
     def _apply_ingest_review_decision_inner(
@@ -904,9 +911,15 @@ class MemoryIngestStore:
             raise RpcFailure("invalid_review_type")
         if v_decision not in REVIEW_DECISIONS:
             raise RpcFailure("invalid_decision")
-        if v_type == "content" and v_decision != "reject":
+        if v_type in {"content", "product_type"} and v_decision != "reject":
             raise RpcFailure("invalid_decision")
-        if v_type == "content" and "insufficient_evidence" not in reasons:
+        if v_type == "product_type" and "manual_non_target" not in reasons:
+            raise RpcFailure("manual_non_target_required")
+        if (
+            v_type == "content"
+            and "manual_non_target" not in reasons
+            and "insufficient_evidence" not in reasons
+        ):
             raise RpcFailure("insufficient_evidence_required")
         if v_scope not in {
             "capital",
@@ -931,7 +944,16 @@ class MemoryIngestStore:
         item = self._item_by_id(source_item_id)
         if item.revision_hash != v_hash:
             raise RpcFailure("revision_mismatch")
-        if v_type == "content" and v_decision == "reject":
+        manual_exclude = (
+            v_decision == "reject"
+            and v_type in {"content", "product_type"}
+            and "manual_non_target" in reasons
+        )
+        if manual_exclude:
+            self._assert_manual_exclude_ready(
+                item, v_hash, REVIEW_TYPE_TO_STAGE[v_type], now
+            )
+        elif v_type == "content" and v_decision == "reject":
             self._assert_content_reject_ready(item, v_hash, now)
 
         key = (item.id, v_hash, v_type)
@@ -1001,6 +1023,10 @@ class MemoryIngestStore:
                     ai_job, reasons or ("rejected_non_target",)
                 )
             item.disposition = "non_target"
+            if manual_exclude:
+                self._reject_pending_candidates(
+                    item, v_hash, now, v_reviewer, v_memo
+                )
         else:
             if live_claimed:
                 raise RpcFailure("ai_job_claimed")
@@ -1662,6 +1688,7 @@ class MemoryIngestStore:
             "region_review",
             RELEVANCE_REVIEW_STAGE,
             "content_review",
+            PRODUCT_TYPE_REVIEW_STAGE,
         }:
             raise RpcFailure("invalid_review_type")
         job = self._job_for(item_id, revision_hash, stage)
@@ -2059,6 +2086,75 @@ class MemoryIngestStore:
             and "insufficient_evidence" in row.reason_codes
         )
 
+    def _manual_non_target_pins(self, item: _Item) -> bool:
+        return any(
+            row.source_item_id == item.id
+            and row.revision_hash == item.revision_hash
+            and row.review_type in {"content", "product_type"}
+            and row.decision == "reject"
+            and "manual_non_target" in row.reason_codes
+            for row in self.decisions.values()
+        )
+
+    def _matching_revision_candidates(
+        self, item: _Item, revision_hash: str
+    ) -> list[_Candidate]:
+        sources = {item.source_id, curation_source_for_enqueue(item.source_id)}
+        return [
+            candidate
+            for candidate in self.candidates
+            if candidate.source in sources
+            and candidate.source_item_id == item.external_key
+            and candidate.source_revision_hash == revision_hash
+        ]
+
+    def _current_revision_is_published(self, item: _Item, revision_hash: str) -> bool:
+        if any(
+            candidate.review_status == "published"
+            for candidate in self._matching_revision_candidates(item, revision_hash)
+        ):
+            return True
+        return any(
+            publication.publication_status == "published"
+            and publication.revision_hash == revision_hash
+            and publication.external_key == item.external_key
+            and publication.source_id == item.source_id
+            for publication in self.publications
+        )
+
+    def _assert_manual_exclude_ready(
+        self, item: _Item, revision_hash: str, review_stage: str, now: datetime
+    ) -> None:
+        review = self._job_for(item.id, revision_hash, review_stage)
+        if review is None or review.status not in {"queued", "claimed"}:
+            if review_stage == "content_review":
+                raise RpcFailure("content_review_not_open")
+            raise RpcFailure("product_type_review_not_open")
+        ai_job = self._job_for(item.id, revision_hash, AI_STAGE)
+        if ai_job is not None and self._is_malformed_claimed(ai_job):
+            raise RpcFailure("ai_job_malformed_lease")
+        if ai_job is not None and self._is_live_claimed(ai_job, now):
+            raise RpcFailure("ai_job_claimed")
+        if self._current_revision_is_published(item, revision_hash):
+            raise RpcFailure("candidate_already_published")
+
+    def _reject_pending_candidates(
+        self,
+        item: _Item,
+        revision_hash: str,
+        now: datetime,
+        reviewer: str,
+        memo: str | None,
+    ) -> None:
+        for candidate in self._matching_revision_candidates(item, revision_hash):
+            if candidate.review_status != "pending":
+                continue
+            candidate.review_status = "rejected"
+            if memo is not None:
+                candidate.review_notes = memo
+            candidate.reviewed_at = now
+            candidate.reviewed_by = reviewer
+
     def _apply_evaluation_authority(
         self,
         item: _Item,
@@ -2069,14 +2165,18 @@ class MemoryIngestStore:
         reasons = (
             authority.jobs[0].reason_codes if authority.jobs else fallback_reasons
         )
-        if self._content_close_pins(item):
+        if self._manual_non_target_pins(item) or self._content_close_pins(item):
             authority = EvaluationResult(
                 disposition="non_target",
                 jobs=(),
                 region_status="not_applicable",
                 audience_status="not_applicable",
             )
-            reasons = ("insufficient_evidence",)
+            reasons = (
+                ("manual_non_target",)
+                if self._manual_non_target_pins(item)
+                else ("insufficient_evidence",)
+            )
         item.disposition = authority.disposition
         self._sync_v1_jobs_from_evaluation(item, authority, now)
         self._ensure_queued_ai_job_v1(item, item.revision_hash, now, reasons)

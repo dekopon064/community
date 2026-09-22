@@ -1564,5 +1564,126 @@ class ContentReviewCloseSqlContractTests(unittest.TestCase):
         self.assertIn("evaluate_source_item_gates", restored_eval)
 
 
+MANUAL = ROOT / "supabase" / "migrations" / "20260925000000_ingest_manual_non_target.sql"
+MANUAL_DOWN = (
+    ROOT / "supabase" / "rollback" / "20260925000000_ingest_manual_non_target_down.sql"
+)
+PUBLIC_RESOLVE = (
+    "create function public.resolve_ingest_review_decision(\n"
+    "  p_source_item_id pg_catalog.uuid,\n"
+    "  p_revision_hash pg_catalog.text,\n"
+    "  p_review_type pg_catalog.text,\n"
+    "  p_decision pg_catalog.text,\n"
+    "  p_region_scope pg_catalog.text,\n"
+    "  p_audience_relevance pg_catalog.text[],\n"
+    "  p_reason_codes pg_catalog.text[],\n"
+    "  p_rule_version pg_catalog.text,\n"
+    "  p_reviewer pg_catalog.text,\n"
+    "  p_memo pg_catalog.text default null"
+)
+
+
+class ManualNonTargetSqlContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sql = MANUAL.read_text(encoding="utf-8")
+        self.down = MANUAL_DOWN.read_text(encoding="utf-8")
+        self.public_rpc = (
+            ROOT / "supabase" / "migrations" / "20260916000001_ingest_review_decision_rpc_adapters.sql"
+        ).read_text(encoding="utf-8")
+
+    def test_reuses_existing_signature_without_new_surface(self) -> None:
+        created = [
+            (match.group(1).lower(), match.group(2))
+            for match in _CREATE_FN.finditer(self.sql)
+        ]
+        self.assertEqual(
+            created,
+            [
+                ("machimoa_review", "apply_ingest_review_decision"),
+                ("machimoa_review", "apply_source_item_evaluation"),
+            ],
+        )
+        lowered = self.sql.lower()
+        self.assertNotIn("create table", lowered)
+        self.assertNotIn("add column", lowered)
+        self.assertNotIn("create function public.", lowered)
+        self.assertNotIn("grant execute", lowered)
+        self.assertNotIn("grant ", lowered)
+        self.assertEqual(_private_grant_signatures(self.sql), set())
+        self.assertIn(PUBLIC_RESOLVE, self.public_rpc)
+        self.assertIn(
+            "check (review_type in ('region', 'relevance', 'content', 'product_type'))",
+            self.sql,
+        )
+        apply_sql = self.sql.split(
+            "create or replace function machimoa_review.apply_ingest_review_decision"
+        )[1]
+        header = apply_sql.split("as $function$", 1)[0]
+        apply = _function_body(apply_sql)
+        self.assertIn(PUBLIC_RESOLVE.split("(", 1)[1], header)
+        self.assertIn("when 'region' then 'region_review'", apply)
+        self.assertIn("when 'relevance' then 'relevance_review'", apply)
+        self.assertIn("when 'content' then 'content_review'", apply)
+        self.assertIn("when 'product_type' then 'product_type_review'", apply)
+        self.assertIn("raise exception 'insufficient_evidence_required'", apply)
+        self.assertIn("raise exception 'manual_non_target_required'", apply)
+        self.assertIn("raise exception 'curation_candidate_exists'", apply)
+        self.assertIn("raise exception 'candidate_already_published'", apply)
+        self.assertIn("review_status = 'rejected'", apply)
+        self.assertIn("reviewed_at = v_now", apply)
+        self.assertIn("reviewed_by = v_reviewer", apply)
+        self.assertIn("and c.review_status = 'pending'", apply)
+        self.assertIn("disposition = 'non_target'", apply)
+        self.assertNotIn("status = 'failed'", apply.split("begin", 1)[1])
+        self.assertNotIn("delete from", lowered)
+        self.assertNotIn("update machimoa_review.source_publications", lowered)
+        self.assertNotIn("update public.curations", lowered)
+        before_write = apply.split(
+            "insert into machimoa_review.ingest_review_decisions", 1
+        )[0]
+        self.assertIn("raise exception 'content_review_not_open'", before_write)
+        self.assertIn("raise exception 'product_type_review_not_open'", before_write)
+        self.assertIn("raise exception 'ai_job_claimed'", before_write)
+        self.assertIn("raise exception 'candidate_already_published'", before_write)
+        self.assertIn("for update", before_write.lower())
+        self.assertIn("order by c.id", before_write)
+        self.assertNotIn("review_status = 'rejected'", before_write)
+        evaluation = _function_body(
+            self.sql.split(
+                "create or replace function machimoa_review.apply_source_item_evaluation"
+            )[1]
+        )
+        self.assertIn("'manual_non_target' = any(d.reason_codes)", evaluation)
+        self.assertIn("'insufficient_evidence' = any(d.reason_codes)", evaluation)
+        self.assertIn("return 'non_target'", evaluation)
+        self.assertIn("sync_source_item_evaluation_jobs", evaluation)
+        self.assertNotIn("delete from", evaluation.lower())
+        self.assertNotIn("review_status = 'rejected'", evaluation)
+
+    def test_rollback_keeps_rows_and_restores_content_close(self) -> None:
+        lowered = self.down.lower()
+        error = lowered.find("raise exception 'rollback_manual_non_target_data_present'")
+        drop = lowered.find("drop constraint ingest_review_decisions_type_ck")
+        self.assertGreater(error, 0)
+        self.assertLess(error, drop)
+        self.assertNotIn("delete from", lowered)
+        self.assertNotIn("grant execute", lowered)
+        self.assertNotIn("grant ", lowered)
+        self.assertEqual(_private_grant_signatures(self.down), set())
+        self.assertIn(
+            "check (review_type in ('region', 'relevance', 'content'))",
+            self.down,
+        )
+        restored = self.down.split(
+            "create or replace function machimoa_review.apply_ingest_review_decision"
+        )[1].split("create or replace function")[0]
+        self.assertIn("insufficient_evidence_required", restored)
+        self.assertIn("curation_candidate_exists", restored)
+        self.assertIn("when 'content' then 'content_review'", restored)
+        self.assertNotIn("manual_non_target", restored)
+        self.assertNotIn("candidate_already_published", restored)
+        self.assertNotIn("product_type_review_not_open", restored)
+
+
 if __name__ == "__main__":
     unittest.main()
