@@ -1,20 +1,17 @@
-"""Fail-closed AI provider selection. No credential cross-fallback."""
+"""Fail-closed AI provider selection. Anthropic only. No provider fallback."""
 
 from __future__ import annotations
 
 import os
 
 PROVIDER_ANTHROPIC = "anthropic"
-PROVIDER_GEMINI = "gemini"
-ALLOWED_PROVIDERS = frozenset({PROVIDER_ANTHROPIC, PROVIDER_GEMINI})
+ALLOWED_PROVIDERS = frozenset({PROVIDER_ANTHROPIC})
 AI_PROVIDER_ENV = "AI_PROVIDER"
 ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
-GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 
 MISSING_AI_PROVIDER = "missing_ai_provider"
 INVALID_AI_PROVIDER = "invalid_ai_provider"
 MISSING_ANTHROPIC_API_KEY = "missing_anthropic_api_key"
-MISSING_GEMINI_API_KEY = "missing_gemini_api_key"
 
 
 class ProviderError(Exception):
@@ -45,17 +42,12 @@ def require_provider_key(
     environ: dict[str, str] | None = None,
 ) -> str:
     env = os.environ if environ is None else environ
-    if provider == PROVIDER_ANTHROPIC:
-        key = env.get(ANTHROPIC_API_KEY_ENV)
-        if key is None or not str(key).strip():
-            raise ProviderError(MISSING_ANTHROPIC_API_KEY)
-        return str(key)
-    if provider == PROVIDER_GEMINI:
-        key = env.get(GEMINI_API_KEY_ENV)
-        if key is None or not str(key).strip():
-            raise ProviderError(MISSING_GEMINI_API_KEY)
-        return str(key)
-    raise ProviderError(INVALID_AI_PROVIDER)
+    if provider != PROVIDER_ANTHROPIC:
+        raise ProviderError(INVALID_AI_PROVIDER)
+    key = env.get(ANTHROPIC_API_KEY_ENV)
+    if key is None or not str(key).strip():
+        raise ProviderError(MISSING_ANTHROPIC_API_KEY)
+    return str(key)
 
 
 def require_configured_provider(

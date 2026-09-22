@@ -9,9 +9,7 @@ from ingest.ai_provider import (
     INVALID_AI_PROVIDER,
     MISSING_AI_PROVIDER,
     MISSING_ANTHROPIC_API_KEY,
-    MISSING_GEMINI_API_KEY,
     PROVIDER_ANTHROPIC,
-    PROVIDER_GEMINI,
     ProviderError,
     require_ai_provider,
     require_configured_provider,
@@ -32,24 +30,27 @@ class ProviderSelectionTests(unittest.TestCase):
         self.assertNotIn("gemini-secret-marker", str(caught.exception))
 
     def test_invalid_provider_is_fail_closed(self) -> None:
-        env = {"AI_PROVIDER": "claude", "ANTHROPIC_API_KEY": "x"}
-        with self.assertRaises(ProviderError) as caught:
-            require_ai_provider(env)
-        self.assertEqual(caught.exception.code, INVALID_AI_PROVIDER)
+        for value in ("claude", "gemini", "openai", "Gemini"):
+            env = {"AI_PROVIDER": value, "ANTHROPIC_API_KEY": "x"}
+            with self.assertRaises(ProviderError) as caught:
+                require_ai_provider(env)
+            self.assertEqual(caught.exception.code, INVALID_AI_PROVIDER, value)
 
-    def test_anthropic_does_not_fall_back_to_gemini_key(self) -> None:
+    def test_gemini_is_invalid_even_with_anthropic_key(self) -> None:
+        env = {"AI_PROVIDER": "gemini", "ANTHROPIC_API_KEY": "anthropic-only"}
+        with self.assertRaises(ProviderError) as caught:
+            require_configured_provider(env)
+        self.assertEqual(caught.exception.code, INVALID_AI_PROVIDER)
+        self.assertNotIn("anthropic-only", str(caught.exception))
+
+    def test_anthropic_does_not_fall_back_to_another_key(self) -> None:
         env = {"AI_PROVIDER": "anthropic", "GEMINI_API_KEY": "gemini-only"}
         with self.assertRaises(ProviderError) as caught:
             require_configured_provider(env)
         self.assertEqual(caught.exception.code, MISSING_ANTHROPIC_API_KEY)
+        self.assertNotIn("gemini-only", str(caught.exception))
 
-    def test_gemini_does_not_fall_back_to_anthropic_key(self) -> None:
-        env = {"AI_PROVIDER": "gemini", "ANTHROPIC_API_KEY": "anthropic-only"}
-        with self.assertRaises(ProviderError) as caught:
-            require_configured_provider(env)
-        self.assertEqual(caught.exception.code, MISSING_GEMINI_API_KEY)
-
-    def test_configured_providers_return_matching_keys_only(self) -> None:
+    def test_anthropic_configured_returns_its_own_key(self) -> None:
         anthropic = require_configured_provider(
             {
                 "AI_PROVIDER": "anthropic",
@@ -57,20 +58,13 @@ class ProviderSelectionTests(unittest.TestCase):
                 "GEMINI_API_KEY": "gemini-unused",
             }
         )
-        gemini = require_configured_provider(
-            {
-                "AI_PROVIDER": "gemini",
-                "ANTHROPIC_API_KEY": "anthropic-unused",
-                "GEMINI_API_KEY": "gemini-ok",
-            }
-        )
         self.assertEqual(anthropic, (PROVIDER_ANTHROPIC, "anthropic-ok"))
-        self.assertEqual(gemini, (PROVIDER_GEMINI, "gemini-ok"))
 
     def test_provider_key_rejects_unknown_provider(self) -> None:
-        with self.assertRaises(ProviderError) as caught:
-            require_provider_key("openai", {"OPENAI_API_KEY": "x"})
-        self.assertEqual(caught.exception.code, INVALID_AI_PROVIDER)
+        for provider in ("openai", "gemini"):
+            with self.assertRaises(ProviderError) as caught:
+                require_provider_key(provider, {"ANTHROPIC_API_KEY": "x"})
+            self.assertEqual(caught.exception.code, INVALID_AI_PROVIDER, provider)
 
     def test_module_has_no_network_imports(self) -> None:
         import ingest.ai_provider as module
@@ -84,6 +78,9 @@ class ProviderSelectionTests(unittest.TestCase):
         self.assertNotIn("from anthropic", source)
         self.assertNotIn("import supabase", source)
         self.assertNotIn("from supabase", source)
+        self.assertNotIn("GEMINI_API_KEY", source)
+        self.assertNotIn("PROVIDER_GEMINI", source)
+        self.assertNotIn("google-genai", source)
 
 
 if __name__ == "__main__":

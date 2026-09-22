@@ -1,17 +1,15 @@
-"""운영 ingest CLI 테스트. 실제 HTTP·DB·Gemini를 쓰지 않는다."""
+"""운영 ingest CLI 테스트. 실제 HTTP·DB·Anthropic API를 쓰지 않는다."""
 
 from __future__ import annotations
 
 import inspect
 import io
 import os
-import pathlib
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import fetch_and_save as pipeline
 import run_ingest_architecture as cli
 from ingest.ai_worker import (
     AI_DISABLED,
@@ -26,9 +24,6 @@ from ingest.orchestrator import SourceRunResult
 from ingest.run import IngestArchitectureResult
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
 from ingest.store import MemoryIngestStore
-
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "daily-pipeline.yml"
 
 COMPLETE = SourceRunResult(
     CANONICAL_POLICY_SOURCE,
@@ -232,7 +227,7 @@ class CliArgumentTests(unittest.TestCase):
         create.assert_not_called()
         run.assert_not_called()
 
-    def test_missing_gemini_has_no_io(self) -> None:
+    def test_missing_ai_provider_has_no_io(self) -> None:
         env = {
             "SUPABASE_URL": "https://example.invalid",
             "SUPABASE_SERVICE_KEY": "local-test-key",
@@ -260,8 +255,8 @@ class CliArgumentTests(unittest.TestCase):
             "SUPABASE_URL": "https://example.invalid",
             "SUPABASE_SERVICE_KEY": "local-test-key",
             "YOUTH_API_KEY": "local-youth-key",
-            "GEMINI_API_KEY": "local-gemini-key",
-            "AI_PROVIDER": "gemini",
+            "ANTHROPIC_API_KEY": "local-anthropic-key",
+            "AI_PROVIDER": "anthropic",
         }
         fake_result = _result(ai=AiWorkerResult(status=AI_PROCESSED, claimed=0))
         for limit in (1, 10):
@@ -274,7 +269,7 @@ class CliArgumentTests(unittest.TestCase):
                     return_value=object(),
                 ):
                     with patch(
-                        "run_ingest_architecture._load_legacy_ai_helpers",
+                        "run_ingest_architecture._load_anthropic_ai_helpers",
                         return_value={
                             "summarize_ko": object(),
                             "translate_ja": object(),
@@ -301,16 +296,6 @@ class CliArgumentTests(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["ai_limit"], limit)
             self.assertTrue(run.call_args.kwargs["run_ai"])
 
-    def test_legacy_main_default_path_unchanged(self) -> None:
-        source = inspect.getsource(pipeline.main)
-        self.assertIn("get_supabase_client", source)
-        self.assertIn("collect_target_policies", source)
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("python scripts/fetch_and_save.py", workflow)
-        self.assertNotIn("run_ingest_architecture.py", workflow)
-        self.assertIn("YOUTH_API_KEY", workflow)
-        self.assertNotIn("YOUTH_CONTENT_API_KEY", workflow)
-
 
 SECRET_MARKER = "svc-secret-marker-DoNotLog"
 URL_QUERY_MARKER = "apiKeyNm=secret-query-marker"
@@ -323,8 +308,8 @@ EXECUTE_ENV = {
 }
 AI_ENV = {
     **EXECUTE_ENV,
-    "GEMINI_API_KEY": "local-gemini-key",
-    "AI_PROVIDER": "gemini",
+    "ANTHROPIC_API_KEY": "local-anthropic-key",
+    "AI_PROVIDER": "anthropic",
 }
 
 
@@ -359,7 +344,7 @@ class CliExecutionBoundaryTests(unittest.TestCase):
             side_effect=_secret_error(),
         ) as create:
             with patch("run_ingest_architecture.YouthcenterPolicyConnector") as connector:
-                with patch("run_ingest_architecture._load_legacy_ai_helpers") as helpers:
+                with patch("run_ingest_architecture._load_anthropic_ai_helpers") as helpers:
                     with patch("run_ingest_architecture.run_ingest_architecture") as run:
                         code, stdout, stderr = self._run(EXECUTE_ARGV)
         self.assertEqual(code, 1)
@@ -378,7 +363,7 @@ class CliExecutionBoundaryTests(unittest.TestCase):
                 "run_ingest_architecture.YouthcenterPolicyConnector",
                 side_effect=_secret_error(),
             ):
-                with patch("run_ingest_architecture._load_legacy_ai_helpers") as helpers:
+                with patch("run_ingest_architecture._load_anthropic_ai_helpers") as helpers:
                     with patch("run_ingest_architecture.run_ingest_architecture") as run:
                         code, stdout, stderr = self._run(EXECUTE_ARGV)
         self.assertEqual(code, 1)
@@ -386,7 +371,7 @@ class CliExecutionBoundaryTests(unittest.TestCase):
         helpers.assert_not_called()
         run.assert_not_called()
 
-    def test_helper_load_exception_does_not_run(self) -> None:
+    def test_anthropic_loader_failure_has_no_fallback(self) -> None:
         argv = [
             "--source",
             CANONICAL_POLICY_SOURCE,
@@ -404,7 +389,7 @@ class CliExecutionBoundaryTests(unittest.TestCase):
                 return_value=object(),
             ):
                 with patch(
-                    "run_ingest_architecture._load_legacy_ai_helpers",
+                    "run_ingest_architecture._load_anthropic_ai_helpers",
                     side_effect=_secret_error(),
                 ):
                     with patch("run_ingest_architecture.run_ingest_architecture") as run:
@@ -859,10 +844,16 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
                         AI_ONLY_ARGV,
                         {**base, "AI_PROVIDER": "claude"},
                     )
+                    gemini_code, _, gemini_err = self._run(
+                        AI_ONLY_ARGV,
+                        {**base, "AI_PROVIDER": "gemini"},
+                    )
         self.assertEqual(missing_code, 1)
         self.assertEqual(invalid_code, 1)
+        self.assertEqual(gemini_code, 1)
         self.assertEqual(missing_err.strip(), "missing_ai_provider")
         self.assertEqual(invalid_err.strip(), "invalid_ai_provider")
+        self.assertEqual(gemini_err.strip(), "invalid_ai_provider")
         create.assert_not_called()
         run.assert_not_called()
         ai_only.assert_not_called()
@@ -874,20 +865,24 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
         }
         with patch("run_ingest_architecture.create_ingest_client") as create:
             with patch("run_ingest_architecture.run_ai_only") as ai_only:
-                anthropic_code, _, anthropic_err = self._run(
-                    AI_ONLY_ARGV,
-                    {**supabase, "AI_PROVIDER": "anthropic", "GEMINI_API_KEY": "g"},
-                )
-                gemini_code, _, gemini_err = self._run(
-                    AI_ONLY_ARGV,
-                    {**supabase, "AI_PROVIDER": "gemini", "ANTHROPIC_API_KEY": "a"},
-                )
+                with patch(
+                    "run_ingest_architecture._load_anthropic_ai_helpers"
+                ) as helpers:
+                    anthropic_code, _, anthropic_err = self._run(
+                        AI_ONLY_ARGV,
+                        {**supabase, "AI_PROVIDER": "anthropic", "GEMINI_API_KEY": "g"},
+                    )
+                    rejected_code, _, rejected_err = self._run(
+                        AI_ONLY_ARGV,
+                        {**supabase, "AI_PROVIDER": "gemini", "ANTHROPIC_API_KEY": "a"},
+                    )
         self.assertEqual(anthropic_code, 1)
-        self.assertEqual(gemini_code, 1)
+        self.assertEqual(rejected_code, 1)
         self.assertEqual(anthropic_err.strip(), "missing_anthropic_api_key")
-        self.assertEqual(gemini_err.strip(), "missing_gemini_api_key")
+        self.assertEqual(rejected_err.strip(), "invalid_ai_provider")
         create.assert_not_called()
         ai_only.assert_not_called()
+        helpers.assert_not_called()
 
     def test_ai_only_does_not_use_youth_env_or_connectors(self) -> None:
         fake = _ai_only_result()
@@ -915,16 +910,12 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
                             with patch(
                                 "run_ingest_architecture.YouthcenterContentConnector"
                             ) as content:
-                                with patch(
-                                    "run_ingest_architecture._load_legacy_ai_helpers"
-                                ) as legacy:
-                                    code, stdout, stderr = self._run(
-                                        AI_ONLY_ARGV, ANTHROPIC_ENV
-                                    )
+                                code, stdout, stderr = self._run(
+                                    AI_ONLY_ARGV, ANTHROPIC_ENV
+                                )
         self.assertEqual(code, 0)
         create.assert_called_once()
-        helpers.assert_called_once()
-        legacy.assert_not_called()
+        helpers.assert_called_once_with("local-anthropic-key")
         policy.assert_not_called()
         content.assert_not_called()
         self.assertEqual(run.call_args.kwargs["ai_limit"], 1)
@@ -997,16 +988,30 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
             )
         self.assertEqual(both.exception.code, 2)
 
-    def test_anthropic_loader_does_not_import_gemini(self) -> None:
-        source = inspect.getsource(cli._load_anthropic_ai_helpers)
-        self.assertNotIn("fetch_and_save", source)
-        self.assertNotIn("google", source)
-        self.assertNotIn("genai", source)
-        self.assertNotIn("summarize_with_gemini", source)
-        self.assertIn("ai_queue_rpc", source)
-        self.assertIn("ClaudeAdapter", source)
+    def test_cli_has_no_legacy_ai_provider(self) -> None:
+        source = inspect.getsource(cli)
+        for token in (
+            "fetch_and_save",
+            "_load_legacy_ai_helpers",
+            "PROVIDER_GEMINI",
+            "GEMINI_API_KEY",
+            "summarize_with_gemini",
+            "google-genai",
+            "google.genai",
+        ):
+            self.assertNotIn(token, source)
+        loader = inspect.getsource(cli._load_anthropic_ai_helpers)
+        self.assertIn("ai_queue_rpc", loader)
+        self.assertIn("ClaudeAdapter", loader)
 
-    def test_gemini_source_first_still_uses_legacy_helpers(self) -> None:
+    def test_rejected_provider_does_not_load_anthropic(self) -> None:
+        with patch("run_ingest_architecture._load_anthropic_ai_helpers") as helpers:
+            with self.assertRaises(cli.ProviderError) as caught:
+                cli._load_ai_helpers("gemini", "unused-key")
+        self.assertEqual(caught.exception.code, "invalid_ai_provider")
+        helpers.assert_not_called()
+
+    def test_run_ai_uses_anthropic_helpers(self) -> None:
         fake_result = _result(ai=AiWorkerResult(status=AI_PROCESSED, claimed=1, completed=1))
         with patch(
             "run_ingest_architecture.create_ingest_client",
@@ -1017,7 +1022,7 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
                 return_value=object(),
             ):
                 with patch(
-                    "run_ingest_architecture._load_legacy_ai_helpers",
+                    "run_ingest_architecture._load_anthropic_ai_helpers",
                     return_value={
                         "summarize_ko": object(),
                         "translate_ja": object(),
@@ -1026,26 +1031,22 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
                     },
                 ) as helpers:
                     with patch(
-                        "run_ingest_architecture._load_anthropic_ai_helpers"
-                    ) as anthropic:
-                        with patch(
-                            "run_ingest_architecture.run_ingest_architecture",
-                            return_value=fake_result,
-                        ) as run:
-                            code, stdout, stderr = self._run(
-                                [
-                                    "--source",
-                                    CANONICAL_POLICY_SOURCE,
-                                    "--execute",
-                                    "--run-ai",
-                                    "--ai-limit",
-                                    "1",
-                                ],
-                                AI_ENV,
-                            )
+                        "run_ingest_architecture.run_ingest_architecture",
+                        return_value=fake_result,
+                    ) as run:
+                        code, stdout, stderr = self._run(
+                            [
+                                "--source",
+                                CANONICAL_POLICY_SOURCE,
+                                "--execute",
+                                "--run-ai",
+                                "--ai-limit",
+                                "1",
+                            ],
+                            AI_ENV,
+                        )
         self.assertEqual(code, 0)
-        helpers.assert_called_once()
-        anthropic.assert_not_called()
+        helpers.assert_called_once_with("local-anthropic-key")
         self.assertTrue(run.call_args.kwargs["run_ai"])
         self.assertEqual(run.call_args.kwargs["ai_limit"], 1)
         self.assertIn("ingest source=", stdout)

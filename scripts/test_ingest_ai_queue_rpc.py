@@ -7,7 +7,6 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
-import fetch_and_save as pipeline
 from ingest.ai_queue_rpc import (
     ENQUEUE_PARAM_NAMES,
     ENQUEUE_RPC_NAME,
@@ -60,28 +59,7 @@ def _valid_enqueue_params() -> dict[str, Any]:
     }
 
 
-class QueueRpcParityTests(unittest.TestCase):
-    def test_rpc_names_and_params_match_legacy(self) -> None:
-        self.assertEqual(ENQUEUE_RPC_NAME, pipeline.ENQUEUE_RPC_NAME)
-        self.assertEqual(PRECHECK_RPC_NAME, pipeline.PRECHECK_RPC_NAME)
-        self.assertEqual(ENQUEUE_PARAM_NAMES, pipeline.ENQUEUE_PARAM_NAMES)
-        self.assertEqual(PRECHECK_PARAM_NAMES, pipeline.PRECHECK_PARAM_NAMES)
-
-    def test_parse_enqueue_success_matches_legacy(self) -> None:
-        payload = {"outcome": "inserted", "candidate_id": "c1"}
-        self.assertEqual(parse_enqueue_result(payload), pipeline.parse_enqueue_result(payload))
-        listed = [payload]
-        self.assertEqual(parse_enqueue_result(listed), pipeline.parse_enqueue_result(listed))
-        duplicate = {"outcome": "duplicate", "candidate_id": None}
-        self.assertEqual(
-            parse_enqueue_result(duplicate),
-            pipeline.parse_enqueue_result(duplicate),
-        )
-
-    def test_parse_precheck_bool_matches_legacy(self) -> None:
-        self.assertIs(parse_precheck_result(True), pipeline.parse_precheck_result(True))
-        self.assertIs(parse_precheck_result(False), pipeline.parse_precheck_result(False))
-
+class QueueRpcTests(unittest.TestCase):
     def test_malformed_enqueue_is_ambiguous(self) -> None:
         with self.assertRaises(RpcAmbiguous):
             parse_enqueue_result([])

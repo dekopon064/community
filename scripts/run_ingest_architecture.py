@@ -1,4 +1,4 @@
-"""운영 ingest CLI. 레거시 fetch_and_save.main()을 바꾸지 않는다."""
+"""운영 ingest CLI. AI provider는 Anthropic만 허용한다."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ import sys
 from typing import Any, Sequence
 
 from ingest.ai_provider import (
+    INVALID_AI_PROVIDER,
     PROVIDER_ANTHROPIC,
-    PROVIDER_GEMINI,
     ProviderError,
     require_configured_provider,
 )
@@ -26,7 +26,6 @@ from ingest.connectors.youthcenter_content import (
     YouthcenterContentConnector,
 )
 from ingest.connectors.youthcenter_policy import YouthcenterPolicyConnector
-from ingest.rpc_errors import RpcAmbiguous, RpcTimeout, map_rpc_exception
 from ingest.run import IngestArchitectureResult, run_ai_only, run_ingest_architecture
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
 from ingest.supabase_store import create_ingest_client
@@ -193,51 +192,6 @@ def _missing_ai_only_execute_message() -> str | None:
     return None
 
 
-def _load_legacy_ai_helpers() -> dict[str, Any]:
-    from fetch_and_save import (
-        ENQUEUE_RPC_NAME,
-        is_latest_source_revision,
-        parse_enqueue_result,
-        summarize_with_gemini,
-        translate_with_gemini_ja,
-    )
-
-    def summarize_ko(
-        body: str, url: str | None, title: str | None = None
-    ) -> tuple[str, str, str | None]:
-        return summarize_with_gemini(body, url)
-
-    def enqueue(supabase: Any, params: dict[str, Any]) -> dict[str, Any]:
-        mapped: BaseException | None = None
-        try:
-            response = supabase.rpc(ENQUEUE_RPC_NAME, params).execute()
-        except Exception as exc:
-            candidate = map_rpc_exception(exc)
-            mapped = (
-                candidate
-                if isinstance(candidate, (RpcTimeout, RpcAmbiguous))
-                else RpcAmbiguous()
-            )
-        if mapped is not None:
-            raise mapped
-        parsed: dict[str, Any] | None = None
-        parse_failed = False
-        try:
-            parsed = parse_enqueue_result(getattr(response, "data", None))
-        except Exception:
-            parse_failed = True
-        if parse_failed or parsed is None:
-            raise RpcAmbiguous()
-        return parsed
-
-    return {
-        "summarize_ko": summarize_ko,
-        "translate_ja": translate_with_gemini_ja,
-        "enqueue": enqueue,
-        "revision_precheck": is_latest_source_revision,
-    }
-
-
 def _load_anthropic_ai_helpers(api_key: str) -> dict[str, Any]:
     from ingest.ai_claude import ClaudeAdapter
     from ingest.ai_queue_rpc import enqueue_curation_candidate, is_latest_source_revision
@@ -252,11 +206,9 @@ def _load_anthropic_ai_helpers(api_key: str) -> dict[str, Any]:
 
 
 def _load_ai_helpers(provider: str, api_key: str) -> dict[str, Any]:
-    if provider == PROVIDER_ANTHROPIC:
-        return _load_anthropic_ai_helpers(api_key)
-    if provider == PROVIDER_GEMINI:
-        return _load_legacy_ai_helpers()
-    raise ProviderError("invalid_ai_provider")
+    if provider != PROVIDER_ANTHROPIC:
+        raise ProviderError(INVALID_AI_PROVIDER)
+    return _load_anthropic_ai_helpers(api_key)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
