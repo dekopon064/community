@@ -43,10 +43,10 @@ ProcessingStage = Literal[
 ProductType = Literal["event_program", "policy_reference", "living_guide"]
 ProductTypeAction = Literal["confirm", "override", "rollback"]
 JobStatus = Literal["queued", "claimed", "completed", "failed", "cancelled"]
-ReviewType = Literal["region", "relevance"]
+ReviewType = Literal["region", "relevance", "content"]
 ReviewDecision = Literal["approve_ai", "reject", "needs_review"]
 ReconcileAction = Literal["keep_with_approve", "cancel_unfit", "move_to_review"]
-REVIEW_TYPES: frozenset[str] = frozenset({"region", "relevance"})
+REVIEW_TYPES: frozenset[str] = frozenset({"region", "relevance", "content"})
 REVIEW_DECISIONS: frozenset[str] = frozenset(
     {"approve_ai", "reject", "needs_review"}
 )

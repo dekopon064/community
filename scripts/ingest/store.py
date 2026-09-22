@@ -56,7 +56,7 @@ from ingest.product_type import (
     PRODUCT_TYPES,
 )
 from ingest.assessment import evaluate_proposal, propose_assessment
-from ingest.evaluate_gates import CAPITAL_V1_PROFILE, evaluate_capital_v1
+from ingest.evaluate_gates import CAPITAL_V1_PROFILE, EvaluationResult, evaluate_capital_v1
 from ingest.gate_facts import (
     GATE_FACTS_SCHEMA_VERSION,
     InvalidGateFacts,
@@ -84,6 +84,7 @@ ClockFn = Callable[[], datetime]
 REVIEW_TYPE_TO_STAGE = {
     "region": "region_review",
     "relevance": RELEVANCE_REVIEW_STAGE,
+    "content": "content_review",
 }
 BLOCKING_REVIEW_STAGES = frozenset(
     {
@@ -256,6 +257,13 @@ class _Sync:
 
 
 @dataclass
+class _Candidate:
+    source: str
+    source_item_id: str
+    source_revision_hash: str
+
+
+@dataclass
 class _Item:
     id: str
     source_id: str
@@ -380,6 +388,7 @@ class MemoryIngestStore:
         self.public_curations: dict[str, dict[str, Any]] = {}
         self.decisions: dict[tuple[str, str, str], _Decision] = {}
         self.product_types: dict[tuple[str, str], _ProductType] = {}
+        self.candidates: list[_Candidate] = []
         self._fail_permission_event = False
         self._fail_decision_core = False
         self._fail_decision_core_after_mapped = False
@@ -839,6 +848,7 @@ class MemoryIngestStore:
             "items": copy.deepcopy(self.items),
             "jobs": copy.deepcopy(self.jobs),
             "decisions": copy.deepcopy(self.decisions),
+            "candidates": copy.deepcopy(self.candidates),
         }
         try:
             return self._apply_ingest_review_decision_inner(
@@ -857,6 +867,7 @@ class MemoryIngestStore:
             self.items = snapshot["items"]
             self.jobs = snapshot["jobs"]
             self.decisions = snapshot["decisions"]
+            self.candidates = snapshot["candidates"]
             raise
 
     def _apply_ingest_review_decision_inner(
@@ -893,6 +904,10 @@ class MemoryIngestStore:
             raise RpcFailure("invalid_review_type")
         if v_decision not in REVIEW_DECISIONS:
             raise RpcFailure("invalid_decision")
+        if v_type == "content" and v_decision != "reject":
+            raise RpcFailure("invalid_decision")
+        if v_type == "content" and "insufficient_evidence" not in reasons:
+            raise RpcFailure("insufficient_evidence_required")
         if v_scope not in {
             "capital",
             "nationwide_or_online",
@@ -916,6 +931,8 @@ class MemoryIngestStore:
         item = self._item_by_id(source_item_id)
         if item.revision_hash != v_hash:
             raise RpcFailure("revision_mismatch")
+        if v_type == "content" and v_decision == "reject":
+            self._assert_content_reject_ready(item, v_hash, now)
 
         key = (item.id, v_hash, v_type)
         existing = self.decisions.get(key)
@@ -1198,14 +1215,7 @@ class MemoryIngestStore:
             product_type_reasons=row.reason_codes,
             facts=row.gate_facts,
         )
-        item.disposition = authority.disposition
-        self._sync_v1_jobs_from_evaluation(item, authority, now)
-        self._ensure_queued_ai_job_v1(
-            item,
-            v_hash,
-            now,
-            authority.jobs[0].reason_codes if authority.jobs else (),
-        )
+        self._apply_evaluation_authority(item, authority, now)
         review_job = None
         for stage in (
             "content_review",
@@ -1648,7 +1658,11 @@ class MemoryIngestStore:
     def _complete_mapped_review_job(
         self, item_id: str, revision_hash: str, stage: str, now: datetime
     ) -> None:
-        if stage not in {"region_review", RELEVANCE_REVIEW_STAGE}:
+        if stage not in {
+            "region_review",
+            RELEVANCE_REVIEW_STAGE,
+            "content_review",
+        }:
             raise RpcFailure("invalid_review_type")
         job = self._job_for(item_id, revision_hash, stage)
         if job is not None and job.status in {"queued", "claimed"}:
@@ -2015,11 +2029,57 @@ class MemoryIngestStore:
                 product_type_reasons=persisted.reason_codes,
                 facts=persisted.gate_facts,
             )
-            item.disposition = authority.disposition
-            self._sync_v1_jobs_from_evaluation(item, authority, now)
-            self._ensure_queued_ai_job_v1(
-                item, item.revision_hash, now, authority.jobs[0].reason_codes if authority.jobs else ()
+            self._apply_evaluation_authority(item, authority, now)
+
+    def _assert_content_reject_ready(
+        self, item: _Item, revision_hash: str, now: datetime
+    ) -> None:
+        review = self._job_for(item.id, revision_hash, "content_review")
+        if review is None or review.status not in {"queued", "claimed"}:
+            raise RpcFailure("content_review_not_open")
+        ai_job = self._job_for(item.id, revision_hash, AI_STAGE)
+        if ai_job is not None and self._is_malformed_claimed(ai_job):
+            raise RpcFailure("ai_job_malformed_lease")
+        if ai_job is not None and self._is_live_claimed(ai_job, now):
+            raise RpcFailure("ai_job_claimed")
+        sources = {item.source_id, curation_source_for_enqueue(item.source_id)}
+        if any(
+            candidate.source in sources
+            and candidate.source_item_id == item.external_key
+            and candidate.source_revision_hash == revision_hash
+            for candidate in self.candidates
+        ):
+            raise RpcFailure("curation_candidate_exists")
+
+    def _content_close_pins(self, item: _Item) -> bool:
+        row = self.decisions.get((item.id, item.revision_hash, "content"))
+        return (
+            row is not None
+            and row.decision == "reject"
+            and "insufficient_evidence" in row.reason_codes
+        )
+
+    def _apply_evaluation_authority(
+        self,
+        item: _Item,
+        authority: EvaluationResult,
+        now: datetime,
+        fallback_reasons: tuple[str, ...] = (),
+    ) -> None:
+        reasons = (
+            authority.jobs[0].reason_codes if authority.jobs else fallback_reasons
+        )
+        if self._content_close_pins(item):
+            authority = EvaluationResult(
+                disposition="non_target",
+                jobs=(),
+                region_status="not_applicable",
+                audience_status="not_applicable",
             )
+            reasons = ("insufficient_evidence",)
+        item.disposition = authority.disposition
+        self._sync_v1_jobs_from_evaluation(item, authority, now)
+        self._ensure_queued_ai_job_v1(item, item.revision_hash, now, reasons)
 
     def _sync_v1_jobs_from_evaluation(
         self, item: _Item, evaluation: Any, now: datetime
@@ -2098,14 +2158,7 @@ class MemoryIngestStore:
             product_type_reasons=row.reason_codes,
             facts=row.gate_facts,
         )
-        item.disposition = authority.disposition
-        self._sync_v1_jobs_from_evaluation(item, authority, now)
-        self._ensure_queued_ai_job_v1(
-            item,
-            item.revision_hash,
-            now,
-            authority.jobs[0].reason_codes if authority.jobs else reasons,
-        )
+        self._apply_evaluation_authority(item, authority, now, reasons)
 
     def _resolve_source_item_product_type_inner(
         self,
