@@ -869,7 +869,7 @@ class IngestReviewDecisionSqlContractTests(unittest.TestCase):
         self.assertIn("'content_review'", core)
         self.assertIn("'product_type_review'", core)
         self.assertNotIn("'relationship_review'", core)
-        self.assertNotIn("when 'content' then", core)
+        self.assertIn("when 'content' then 'content_review'", core)
         self.assertIn("if v_review_stage is null then", core)
 
     def test_v2_matches_v1_signature_and_uses_core(self) -> None:
@@ -1472,6 +1472,96 @@ class MinReviewWorkflowSqlContractTests(unittest.TestCase):
         self.assertNotIn("delete from machimoa_review.processing_jobs", lowered)
         self.assertNotIn("delete from public.curations", lowered)
         self.assertEqual(_private_grant_signatures(self.down), set())
+
+
+CLOSE = ROOT / "supabase" / "migrations" / "20260924000000_ingest_content_review_close.sql"
+CLOSE_DOWN = (
+    ROOT / "supabase" / "rollback" / "20260924000000_ingest_content_review_close_down.sql"
+)
+
+
+class ContentReviewCloseSqlContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sql = CLOSE.read_text(encoding="utf-8")
+        self.down = CLOSE_DOWN.read_text(encoding="utf-8")
+
+    def test_reuses_existing_functions_without_new_surface(self) -> None:
+        created = [
+            (match.group(1).lower(), match.group(2))
+            for match in _CREATE_FN.finditer(self.sql)
+        ]
+        self.assertEqual(
+            created,
+            [
+                ("machimoa_review", "apply_ingest_review_decision"),
+                ("machimoa_review", "apply_source_item_evaluation"),
+            ],
+        )
+        lowered = self.sql.lower()
+        self.assertNotIn("create table", lowered)
+        self.assertNotIn("add column", lowered)
+        self.assertNotIn("create function public.", lowered)
+        self.assertNotIn("grant execute", lowered)
+        self.assertNotIn("grant ", lowered)
+        self.assertEqual(_private_grant_signatures(self.sql), set())
+        self.assertIn(
+            "check (review_type in ('region', 'relevance', 'content'))",
+            self.sql,
+        )
+        apply = _function_body(
+            self.sql.split("create or replace function machimoa_review.apply_ingest_review_decision")[1]
+        )
+        self.assertIn("when 'content' then 'content_review'", apply)
+        self.assertIn("raise exception 'invalid_decision'", apply)
+        self.assertIn("raise exception 'insufficient_evidence_required'", apply)
+        self.assertIn("raise exception 'ai_job_claimed'", apply)
+        self.assertIn("raise exception 'revision_mismatch'", apply)
+        self.assertIn("disposition = 'non_target'", apply)
+        before_write = apply.split("insert into machimoa_review.ingest_review_decisions", 1)[0]
+        self.assertIn("raise exception 'content_review_not_open'", before_write)
+        self.assertIn("raise exception 'curation_candidate_exists'", before_write)
+        self.assertIn("processing_stage = 'content_review'", before_write)
+        self.assertIn("status in ('queued', 'claimed')", before_write)
+        self.assertIn("for update", before_write.lower())
+        self.assertNotIn("publish_curation_candidate", self.sql)
+        self.assertNotIn("update machimoa_review.curation_candidates", self.sql.lower())
+        self.assertNotIn("delete from machimoa_review.curation_candidates", self.sql.lower())
+        evaluation = _function_body(
+            self.sql.split("create or replace function machimoa_review.apply_source_item_evaluation")[1]
+        )
+        self.assertIn("review_type = 'content'", evaluation)
+        self.assertIn("'insufficient_evidence' = any(d.reason_codes)", evaluation)
+        self.assertIn("return 'non_target'", evaluation)
+        self.assertIn("evaluate_source_item_gates", evaluation)
+
+    def test_rollback_keeps_rows_and_restores_prior_contract(self) -> None:
+        lowered = self.down.lower()
+        error = lowered.find("raise exception 'rollback_content_review_close_data_present'")
+        drop = lowered.find("drop constraint ingest_review_decisions_type_ck")
+        self.assertGreater(error, 0)
+        self.assertLess(error, drop)
+        self.assertNotIn("delete from machimoa_review.ingest_review_decisions", lowered)
+        self.assertNotIn("delete from machimoa_review.processing_jobs", lowered)
+        self.assertNotIn("delete from public.curations", lowered)
+        self.assertNotIn("delete from machimoa_review.curation_candidates", lowered)
+        self.assertNotIn("grant execute", lowered)
+        self.assertEqual(_private_grant_signatures(self.down), set())
+        self.assertIn(
+            "check (review_type in ('region', 'relevance'))",
+            self.down,
+        )
+        restored = self.down.split(
+            "create or replace function machimoa_review.apply_ingest_review_decision"
+        )[1].split("create or replace function")[0]
+        self.assertIn("v_type not in ('region', 'relevance')", restored)
+        self.assertNotIn("when 'content' then", restored)
+        self.assertNotIn("content_review_not_open", restored)
+        self.assertNotIn("curation_candidate_exists", restored)
+        restored_eval = self.down.split(
+            "create or replace function machimoa_review.apply_source_item_evaluation"
+        )[1]
+        self.assertNotIn("v_closed", restored_eval)
+        self.assertIn("evaluate_source_item_gates", restored_eval)
 
 
 if __name__ == "__main__":

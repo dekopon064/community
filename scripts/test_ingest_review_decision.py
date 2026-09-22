@@ -685,7 +685,7 @@ class MappedReviewStageTests(unittest.TestCase):
             store.resolve_ingest_review_decision(
                 source_item_id=item.id,
                 revision_hash=item.revision_hash,
-                review_type="content",
+                review_type="relationship",
                 decision="approve_ai",
                 region_scope="capital",
                 audience_relevance=(AXIS_JP_RESIDENTS_IN_KR,),
@@ -1466,7 +1466,7 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
                         rule_version=RULE_VERSION,
                         reviewer="human:reviewer",
                     )
-                self.assertEqual(err.exception.code, "invalid_review_type")
+                self.assertEqual(err.exception.code, "invalid_decision")
                 _approve(store, item, review_type="region")
                 _approve(store, item, review_type="relevance")
                 self.assertEqual(item.disposition, before)
