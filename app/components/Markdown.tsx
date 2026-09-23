@@ -81,7 +81,10 @@ const components: Components = {
 
 export default function Markdown({ children }: { children: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+    <ReactMarkdown
+      remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
+      components={components}
+    >
       {children}
     </ReactMarkdown>
   );

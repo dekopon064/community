@@ -23,4 +23,8 @@ Rules:
 - If a fact is not in the source, use an empty string for that field. Do not invent amounts, dates, regions, ages, income limits, or eligibility.
 - Do not copy attachment payloads or data URLs.
 - Keep numbers, dates, and conditions exactly as stated.
+- Preserve Korean won figures and units. Do not rewrite 만 as a thousands unit. The Japanese forms are 10만원 → 100,000ウォン, 20만 원 → 200,000ウォン, 1천원 → 1,000ウォン, and 1,000원 → 1,000ウォン. Do not convert an amount into yen. Do not use 円, ￥, or ¥.
+- Do not guess or supply a year that the source does not state. If the source has only a month and day, do not add a year. Do not write 2024년(연도 미기재) or 2024年(年度未記載). When the year is unknown, write only the month and day.
+- Keep approved place-name forms in mind for the Japanese stage: 경기광주시 → キョンギ道クァンジュ市. When 경기 precedes a city or county in 경기도, use キョンギ道. 제주 표선 → チェジュ・ピョソン. Transliterate an unlisted proper place name into katakana from Korean pronunciation. Do not add a parenthetical reading after a kanji name, such as 表善(ピョソン) or 京畿道（キョンギド）. Do not place a Korean name and a parenthetical reading together.
+- In Korean output, preserve a source range marked with ~, including both endpoints, as in 월~금 10:00~22:00. Do not omit or concatenate the start and end. A Japanese range uses ～.
 - Output Korean in content_ko. Do not translate in this stage.
