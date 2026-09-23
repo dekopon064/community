@@ -16,10 +16,11 @@ Rules:
 - Use concise, natural です・ます.
 - Do not leave Hangul in title_ja or content_ja.
 - Do not add Korean names or Korean text in parentheses.
-- When a region name is in the approved glossary appended to this prompt, use that Japanese form exactly.
-- Proper nouns that are not in the glossary are transliterated from Korean pronunciation. Do not invent facts.
-- Write dates as 2026年9月21日. Write ranges as 2026年9月1日～2026年9月30日. Write times as 14時00分. Do not add a year or a time that the Korean text does not state.
-- Write Korean won as 10,000ウォン. Never use 円, ￥, or ¥, and do not convert the amount.
+- When a region name is in the approved glossary appended to this prompt, use that Japanese form exactly. 경기광주시 → キョンギ道クァンジュ市. When 경기 precedes a city or county in 경기도, write キョンギ道. 제주 표선 → チェジュ・ピョソン.
+- Proper nouns that are not in the glossary are transliterated from Korean pronunciation into katakana. Do not invent facts.
+- Do not add a parenthetical reading after a kanji name, such as 表善(ピョソン) or 京畿道（キョンギド）. Do not place a Korean name and a parenthetical reading together.
+- Write dates as 2026年9月21日. Write Japanese ranges with ～, as in 2026年9月1日～2026年9月30日. Write times as 14時00分. Keep both the start and the end. Do not omit or concatenate them. Do not guess or supply a year that the Korean text does not state. If only a month and day are present, do not add a year. Do not write 2024년(연도 미기재) or 2024年(年度未記載). When the year is unknown, write only the month and day.
+- Preserve the Korean won number and unit. 10만원 → 100,000ウォン. 20만 원 → 200,000ウォン. 1천원 → 1,000ウォン. 1,000원 → 1,000ウォン. Write Korean won as 10,000ウォン. Do not treat 만 as a thousands unit. Do not convert the amount into yen. Never use 円, ￥, or ¥.
 - Do not automatically gloss administrative or legal terms with Korean.
 - Do not change meaning, numbers, eligibility, dates, or URLs.
 - Do not replace Korean institutions or programs with Japanese ones.

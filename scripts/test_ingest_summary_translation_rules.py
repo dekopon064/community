@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import subprocess
 import unittest
+from pathlib import Path
 from typing import Any
 
 from ingest.ai_claude import (
@@ -100,6 +102,46 @@ class PromptAndCandidatePathTests(unittest.TestCase):
         self.assertIn("10,000ウォン", system)
         params = build_translation_create_kwargs(title_ko="제목", content_ko="요약")
         self.assertEqual(params["system"], system)
+
+    def test_rules_and_prompts_keep_amounts_years_and_place_names(self) -> None:
+        rules = (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "ingest-inputs"
+            / "summary_translation_rules.v1.md"
+        ).read_text(encoding="utf-8")
+        translation = translation_system_prompt()
+        required = (
+            "10만원 → 100,000ウォン",
+            "20만 원 → 200,000ウォン",
+            "1천원 → 1,000ウォン",
+            "1,000원 → 1,000ウォン",
+            "2024년(연도 미기재)",
+            "2024年(年度未記載)",
+            "경기광주시 → キョンギ道クァンジュ市",
+            "제주 표선 → チェジュ・ピョソン",
+            "表善(ピョソン)",
+            "京畿道（キョンギド）",
+        )
+        for text in (rules, SUMMARY_SYSTEM, translation):
+            for snippet in required:
+                self.assertIn(snippet, text)
+
+    def test_markdown_keeps_single_tilde_and_double_tilde_strike(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        completed = subprocess.run(
+            ["node", "scripts/test_markdown_single_tilde.mjs"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            completed.stdout + completed.stderr,
+        )
 
     def test_successful_result_enqueues_on_pending_candidate_path(self) -> None:
         store = SpyStore()
