@@ -1,0 +1,121 @@
+version: region-ja-v1
+verified_at: 2026-09-23
+status: approved
+
+entries:
+  # 광역지역 16개
+  - {parent_ko: null, ko: 서울특별시, level: metropolitan, ja: ソウル特別市, status: active}
+  - {parent_ko: null, ko: 부산광역시, level: metropolitan, ja: プサン広域市, status: active}
+  - {parent_ko: null, ko: 대구광역시, level: metropolitan, ja: テグ広域市, status: active}
+  - {parent_ko: null, ko: 인천광역시, level: metropolitan, ja: インチョン広域市, status: active}
+  - {parent_ko: null, ko: 대전광역시, level: metropolitan, ja: テジョン広域市, status: active}
+  - {parent_ko: null, ko: 울산광역시, level: metropolitan, ja: ウルサン広域市, status: active}
+  - {parent_ko: null, ko: 세종특별자치시, level: metropolitan, ja: セジョン特別自治市, status: active}
+  - {parent_ko: null, ko: 경기도, level: metropolitan, ja: キョンギ道, status: active}
+  - {parent_ko: null, ko: 강원특별자치도, level: metropolitan, ja: カンウォン特別自治道, status: active}
+  - {parent_ko: null, ko: 충청북도, level: metropolitan, ja: チュンチョンブク道, status: active}
+  - {parent_ko: null, ko: 충청남도, level: metropolitan, ja: チュンチョンナム道, status: active}
+  - {parent_ko: null, ko: 전북특별자치도, level: metropolitan, ja: チョンブク特別自治道, status: active}
+  - {parent_ko: null, ko: 전남광주통합특별시, level: metropolitan, ja: チョンナム・クァンジュ統合特別市, status: active}
+  - {parent_ko: null, ko: 경상북도, level: metropolitan, ja: キョンサンブク道, status: active}
+  - {parent_ko: null, ko: 경상남도, level: metropolitan, ja: キョンサンナム道, status: active}
+  - {parent_ko: null, ko: 제주특별자치도, level: metropolitan, ja: チェジュ特別自治道, status: active}
+
+  # 서울특별시 자치구 25개
+  - {parent_ko: 서울특별시, ko: 종로구, level: district, ja: チョンノ区, status: active}
+  - {parent_ko: 서울특별시, ko: 중구, level: district, ja: チュン区, status: active}
+  - {parent_ko: 서울특별시, ko: 용산구, level: district, ja: ヨンサン区, status: active}
+  - {parent_ko: 서울특별시, ko: 성동구, level: district, ja: ソンドン区, status: active}
+  - {parent_ko: 서울특별시, ko: 광진구, level: district, ja: クァンジン区, status: active}
+  - {parent_ko: 서울특별시, ko: 동대문구, level: district, ja: トンデムン区, status: active}
+  - {parent_ko: 서울특별시, ko: 중랑구, level: district, ja: チュンナン区, status: active}
+  - {parent_ko: 서울특별시, ko: 성북구, level: district, ja: ソンブク区, status: active}
+  - {parent_ko: 서울특별시, ko: 강북구, level: district, ja: カンブク区, status: active}
+  - {parent_ko: 서울특별시, ko: 도봉구, level: district, ja: トボン区, status: active}
+  - {parent_ko: 서울특별시, ko: 노원구, level: district, ja: ノウォン区, status: active}
+  - {parent_ko: 서울특별시, ko: 은평구, level: district, ja: ウンピョン区, status: active}
+  - {parent_ko: 서울특별시, ko: 서대문구, level: district, ja: ソデムン区, status: active}
+  - {parent_ko: 서울특별시, ko: 마포구, level: district, ja: マポ区, status: active}
+  - {parent_ko: 서울특별시, ko: 양천구, level: district, ja: ヤンチョン区, status: active}
+  - {parent_ko: 서울특별시, ko: 강서구, level: district, ja: カンソ区, status: active}
+  - {parent_ko: 서울특별시, ko: 구로구, level: district, ja: クロ区, status: active}
+  - {parent_ko: 서울특별시, ko: 금천구, level: district, ja: クムチョン区, status: active}
+  - {parent_ko: 서울특별시, ko: 영등포구, level: district, ja: ヨンドゥンポ区, status: active}
+  - {parent_ko: 서울특별시, ko: 동작구, level: district, ja: トンジャク区, status: active}
+  - {parent_ko: 서울특별시, ko: 관악구, level: district, ja: クァナク区, status: active}
+  - {parent_ko: 서울특별시, ko: 서초구, level: district, ja: ソチョ区, status: active}
+  - {parent_ko: 서울특별시, ko: 강남구, level: district, ja: カンナム区, status: active}
+  - {parent_ko: 서울특별시, ko: 송파구, level: district, ja: ソンパ区, status: active}
+  - {parent_ko: 서울특별시, ko: 강동구, level: district, ja: カンドン区, status: active}
+
+  # 인천광역시 군·구 11개
+  - {parent_ko: 인천광역시, ko: 강화군, level: county, ja: カンファ郡, status: active}
+  - {parent_ko: 인천광역시, ko: 옹진군, level: county, ja: オンジン郡, status: active}
+  - {parent_ko: 인천광역시, ko: 제물포구, level: district, ja: チェムルポ区, status: active}
+  - {parent_ko: 인천광역시, ko: 영종구, level: district, ja: ヨンジョン区, status: active}
+  - {parent_ko: 인천광역시, ko: 미추홀구, level: district, ja: ミチュホル区, status: active}
+  - {parent_ko: 인천광역시, ko: 연수구, level: district, ja: ヨンス区, status: active}
+  - {parent_ko: 인천광역시, ko: 남동구, level: district, ja: ナムドン区, status: active}
+  - {parent_ko: 인천광역시, ko: 부평구, level: district, ja: プピョン区, status: active}
+  - {parent_ko: 인천광역시, ko: 계양구, level: district, ja: ケヤン区, status: active}
+  - {parent_ko: 인천광역시, ko: 서해구, level: district, ja: ソヘ区, status: active}
+  - {parent_ko: 인천광역시, ko: 검단구, level: district, ja: コムダン区, status: active}
+
+  # 경기도 시·군 31개
+  - {parent_ko: 경기도, ko: 수원시, level: city, ja: スウォン市, status: active}
+  - {parent_ko: 경기도, ko: 고양시, level: city, ja: コヤン市, status: active}
+  - {parent_ko: 경기도, ko: 용인시, level: city, ja: ヨンイン市, status: active}
+  - {parent_ko: 경기도, ko: 성남시, level: city, ja: ソンナム市, status: active}
+  - {parent_ko: 경기도, ko: 부천시, level: city, ja: プチョン市, status: active}
+  - {parent_ko: 경기도, ko: 화성시, level: city, ja: ファソン市, status: active}
+  - {parent_ko: 경기도, ko: 안산시, level: city, ja: アンサン市, status: active}
+  - {parent_ko: 경기도, ko: 남양주시, level: city, ja: ナミャンジュ市, status: active}
+  - {parent_ko: 경기도, ko: 안양시, level: city, ja: アニャン市, status: active}
+  - {parent_ko: 경기도, ko: 평택시, level: city, ja: ピョンテク市, status: active}
+  - {parent_ko: 경기도, ko: 시흥시, level: city, ja: シフン市, status: active}
+  - {parent_ko: 경기도, ko: 파주시, level: city, ja: パジュ市, status: active}
+  - {parent_ko: 경기도, ko: 의정부시, level: city, ja: ウィジョンブ市, status: active}
+  - {parent_ko: 경기도, ko: 김포시, level: city, ja: キンポ市, status: active}
+  - {parent_ko: 경기도, ko: 광주시, level: city, ja: クァンジュ市, status: active}
+  - {parent_ko: 경기도, ko: 광명시, level: city, ja: クァンミョン市, status: active}
+  - {parent_ko: 경기도, ko: 군포시, level: city, ja: クンポ市, status: active}
+  - {parent_ko: 경기도, ko: 하남시, level: city, ja: ハナム市, status: active}
+  - {parent_ko: 경기도, ko: 오산시, level: city, ja: オサン市, status: active}
+  - {parent_ko: 경기도, ko: 양주시, level: city, ja: ヤンジュ市, status: active}
+  - {parent_ko: 경기도, ko: 이천시, level: city, ja: イチョン市, status: active}
+  - {parent_ko: 경기도, ko: 구리시, level: city, ja: クリ市, status: active}
+  - {parent_ko: 경기도, ko: 안성시, level: city, ja: アンソン市, status: active}
+  - {parent_ko: 경기도, ko: 포천시, level: city, ja: ポチョン市, status: active}
+  - {parent_ko: 경기도, ko: 의왕시, level: city, ja: ウィワン市, status: active}
+  - {parent_ko: 경기도, ko: 여주시, level: city, ja: ヨジュ市, status: active}
+  - {parent_ko: 경기도, ko: 동두천시, level: city, ja: トンドゥチョン市, status: active}
+  - {parent_ko: 경기도, ko: 과천시, level: city, ja: クァチョン市, status: active}
+  - {parent_ko: 경기도, ko: 양평군, level: county, ja: ヤンピョン郡, status: active}
+  - {parent_ko: 경기도, ko: 가평군, level: county, ja: カピョン郡, status: active}
+  - {parent_ko: 경기도, ko: 연천군, level: county, ja: ヨンチョン郡, status: active}
+
+  # 경기도 도시 산하 일반구 24개
+  - {parent_ko: 수원시, ko: 장안구, level: district, ja: チャンアン区, status: active}
+  - {parent_ko: 수원시, ko: 권선구, level: district, ja: クォンソン区, status: active}
+  - {parent_ko: 수원시, ko: 팔달구, level: district, ja: パルダル区, status: active}
+  - {parent_ko: 수원시, ko: 영통구, level: district, ja: ヨントン区, status: active}
+  - {parent_ko: 성남시, ko: 수정구, level: district, ja: スジョン区, status: active}
+  - {parent_ko: 성남시, ko: 중원구, level: district, ja: チュンウォン区, status: active}
+  - {parent_ko: 성남시, ko: 분당구, level: district, ja: プンダン区, status: active}
+  - {parent_ko: 고양시, ko: 덕양구, level: district, ja: トギャン区, status: active}
+  - {parent_ko: 고양시, ko: 일산동구, level: district, ja: イルサンドン区, status: active}
+  - {parent_ko: 고양시, ko: 일산서구, level: district, ja: イルサンソ区, status: active}
+  - {parent_ko: 용인시, ko: 처인구, level: district, ja: チョイン区, status: active}
+  - {parent_ko: 용인시, ko: 기흥구, level: district, ja: キフン区, status: active}
+  - {parent_ko: 용인시, ko: 수지구, level: district, ja: スジ区, status: active}
+  - {parent_ko: 부천시, ko: 원미구, level: district, ja: ウォンミ区, status: active}
+  - {parent_ko: 부천시, ko: 소사구, level: district, ja: ソサ区, status: active}
+  - {parent_ko: 부천시, ko: 오정구, level: district, ja: オジョン区, status: active}
+  - {parent_ko: 화성시, ko: 만세구, level: district, ja: マンセ区, status: active}
+  - {parent_ko: 화성시, ko: 효행구, level: district, ja: ヒョヘン区, status: active}
+  - {parent_ko: 화성시, ko: 병점구, level: district, ja: ピョンジョム区, status: active}
+  - {parent_ko: 화성시, ko: 동탄구, level: district, ja: トンタン区, status: active}
+  - {parent_ko: 안산시, ko: 상록구, level: district, ja: サンノク区, status: active}
+  - {parent_ko: 안산시, ko: 단원구, level: district, ja: タヌォン区, status: active}
+  - {parent_ko: 안양시, ko: 만안구, level: district, ja: マナン区, status: active}
+  - {parent_ko: 안양시, ko: 동안구, level: district, ja: トンアン区, status: active}

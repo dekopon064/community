@@ -128,10 +128,10 @@ class ClaudeContractTests(unittest.TestCase):
     def test_copied_prompt_schema_hashes(self) -> None:
         expected = {
             PROMPTS / "summary_system.txt": (
-                "353c32bfec0e5bd3e1c68fefd79817161d85daf6d26bee6ca46b38faa2a11b2c"
+                "08ad2446d8eb17218f835f7f3c735048b2de8c6d83f3487fdeb1ef97d9971f79"
             ),
             PROMPTS / "translation_system.txt": (
-                "d824125b270a1bb5c5a3d7c98b4546d11f476e9e59841b6506acee00277d0519"
+                "7cc766a6ffb538da43ed430211384973858d168f7e7a7054bd2ead6dfe980965"
             ),
             SCHEMAS / "summary.schema.json": (
                 "88fb85a1a5cd4a485e15701d3e708d3568c212f1f605665f7300b0a0efedb093"
@@ -220,7 +220,13 @@ class ClaudeContractTests(unittest.TestCase):
 
     def test_post_summary_bound_skips_translation(self) -> None:
         adapter, client = _adapter()
-        client.messages.count_values = [100, 5000]
+        summary_input = 100
+        translation_bound = (
+            summary_input
+            + SUMMARY_MAX_TOKENS
+            + CLAUDE_TRANSLATION_INPUT_RESERVE_TOKENS
+        )
+        client.messages.count_values = [summary_input, translation_bound + 1]
         content_ko, status, model = adapter.summarize_ko("본문", None, title="제목")
         self.assertEqual(status, "success")
         self.assertEqual(model, SONNET_MODEL)
