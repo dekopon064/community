@@ -436,8 +436,17 @@ class _SpyStore(MemoryIngestStore):
 def _ai_deps(**overrides: Any) -> dict[str, Any]:
     deps: dict[str, Any] = {
         "supabase": object(),
-        "summarize_ko": lambda text, url: (text, "success", "model"),
-        "translate_ja": lambda title, body: ("t", "b", "success", "model"),
+        "summarize_ko": lambda text, url: (
+            "[한 줄 요약]\n요약입니다.\n\n[주요 내용]\n내용입니다.",
+            "success",
+            "model",
+        ),
+        "translate_ja": lambda title, body: (
+            "t",
+            "[要約]\n要約です。\n\n[主な内容]\n内容です。",
+            "success",
+            "model",
+        ),
         "enqueue": lambda *_a, **_k: {"outcome": "inserted", "candidate_id": "x"},
         "revision_precheck": lambda *_a, **_k: False,
     }
@@ -1618,8 +1627,17 @@ class AiWorkerEnqueueAliasTests(unittest.TestCase):
         process_ai_jobs(
             store,
             supabase=object(),
-            summarize_ko=lambda text, url: (text, "success", "model"),
-            translate_ja=lambda title, body: ("t", "b", "success", "model"),
+            summarize_ko=lambda text, url: (
+                "[한 줄 요약]\n요약입니다.\n\n[주요 내용]\n내용입니다.",
+                "success",
+                "model",
+            ),
+            translate_ja=lambda title, body: (
+                "t",
+                "[要約]\n要約です。\n\n[主な内容]\n内容です。",
+                "success",
+                "model",
+            ),
             enqueue=enqueue,
             revision_precheck=lambda *_a, **_k: False,
         )

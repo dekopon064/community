@@ -23,6 +23,23 @@ AI_STATE_UNKNOWN = "ai_state_unknown"
 AI_SKIPPED_SOURCE_INCOMPLETE = "ai_skipped_source_incomplete"
 AI_NO_JOBS = "ai_no_jobs"
 _RAW_PAYLOAD_SKIP_KEYS = frozenset({"atchfile", "atch_file", "facts"})
+SUMMARY_MAX_CHARS = 1000
+KO_SUMMARY_HEADER = "[한 줄 요약]"
+JA_SUMMARY_HEADER = "[要約]"
+KO_SECTION_HEADERS = (
+    "[한 줄 요약]",
+    "[대상]",
+    "[기간·상태]",
+    "[주요 내용]",
+    "[신청 방법]",
+)
+JA_SECTION_HEADERS = (
+    "[要約]",
+    "[対象]",
+    "[期間・状況]",
+    "[主な内容]",
+    "[申請方法]",
+)
 
 SummarizeFn = Callable[..., tuple[str, str, str | None]]
 TranslateFn = Callable[..., tuple[str | None, str | None, str, str | None]]
@@ -183,6 +200,15 @@ def _process_one(
     if ai_status_ko == "success" and translate_ja is not None:
         title_ja, content_ja, ai_status_ja, _model = translate_ja(title, content_ko)
 
+    summary_ko = extract_summary_section(
+        content_ko, KO_SUMMARY_HEADER, KO_SECTION_HEADERS
+    )
+    summary_ja = None
+    if content_ja is not None:
+        summary_ja = extract_summary_section(
+            content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS
+        )
+
     slug_prefix = "policy" if job.source_id == CANONICAL_POLICY_SOURCE else "content"
     params = {
         "p_source": curation_source,
@@ -200,17 +226,64 @@ def _process_one(
         "p_category": str(
             payload.get("plcyTpNm") or payload.get("pstSeNm") or "기타"
         ),
-        "p_summary_ko": None,
+        "p_summary_ko": summary_ko,
         "p_source_url": source_url,
         "p_ai_model": ai_model,
         "p_title_ja": title_ja,
         "p_content_ja": content_ja,
-        "p_summary_ja": None,
+        "p_summary_ja": summary_ja,
         "p_ai_status_ja": ai_status_ja,
     }
     if "facts" in params or "p_facts" in params:
         raise ValueError("facts_not_allowed_in_enqueue")
     enqueue(supabase, params)
+
+
+def extract_summary_section(
+    content: object,
+    header: str,
+    headers: tuple[str, ...],
+) -> str:
+    """Return the trimmed body of one labeled section.
+
+    The header itself is not part of the value. A missing, empty, or
+    over-long section uses the existing AI schema failure.
+    """
+    if not isinstance(content, str):
+        raise AiJobError("ai_schema_error")
+    ordered = tuple(sorted(headers, key=len, reverse=True))
+    parts: list[str] = []
+    collecting = False
+    found = False
+    for line in content.splitlines():
+        matched = _section_header(line.strip(), ordered)
+        if matched is not None:
+            matched_header, remainder = matched
+            if collecting:
+                break
+            if matched_header == header:
+                found = True
+                collecting = True
+                if remainder:
+                    parts.append(remainder)
+            continue
+        if collecting:
+            parts.append(line)
+    if not found:
+        raise AiJobError("ai_schema_error")
+    body = "\n".join(parts).strip()
+    if not body or len(body) > SUMMARY_MAX_CHARS:
+        raise AiJobError("ai_schema_error")
+    return body
+
+
+def _section_header(stripped: str, headers: tuple[str, ...]) -> tuple[str, str] | None:
+    for header in headers:
+        if stripped == header:
+            return header, ""
+        if stripped.startswith(header):
+            return header, stripped[len(header) :].strip()
+    return None
 
 
 def _call_summarize(

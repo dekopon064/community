@@ -101,8 +101,17 @@ def _seed(store: MemoryIngestStore, count: int) -> None:
 def _ai_deps(**overrides: Any) -> dict[str, Any]:
     deps: dict[str, Any] = {
         "supabase": object(),
-        "summarize_ko": lambda text, url, title=None: (text, "success", "model"),
-        "translate_ja": lambda title, body: ("t", "b", "success", "model"),
+        "summarize_ko": lambda text, url, title=None: (
+            "[한 줄 요약]\n요약입니다.\n\n[주요 내용]\n내용입니다.",
+            "success",
+            "model",
+        ),
+        "translate_ja": lambda title, body: (
+            "t",
+            "[要約]\n要約です。\n\n[主な内容]\n内容です。",
+            "success",
+            "model",
+        ),
         "enqueue": lambda *_a, **_k: {"outcome": "inserted", "candidate_id": "x"},
         "revision_precheck": lambda *_a, **_k: False,
     }
@@ -307,7 +316,11 @@ class AiNoJobsAndPayloadTests(unittest.TestCase):
 
         def summarize(text: str, url: str | None, title: str | None = None) -> tuple[str, str, str]:
             self.assertEqual(title, "테스트 정책")
-            return ("요약", "success", "claude-sonnet-5")
+            return (
+                "[한 줄 요약]\n요약\n\n[주요 내용]\n내용",
+                "success",
+                "claude-sonnet-5",
+            )
 
         result = process_ai_jobs(
             store,

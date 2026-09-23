@@ -106,9 +106,11 @@ class PromptAndCandidatePathTests(unittest.TestCase):
         _seed(store, 1)
         captured: dict[str, Any] = {}
 
+        content_ja = "[要約]\n本文です。\n\n[主な内容]\n詳細です。"
+
         def translate(title: str, body: str) -> tuple[str, str, str, str]:
-            validate_japanese_output("タイトル", "本文です。", f"{title}\n{body}")
-            return ("タイトル", "本文です。", "success", "claude-sonnet-5")
+            validate_japanese_output("タイトル", content_ja, f"{title}\n{body}")
+            return ("タイトル", content_ja, "success", "claude-sonnet-5")
 
         def enqueue(_supabase: Any, params: dict[str, Any]) -> dict[str, Any]:
             captured.update(params)
@@ -120,7 +122,9 @@ class PromptAndCandidatePathTests(unittest.TestCase):
         )
         self.assertEqual(result.completed, 1)
         self.assertEqual(captured["p_title_ja"], "タイトル")
-        self.assertEqual(captured["p_content_ja"], "本文です。")
+        self.assertEqual(captured["p_content_ja"], content_ja)
+        self.assertEqual(captured["p_summary_ko"], "요약입니다.")
+        self.assertEqual(captured["p_summary_ja"], "本文です。")
         self.assertEqual(captured["p_ai_status_ko"], "success")
         self.assertEqual(captured["p_ai_status_ja"], "success")
         self.assertFalse(FORBIDDEN_ENQUEUE_FIELDS & set(captured))
