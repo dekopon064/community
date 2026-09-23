@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ingest.ai_errors import AI_UNEXPECTED_THINKING, AiJobError
+from ingest.region_ja_glossary import glossary_prompt_block, validate_japanese_output
 
 SONNET_MODEL = "claude-sonnet-5"
 SUMMARY_MAX_TOKENS = 2048
@@ -19,7 +20,6 @@ COUNT_TIMEOUT_S = 30.0
 INFERENCE_TIMEOUT_S = 120.0
 MAX_COUNT_CALLS = 2
 MAX_CREATE_CALLS = 2
-CLAUDE_TRANSLATION_INPUT_RESERVE_TOKENS = 2048
 BANNED_SAMPLING_KEYS = frozenset({"temperature", "top_p", "top_k"})
 BANNED_EXTRA_KEYS = frozenset({"extra_body", "extra_headers", "extra_query", "betas"})
 UNEXPECTED_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
@@ -40,9 +40,16 @@ SUMMARY_SCHEMA = _load_json("claude_schemas/summary.schema.json")
 TRANSLATION_SCHEMA = _load_json("claude_schemas/translation.schema.json")
 
 
+def translation_system_prompt() -> str:
+    return f"{TRANSLATION_SYSTEM.rstrip(chr(10))}\n\n{glossary_prompt_block()}\n"
+
+
 def translation_prompt_schema_overhead_tokens() -> int:
     encoded = json.dumps(TRANSLATION_SCHEMA, ensure_ascii=False, separators=(",", ":"))
-    return len(TRANSLATION_SYSTEM) + len(encoded)
+    return len(translation_system_prompt()) + len(encoded)
+
+
+CLAUDE_TRANSLATION_INPUT_RESERVE_TOKENS = translation_prompt_schema_overhead_tokens() + 512
 
 
 def conservative_cost_usd(input_tokens: int, output_tokens: int) -> float:
@@ -124,7 +131,7 @@ def build_translation_create_kwargs(*, title_ko: str, content_ko: str) -> dict[s
     return {
         "model": SONNET_MODEL,
         "max_tokens": TRANSLATION_MAX_TOKENS,
-        "system": TRANSLATION_SYSTEM,
+        "system": translation_system_prompt(),
         "messages": [{"role": "user", "content": user}],
         "thinking": _thinking_disabled(),
         "output_config": _output_config(TRANSLATION_SCHEMA),
@@ -321,6 +328,11 @@ class ClaudeAdapter:
         self._record_actual(message)
         payload = _parse_json_object(_extract_text(message))
         title_ja, content_ja = validate_translation_payload(payload)
+        validate_japanese_output(
+            title_ja,
+            content_ja,
+            korean_source=f"{title}\n{content_ko}",
+        )
         return title_ja, content_ja, "success", SONNET_MODEL
 
     def _count_tokens(self, create_kwargs: dict[str, Any]) -> int:
