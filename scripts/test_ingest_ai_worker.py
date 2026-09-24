@@ -42,6 +42,7 @@ def _policy_item(plcy_no: str) -> dict[str, Any]:
         "frstRegDt": "2026-09-01 12:00:00",
         "lastMdfcnDt": "2026-09-13 12:00:00",
         "inqCnt": "999",
+        "aplyPrdSeCd": "0057002",
     }
 
 

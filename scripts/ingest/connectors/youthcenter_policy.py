@@ -7,6 +7,7 @@ import json
 import os
 from typing import Any, Callable
 
+from ingest.application_deadline import parse_policy_application_deadline
 from ingest.attachments import (
     drop_forbidden_attachments,
     extract_sanitized_source_items,
@@ -82,6 +83,8 @@ NORMALIZED_KEYS = MIN_FIELD_KEYS + (
     "polyBizSecd",
     "rgLcnCd",
     "activity_location_text",
+    "aplyPrdSeCd",
+    "aplyYmd",
 )
 
 REVISION_HASH_FIELDS = (
@@ -102,6 +105,8 @@ REVISION_HASH_FIELDS = (
     "operInstCd",
     "sprvsnInstCd",
     "rgtrInstCd",
+    "aplyPrdSeCd",
+    "aplyYmd",
 )
 
 
@@ -223,6 +228,9 @@ class YouthcenterPolicyConnector(BatchConnector):
         normalized["activity_location_text"] = (
             html_to_plain_text(cleaned.get("activity_location_text") or "") or None
         )
+        deadline = parse_policy_application_deadline(
+            cleaned.get("aplyPrdSeCd"), cleaned.get("aplyYmd")
+        )
         return ObservationRecord(
             external_key=external_key,
             revision_hash=policy_revision_hash(cleaned, source_url),
@@ -243,6 +251,7 @@ class YouthcenterPolicyConnector(BatchConnector):
             jobs=(),
             classifier_decision=None,
             product_type_classification=None,
+            application_deadline=deadline,
         )
 
     def _api_key(self) -> str:
