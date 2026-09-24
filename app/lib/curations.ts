@@ -70,6 +70,7 @@ async function fetchCurationRows(): Promise<Curation[]> {
   const { data, error } = await supabase
     .from("curations")
     .select("*")
+    .eq("is_published", true)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -96,6 +97,7 @@ export async function fetchLocalizedCurationBySlug(
     .from("curations")
     .select("*")
     .eq("slug", slug)
+    .eq("is_published", true)
     .maybeSingle();
 
   if (error) {
@@ -107,23 +109,4 @@ export async function fetchLocalizedCurationBySlug(
   }
 
   return localizeCuration(data as Curation, locale);
-}
-
-export async function fetchCompleteCurationSlugs(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("curations")
-    .select(
-      "slug, title_ko, summary_ko, content_ko, title_ja, summary_ja, content_ja",
-    );
-
-  if (error) {
-    throw new Error("Failed to load curation slugs", { cause: error });
-  }
-
-  const rows = (data ?? []) as Pick<
-    Curation,
-    "slug" | (typeof BILINGUAL_FIELDS)[number]
-  >[];
-
-  return rows.filter(isCompleteBilingualCuration).map((row) => row.slug);
 }

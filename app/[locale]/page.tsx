@@ -5,8 +5,8 @@ import HomeMailbox from "@/app/components/HomeMailbox";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurations } from "@/app/lib/curations";
 
-// 새 글 등록 시 최대 60초 안에 대표 카드를 최신화 (ISR)
-export const revalidate = 60;
+// 공개 상태 변경은 다음 요청부터 바로 반영한다.
+export const dynamic = "force-dynamic";
 
 function asStringList(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];

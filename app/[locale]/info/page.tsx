@@ -3,8 +3,7 @@ import CurationExplorer from "@/app/components/CurationExplorer";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurations } from "@/app/lib/curations";
 
-// 새 글 등록 시 최대 60초 안에 목록을 최신화 (ISR)
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
 
 export default async function InfoPage({
   params,

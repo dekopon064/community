@@ -8,18 +8,9 @@ import Markdown from "@/app/components/Markdown";
 import SignalGlyph from "@/app/components/SignalGlyph";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { categoryGlyphKind } from "@/app/lib/categories";
-import {
-  fetchCompleteCurationSlugs,
-  fetchLocalizedCurationBySlug,
-} from "@/app/lib/curations";
+import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 
-// 콘텐츠 수정 시 최대 60초 안에 상세 페이지를 최신화 (ISR)
-export const revalidate = 60;
-
-export async function generateStaticParams() {
-  const slugs = await fetchCompleteCurationSlugs();
-  return slugs.map((slug) => ({ id: slug }));
-}
+export const dynamic = "force-dynamic";
 
 export default async function InfoDetailPage({
   params,
