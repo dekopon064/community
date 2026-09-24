@@ -1,4 +1,5 @@
 import { ArrowUpRight } from "lucide-react";
+import ApplicationDeadlineText from "@/app/components/ApplicationDeadlineText";
 import SignalGlyph from "@/app/components/SignalGlyph";
 import { categoryGlyphKind } from "@/app/lib/categories";
 import { Link } from "@/i18n/navigation";
@@ -14,6 +15,9 @@ export interface CurationCardProps {
   publishedAt: string;
   publishedLabel: string;
   locale: string;
+  deadlineKind: string | null;
+  deadlineOn: string | null;
+  todayKst: string;
 }
 
 function formatPublishedAt(value: string, locale: string) {
@@ -37,6 +41,9 @@ export default function CurationCard({
   publishedAt,
   publishedLabel,
   locale,
+  deadlineKind,
+  deadlineOn,
+  todayKst,
 }: CurationCardProps) {
   const published = formatPublishedAt(publishedAt, locale);
 
@@ -55,6 +62,12 @@ export default function CurationCard({
 
         <div className="min-w-0">
           <p className="text-xs font-semibold text-ink-sub">{categoryLabel}</p>
+          <ApplicationDeadlineText
+            kind={deadlineKind}
+            on={deadlineOn}
+            todayKst={todayKst}
+            locale={locale}
+          />
           <h2 className="mt-1 break-words text-xl font-bold leading-snug tracking-[-0.035em] text-ink md:text-2xl">
             {title}
           </h2>

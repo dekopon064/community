@@ -18,6 +18,8 @@ export interface Curation {
   source: string | null;
   source_item_id: string | null;
   source_url: string | null;
+  application_deadline_kind: "fixed" | "none" | "closed" | null;
+  application_deadline_on: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,6 +35,8 @@ export interface LocalizedCuration {
   source: string | null;
   source_item_id: string | null;
   source_url: string | null;
+  application_deadline_kind: "fixed" | "none" | "closed" | null;
+  application_deadline_on: string | null;
   created_at: string;
   updated_at: string;
 }

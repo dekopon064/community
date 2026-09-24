@@ -59,6 +59,8 @@ export function localizeCuration(
     source: row.source,
     source_item_id: row.source_item_id,
     source_url: row.source_url,
+    application_deadline_kind: row.application_deadline_kind ?? null,
+    application_deadline_on: row.application_deadline_on ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

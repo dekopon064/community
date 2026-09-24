@@ -1,4 +1,5 @@
 import { ArrowUpRight } from "lucide-react";
+import ApplicationDeadlineText from "@/app/components/ApplicationDeadlineText";
 import { Link } from "@/i18n/navigation";
 import SignalGlyph from "@/app/components/SignalGlyph";
 import { categoryGlyphKind } from "@/app/lib/categories";
@@ -13,6 +14,9 @@ interface HomeCurationEntryProps {
   publishedAt: string;
   publishedLabel: string;
   locale: string;
+  deadlineKind: string | null;
+  deadlineOn: string | null;
+  todayKst: string;
 }
 
 function formatPublishedAt(value: string, locale: string) {
@@ -34,6 +38,9 @@ export default function HomeCurationEntry({
   publishedAt,
   publishedLabel,
   locale,
+  deadlineKind,
+  deadlineOn,
+  todayKst,
 }: HomeCurationEntryProps) {
   const published = formatPublishedAt(publishedAt, locale);
   const glyph = categoryGlyphKind(category);
@@ -53,6 +60,12 @@ export default function HomeCurationEntry({
           <p className="mb-1 text-xs font-semibold text-ink-sub">
             {categoryLabel}
           </p>
+          <ApplicationDeadlineText
+            kind={deadlineKind}
+            on={deadlineOn}
+            todayKst={todayKst}
+            locale={locale}
+          />
           <h2 className="line-clamp-2 min-h-[2.8em] text-[17px] font-bold leading-[1.4] tracking-[-0.038em] text-ink lg:min-h-[2.76em] lg:text-[19px] lg:leading-[1.38]">
             {title}
           </h2>

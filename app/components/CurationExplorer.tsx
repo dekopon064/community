@@ -13,8 +13,10 @@ const ALL = "all" as const;
 
 export default function CurationExplorer({
   curations,
+  todayKst,
 }: {
   curations: LocalizedCuration[];
+  todayKst: string;
 }) {
   const locale = useLocale();
   const t = useTranslations("Info");
@@ -108,6 +110,9 @@ export default function CurationExplorer({
                 publishedAt={item.created_at}
                 publishedLabel={t("publishedAt")}
                 locale={locale}
+                deadlineKind={item.application_deadline_kind}
+                deadlineOn={item.application_deadline_on}
+                todayKst={todayKst}
               />
             ))
           ) : (
