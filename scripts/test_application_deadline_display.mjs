@@ -49,7 +49,7 @@ const pages = [
 ];
 for (const name of pages) {
   const source = readFileSync(join(root, "..", name), "utf8");
-  assert.match(source, /export const revalidate = 60/, name);
+  assert.match(source, /export const dynamic = "force-dynamic"/, name);
   assert.match(source, /todayKst\(/, name);
 }
 const home = readFileSync(join(root, "../app/[locale]/page.tsx"), "utf8");

@@ -8,7 +8,7 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 const withSerwist = withSerwistInit({
   swSrc: "app/sw.ts",
   swDest: "public/sw.js",
-  cacheOnNavigation: true,
+  cacheOnNavigation: false,
   reloadOnOnline: true,
   // 개발 환경에서는 서비스 워커 캐싱이 성가신 문제를 일으키므로 비활성화
   disable: process.env.NODE_ENV === "development",
