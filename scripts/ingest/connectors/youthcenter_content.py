@@ -7,6 +7,7 @@ import json
 import os
 from typing import Any, Callable
 
+from ingest.application_deadline import parse_content_application_deadline
 from ingest.attachments import (
     drop_forbidden_attachments,
     extract_sanitized_source_items,
@@ -250,6 +251,7 @@ class YouthcenterContentConnector(BatchConnector):
         source_url = select_content_source_url(cleaned, plain, hrefs)
         usable = body_is_usable(plain)
         del permission_status, enabled
+        deadline = parse_content_application_deadline(plain)
         relationships = policy_relationship_candidates(
             title=title,
             plain_text=plain,
@@ -306,6 +308,7 @@ class YouthcenterContentConnector(BatchConnector):
             relationships=relationships,
             classifier_decision=None,
             product_type_classification=None,
+            application_deadline=deadline,
         )
 
     def _api_key(self) -> str:

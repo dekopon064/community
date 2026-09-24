@@ -126,7 +126,8 @@ class ProductTypeValueAndClassifierTests(unittest.TestCase):
         raw["pstTtl"] = "서울 한일 교류 설명회"
         raw["pstWholCn"] = (
             "<p>서울에서 열리는 한일 교류 설명회입니다. "
-            "한국 거주 일본인은 참석 가능합니다.</p>"
+            "한국 거주 일본인은 참석 가능합니다. "
+            "신청 마감일은 2026년 9월 30일입니다.</p>"
         )
         record = v3_content_observation(raw)
         self.assertEqual(record.disposition, "target")
@@ -284,7 +285,8 @@ class ProductTypeWriterAndHumanMatrixTests(unittest.TestCase):
         raw["pstTtl"] = "서울 한일 교류 설명회"
         raw["pstWholCn"] = (
             "<p>서울에서 열리는 한일 교류 설명회입니다. "
-            "한국 거주 일본인은 참석 가능합니다.</p>"
+            "한국 거주 일본인은 참석 가능합니다. "
+            "신청 마감일은 2026년 9월 30일입니다.</p>"
         )
         record = v3_content_observation(raw)
         store.upsert_source_observations(

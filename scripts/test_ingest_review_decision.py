@@ -1500,7 +1500,8 @@ class ReviewDispositionTransitionTests(unittest.TestCase):
         second_raw["pstTtl"] = "서울 한일 교류 설명회"
         second_raw["pstWholCn"] = (
             "<p>서울에서 열리는 한일 교류 설명회입니다. "
-            "한국 거주 일본인은 참석 가능합니다.</p>"
+            "한국 거주 일본인은 참석 가능합니다. "
+            "신청 마감일은 2026년 9월 30일입니다.</p>"
         )
         second = v3_content_observation(second_raw)
         self.assertEqual(second.external_key, first.external_key)

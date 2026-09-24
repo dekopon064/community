@@ -177,6 +177,7 @@ class ObservationRecord:
     gate_facts: Mapping[str, Any] | None = None
     assessment_schema_version: str | None = None
     evaluated_profile: str | None = None
+    application_deadline: Any | None = None
 
     def to_rpc_item(self) -> dict[str, Any]:
         payload = {
@@ -221,6 +222,8 @@ class ObservationRecord:
             payload["assessment_schema_version"] = self.assessment_schema_version
         if self.evaluated_profile is not None:
             payload["evaluated_profile"] = self.evaluated_profile
+        if self.application_deadline is not None:
+            payload["application_deadline"] = self.application_deadline.to_payload()
         return payload
 
 
@@ -259,6 +262,17 @@ class ProductTypeResult:
     ai_job_id: str | None
     ai_job_status: str | None
     action_result: str
+
+
+@dataclass(frozen=True)
+class ApplicationDeadlineResult:
+    source_item_id: str
+    revision_hash: str
+    application_deadline_kind: str
+    application_deadline_on: str | None
+    disposition: str
+    review_job_id: str | None
+    review_job_status: str | None
 
 
 @dataclass(frozen=True)

@@ -20,6 +20,7 @@ from ingest.models import (
     Checkpoint,
     ClaimedJob,
     FinishRunResult,
+    ApplicationDeadlineResult,
     GateFactsResult,
     ObservationRecord,
     ObservationResult,
@@ -114,6 +115,15 @@ GATE_FACTS_RESULT_FIELDS = (
     "action_result",
 )
 RECONCILE_FIELDS = ("action_result",) + REVIEW_DECISION_FIELDS
+APPLICATION_DEADLINE_RESULT_FIELDS = (
+    "source_item_id",
+    "revision_hash",
+    "application_deadline_kind",
+    "application_deadline_on",
+    "disposition",
+    "review_job_id",
+    "review_job_status",
+)
 
 GET_INGEST_SOURCE = "get_ingest_source"
 START_INGEST_RUN = "start_ingest_run"
@@ -127,6 +137,7 @@ RESOLVE_INGEST_REVIEW_DECISION = "resolve_ingest_review_decision"
 RECONCILE_QUEUED_AI_JOB = "reconcile_queued_ai_job"
 RESOLVE_SOURCE_ITEM_PRODUCT_TYPE = "resolve_source_item_product_type"
 RESOLVE_SOURCE_ITEM_GATE_FACTS = "resolve_source_item_gate_facts"
+RESOLVE_SOURCE_ITEM_APPLICATION_DEADLINE = "resolve_source_item_application_deadline"
 
 
 def _v4_proposal_record(record: ObservationRecord) -> ObservationRecord:
@@ -700,6 +711,41 @@ class SupabaseIngestStore:
             review_job_id=_optional_uuid(row["review_job_id"]),
             review_job_status=_optional_str(row["review_job_status"]),
             action_result=_nonempty_str(row["action_result"]),
+        )
+
+    def resolve_source_item_application_deadline(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        kind: str,
+        deadline_on: str | None,
+        reviewer: str,
+    ) -> ApplicationDeadlineResult:
+        data = _rpc_data(
+            self._client,
+            RESOLVE_SOURCE_ITEM_APPLICATION_DEADLINE,
+            {
+                "p_source_item_id": source_item_id,
+                "p_revision_hash": revision_hash,
+                "p_application_deadline_kind": kind,
+                "p_application_deadline_on": deadline_on,
+                "p_reviewer": reviewer,
+            },
+        )
+        row = _one_row(data)
+        _require_keys(row, APPLICATION_DEADLINE_RESULT_FIELDS)
+        deadline_on_value = row["application_deadline_on"]
+        return ApplicationDeadlineResult(
+            source_item_id=_uuid_str(row["source_item_id"]),
+            revision_hash=_revision_hash(row["revision_hash"]),
+            application_deadline_kind=_nonempty_str(row["application_deadline_kind"]),
+            application_deadline_on=(
+                None if deadline_on_value in (None, "") else str(deadline_on_value)
+            ),
+            disposition=_nonempty_str(row["disposition"]),
+            review_job_id=_optional_uuid(row["review_job_id"]),
+            review_job_status=_optional_str(row["review_job_status"]),
         )
 
     def set_source_permission(

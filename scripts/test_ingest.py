@@ -289,6 +289,7 @@ def policy_item(
         "frstRegDt": created,
         "lastMdfcnDt": updated,
         "inqCnt": "999",
+        "aplyPrdSeCd": "0057002",
     }
     item.update(extra)
     return item
