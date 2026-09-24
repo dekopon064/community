@@ -2,6 +2,7 @@ import { getTranslations, setRequestLocale } from "next-intl/server";
 import HomeAtlasBackdrop from "@/app/components/HomeAtlasBackdrop";
 import HomeCurationEntry from "@/app/components/HomeCurationEntry";
 import HomeMailbox from "@/app/components/HomeMailbox";
+import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurations } from "@/app/lib/curations";
 
 // 새 글 등록 시 최대 60초 안에 대표 카드를 최신화 (ISR)
@@ -35,6 +36,7 @@ export default async function Home({
   const headlineParts = asStringList(t.raw("headlineParts"));
 
   const curations = await fetchLocalizedCurations(locale);
+  const today = todayKst();
   const [primary, secondary] = curations;
   const visibleCurationCount = [primary, secondary].filter(Boolean).length;
   const primaryPublishedAt = primary
@@ -94,6 +96,9 @@ export default async function Home({
               publishedAt={primary.created_at}
               publishedLabel={t("publishedAt")}
               locale={locale}
+              deadlineKind={primary.application_deadline_kind}
+              deadlineOn={primary.application_deadline_on}
+              todayKst={today}
             />
           ) : (
             <p className="border-b border-stone pb-5 text-sm leading-6 text-ink-sub lg:mt-[72px]">
@@ -110,6 +115,9 @@ export default async function Home({
               publishedAt={secondary.created_at}
               publishedLabel={t("publishedAt")}
               locale={locale}
+              deadlineKind={secondary.application_deadline_kind}
+              deadlineOn={secondary.application_deadline_on}
+              todayKst={today}
             />
           )}
         </section>

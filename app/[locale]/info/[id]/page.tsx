@@ -2,9 +2,11 @@ import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
+import ApplicationDeadlineText from "@/app/components/ApplicationDeadlineText";
 import CurationTrustPanel from "@/app/components/CurationTrustPanel";
 import Markdown from "@/app/components/Markdown";
 import SignalGlyph from "@/app/components/SignalGlyph";
+import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { categoryGlyphKind } from "@/app/lib/categories";
 import {
   fetchCompleteCurationSlugs,
@@ -65,6 +67,12 @@ export default async function InfoDetailPage({
         <p className="mt-5 max-w-3xl text-lg leading-8 text-ink-sub md:text-xl md:leading-9">
           {item.summary}
         </p>
+        <ApplicationDeadlineText
+          kind={item.application_deadline_kind}
+          on={item.application_deadline_on}
+          todayKst={todayKst()}
+          locale={locale}
+        />
         <p className="mt-5 text-sm font-semibold tabular-nums text-coral">
           {t("publishedAt")} · {publishedDate}
         </p>
