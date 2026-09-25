@@ -5,7 +5,13 @@
   "Nav": {
     "label": "主要ナビゲーション",
     "home": "ホーム",
-    "info": "生活",
+    "info": "すべて",
+    "categoryLabel": "情報カテゴリー",
+    "policy": "政策",
+    "program": "プログラム",
+    "event": "イベント",
+    "youth_space": "青年スペース",
+    "living": "暮らし",
     "mailbox": "ポスト",
     "qna": "質問"
   },
@@ -49,15 +55,15 @@
     "cta": "初回ミーティングに申し込む"
   },
   "Info": {
-    "title": "生活情報",
-    "intro": "韓国での暮らしに役立つ制度・政策や、地域のイベント・プログラムを集め、わかりやすく紹介します。",
+    "title": "すべての情報",
+    "intro": "政策、プログラム、イベント、青年スペース、暮らしの情報を探せます。",
     "reviewNote": "それぞれの情報について、公式の発信元と原文をあわせて確認できます。",
-    "filterLabel": "カテゴリーで生活情報を絞り込む",
+    "filterLabel": "情報カテゴリーを選ぶ",
     "all": "すべて",
-    "resultCount": "生活情報 {count}件",
+    "resultCount": "情報 {count}件",
     "atAGlance": "ひと目でわかる概要",
     "publishedAt": "公開日",
-    "emptyTitle": "公開中の生活情報はまだありません。",
+    "emptyTitle": "公開中の情報はまだありません。",
     "emptyDescription": "準備が整った情報から、順次公開します。",
     "filteredEmptyTitle": "このカテゴリーの情報はありません。",
     "filteredEmptyDescription": "別のカテゴリーを選ぶか、すべての情報をご覧ください。",
@@ -72,6 +78,11 @@
     "switch": "{language}に切り替える"
   },
   "Categories": {
+    "policy": "政策",
+    "program": "プログラム",
+    "event": "イベント",
+    "youth_space": "青年スペース",
+    "living": "暮らし",
     "housing": "住まい",
     "identity": "ビザ・行政",
     "work": "仕事",

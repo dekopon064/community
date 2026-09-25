@@ -1,5 +1,5 @@
 import { supabase } from "@/app/lib/supabase";
-import { classifyCurationCategory } from "@/app/lib/categories";
+import { isUserCategory } from "@/app/lib/userCategories";
 import type { Curation, LocalizedCuration } from "@/app/lib/types";
 import { routing } from "@/i18n/routing";
 
@@ -52,7 +52,7 @@ export function localizeCuration(
     id: row.id,
     slug: row.slug,
     category: row.category,
-    categoryKey: classifyCurationCategory(row.category),
+    userCategory: isUserCategory(row.user_category) ? row.user_category : null,
     title,
     summary,
     content,
@@ -61,6 +61,8 @@ export function localizeCuration(
     source_url: row.source_url,
     application_deadline_kind: row.application_deadline_kind ?? null,
     application_deadline_on: row.application_deadline_on ?? null,
+    event_start_on: row.event_start_on ?? null,
+    event_end_on: row.event_end_on ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

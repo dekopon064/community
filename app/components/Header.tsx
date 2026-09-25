@@ -2,17 +2,23 @@
 
 import { useTranslations } from "next-intl";
 import LocaleSwitcher from "@/app/components/LocaleSwitcher";
+import { USER_CATEGORIES } from "@/app/lib/userCategories";
 import { Link, usePathname } from "@/i18n/navigation";
+
+const ITEMS = [
+  { id: "home", href: "/" },
+  { id: "info", href: "/info" },
+  ...USER_CATEGORIES.map((category) => ({
+    id: category,
+    href: `/info/category/${category}`,
+  })),
+] as const;
 
 export default function Header() {
   const t = useTranslations("Header");
   const nav = useTranslations("Nav");
   const pathname = usePathname();
-
-  const items = [
-    { id: "home", href: "/" },
-    { id: "info", href: "/info" },
-  ] as const;
+  const isInfoDetail = /^\/info\/[^/]+$/.test(pathname);
 
   return (
     <header className="sticky top-0 z-50 border-b border-stone/90 bg-canvas-white">
@@ -25,9 +31,11 @@ export default function Header() {
           {t("title")}
         </Link>
 
-        <nav className="ml-14 hidden items-center gap-8 lg:flex" aria-label={nav("label")}>
-          {items.map(({ id, href }) => {
-            const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);
+        <nav className="ml-8 hidden items-center gap-5 lg:flex" aria-label={nav("label")}>
+          {ITEMS.map(({ id, href }) => {
+            const isActive =
+              pathname === href ||
+              (id === "info" && isInfoDetail);
             return (
               <Link
                 key={id}
@@ -49,6 +57,28 @@ export default function Header() {
           <LocaleSwitcher />
         </div>
       </div>
+      <nav
+        aria-label={nav("categoryLabel")}
+        className="overflow-x-auto border-t border-stone/70 px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:hidden"
+      >
+        <div className="flex min-w-max items-center gap-5">
+          {ITEMS.slice(1).map(({ id, href }) => {
+            const isActive = pathname === href || (id === "info" && isInfoDetail);
+            return (
+              <Link
+                key={id}
+                href={href}
+                aria-current={isActive ? "page" : undefined}
+                className={`inline-flex min-h-11 items-center border-b-2 text-sm font-semibold ${
+                  isActive ? "border-focus text-ink" : "border-transparent text-ink-sub"
+                }`}
+              >
+                {nav(id)}
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
     </header>
   );
 }

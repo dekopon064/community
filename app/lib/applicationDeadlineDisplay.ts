@@ -1,3 +1,5 @@
+import type { UserCategory } from "@/app/lib/userCategories";
+
 export type ApplicationDeadlineKind = "fixed" | "none" | "closed";
 
 const DAY_MS = 86_400_000;
@@ -66,4 +68,39 @@ function utcDay(value: string | null | undefined): number | null {
     return null;
   }
   return parsed.getTime();
+}
+
+export function formatCurationPeriod(input: {
+  category: UserCategory | null;
+  deadlineKind: string | null;
+  deadlineOn: string | null;
+  eventStartOn: string | null;
+  eventEndOn: string | null;
+  todayKst: string;
+  locale: string;
+}): string | null {
+  if (input.category === "policy" || input.category === "program") {
+    return formatApplicationDeadline({
+      kind: input.deadlineKind,
+      on: input.deadlineOn,
+      todayKst: input.todayKst,
+      locale: input.locale,
+    });
+  }
+  if (input.category !== "event") return null;
+
+  const start = utcDay(input.eventStartOn);
+  const end = utcDay(input.eventEndOn);
+  if (start === null || end === null || start > end) return null;
+
+  const [startYear, startMonth, startDay] = (input.eventStartOn as string).split("-");
+  const [endYear, endMonth, endDay] = (input.eventEndOn as string).split("-");
+  if (input.locale === "ja") {
+    const from = `${startYear}年${Number(startMonth)}月${Number(startDay)}日`;
+    const to = `${endYear}年${Number(endMonth)}月${Number(endDay)}日`;
+    return `開催 ${from}${from === to ? "" : `～${to}`}`;
+  }
+  const from = `${startYear}.${startMonth}.${startDay}`;
+  const to = `${endYear}.${endMonth}.${endDay}`;
+  return `행사 ${from}${from === to ? "" : `–${to}`}`;
 }

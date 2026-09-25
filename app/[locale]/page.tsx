@@ -13,17 +13,6 @@ function asStringList(value: unknown): readonly string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function formatPublishedDate(value: string, locale: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-
-  return new Intl.DateTimeFormat(locale, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
-
 export default async function Home({
   params,
 }: {
@@ -38,10 +27,6 @@ export default async function Home({
   const curations = await fetchLocalizedCurations(locale);
   const today = todayKst();
   const [primary, secondary] = curations;
-  const visibleCurationCount = [primary, secondary].filter(Boolean).length;
-  const primaryPublishedAt = primary
-    ? formatPublishedDate(primary.created_at, locale)
-    : null;
   const isJapanese = locale === "ja";
 
   return (
@@ -89,15 +74,15 @@ export default async function Home({
           {primary ? (
             <HomeCurationEntry
               slug={primary.slug}
-              category={primary.categoryKey}
-              categoryLabel={categoriesT(primary.categoryKey)}
+              category={primary.userCategory}
+              categoryLabel={primary.userCategory ? categoriesT(primary.userCategory) : null}
               title={primary.title}
               summary={primary.summary}
-              publishedAt={primary.created_at}
-              publishedLabel={t("publishedAt")}
               locale={locale}
               deadlineKind={primary.application_deadline_kind}
               deadlineOn={primary.application_deadline_on}
+              eventStartOn={primary.event_start_on}
+              eventEndOn={primary.event_end_on}
               todayKst={today}
             />
           ) : (
@@ -108,40 +93,22 @@ export default async function Home({
           {secondary && (
             <HomeCurationEntry
               slug={secondary.slug}
-              category={secondary.categoryKey}
-              categoryLabel={categoriesT(secondary.categoryKey)}
+              category={secondary.userCategory}
+              categoryLabel={secondary.userCategory ? categoriesT(secondary.userCategory) : null}
               title={secondary.title}
               summary={secondary.summary}
-              publishedAt={secondary.created_at}
-              publishedLabel={t("publishedAt")}
               locale={locale}
               deadlineKind={secondary.application_deadline_kind}
               deadlineOn={secondary.application_deadline_on}
+              eventStartOn={secondary.event_start_on}
+              eventEndOn={secondary.event_end_on}
               todayKst={today}
             />
           )}
         </section>
 
         <aside className="relative hidden min-w-0 pl-5 lg:block lg:pt-[82px]">
-          {primary && primaryPublishedAt && (
-            <>
-              <span className="absolute left-0 top-[86px] h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-coral" aria-hidden="true" />
-              <span className="absolute left-0 top-[98px] h-9 w-px bg-stone" aria-hidden="true" />
-              <p className="text-sm font-bold tracking-[-0.02em] text-ink">
-                {t("recentlyPublished", { count: visibleCurationCount })}
-              </p>
-              <p className="mt-5 text-xs font-semibold text-ink-sub">{t("latestPublishedAt")}</p>
-              <time
-                dateTime={primary.created_at}
-                className="mt-1 block text-base font-bold tabular-nums tracking-[-0.025em] text-ink"
-              >
-                {primaryPublishedAt}
-              </time>
-            </>
-          )}
-          <div className={primary && primaryPublishedAt ? "mt-10" : undefined}>
-            <HomeMailbox />
-          </div>
+          <HomeMailbox />
         </aside>
       </div>
     </div>
