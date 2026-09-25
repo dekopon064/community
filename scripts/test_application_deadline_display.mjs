@@ -119,7 +119,11 @@ const categoryPage = readFileSync(
 assert.match(categoryPage, /if \(!isUserCategory\(category\)\) notFound\(\)/);
 const header = readFileSync(join(root, "../app/components/Header.tsx"), "utf8");
 assert.match(header, /USER_CATEGORIES\.map/);
-assert.match(header, /isInfoDetail = \/\^\\\/info/);
 assert.match(header, /ITEMS\.slice\(1\)\.map/);
+assert.doesNotMatch(header, /id: "info"/);
+const bottomNav = readFileSync(join(root, "../app/components/BottomNav.tsx"), "utf8");
+assert.doesNotMatch(bottomNav, /id: "info"/);
+assert.doesNotMatch(explorer, /showAllAction|\["all"/);
+assert.match(detail, /item\.userCategory \? `\/info\/category\/\$\{item\.userCategory\}` : "\/info"/);
 
 console.log("ok");
