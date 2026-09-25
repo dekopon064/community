@@ -16,7 +16,7 @@ from ingest.product_type import (
 )
 from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import CANONICAL_POLICY_SOURCE
-from ingest.store import MemoryIngestStore
+from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 from test_ingest import _ai_deps, policy_item
 from test_ingest_assessment import (
     _ai_jobs,

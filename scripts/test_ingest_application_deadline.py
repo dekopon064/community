@@ -220,7 +220,7 @@ class ApplicationDeadlineParseTests(unittest.TestCase):
 
 class ApplicationDeadlineReviewTests(unittest.TestCase):
     def test_unconfirmed_potential_target_opens_one_content_review(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -237,7 +237,7 @@ class ApplicationDeadlineReviewTests(unittest.TestCase):
         self.assertEqual(_ai_jobs(store, item), [])
 
     def test_existing_reason_is_merged_and_removed_without_closing_review(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -274,7 +274,7 @@ class ApplicationDeadlineReviewTests(unittest.TestCase):
         self.assertEqual(_ai_jobs(store, item), [])
 
     def test_non_target_does_not_open_deadline_review(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -295,7 +295,7 @@ class ApplicationDeadlineReviewTests(unittest.TestCase):
         self.assertEqual(_content_reviews(store, item), [])
 
     def test_resolving_the_only_reason_completes_review_and_allows_ai(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -319,7 +319,7 @@ class ApplicationDeadlineReviewTests(unittest.TestCase):
         self.assertEqual(len(_ai_jobs(store, item)), 1)
 
     def test_closed_input_and_invalid_combo_are_fail_closed(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -363,7 +363,7 @@ class ApplicationDeadlineReviewTests(unittest.TestCase):
         self.assertEqual((fact.kind, fact.on), ("closed", None))
 
     def test_same_revision_keeps_fact_and_new_revision_does_not_inherit(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         connector = _policy_connector()
@@ -408,7 +408,7 @@ class ApplicationDeadlineReviewTests(unittest.TestCase):
 
 class ApplicationDeadlineAiGateTests(unittest.TestCase):
     def test_missing_fact_does_not_enqueue_or_claim(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -440,7 +440,7 @@ class ApplicationDeadlineAiGateTests(unittest.TestCase):
         self.assertEqual(_ai_jobs(store, queued)[0].status, "queued")
 
     def test_fixed_none_and_closed_can_proceed(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         cases = (
             ("fixed-case", "0057001", "2026-05-31"),
@@ -466,7 +466,7 @@ class ApplicationDeadlineAiGateTests(unittest.TestCase):
             self.assertEqual(len(claimed), 1, key)
 
     def test_other_open_human_review_still_blocks_ai(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -492,7 +492,7 @@ class ApplicationDeadlineAiGateTests(unittest.TestCase):
         )
 
     def test_expired_claim_reasons_update_and_live_claim_keeps_worker(self) -> None:
-        from ingest.store import MemoryIngestStore
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -526,7 +526,8 @@ class ApplicationDeadlineAiGateTests(unittest.TestCase):
 
 class ApplicationDeadlineCandidateTests(unittest.TestCase):
     def test_candidate_copies_fact_and_publish_rejects_null_kind(self) -> None:
-        from ingest.store import MemoryIngestStore, _Candidate
+        from ingest.store import _Candidate
+        from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
         store = MemoryIngestStore()
         record = _policy_connector().to_observation(
@@ -534,13 +535,13 @@ class ApplicationDeadlineCandidateTests(unittest.TestCase):
             permission_status="testing_only",
             enabled=True,
         )
-        _v4_upsert(store, CANONICAL_POLICY_SOURCE, [record])
-        item = store.items[(CANONICAL_POLICY_SOURCE, "cand")]
         missing = _policy_connector().to_observation(
             _event_item("nofact", aplyPrdSeCd=""),
             permission_status="testing_only",
             enabled=True,
         )
+        _v4_upsert(store, CANONICAL_POLICY_SOURCE, [record, missing])
+        item = store.items[(CANONICAL_POLICY_SOURCE, "cand")]
         with self.assertRaises(RpcFailure) as raised:
             store.enqueue_curation_candidate(
                 source="youthcenter",
@@ -573,6 +574,7 @@ class ApplicationDeadlineCandidateTests(unittest.TestCase):
                 source_item_id="legacy-null",
                 source_revision_hash="b" * 64,
                 application_deadline_kind=None,
+                user_category="policy",
             )
         )
         with self.assertRaises(RpcFailure) as null_kind:

@@ -41,6 +41,7 @@ ProcessingStage = Literal[
     "product_type_review",
 ]
 ProductType = Literal["event_program", "policy_reference", "living_guide"]
+UserCategory = Literal["policy", "program", "event", "youth_space", "living"]
 ProductTypeAction = Literal["confirm", "override", "rollback"]
 JobStatus = Literal["queued", "claimed", "completed", "failed", "cancelled"]
 ReviewType = Literal["region", "relevance", "content", "product_type"]
@@ -270,6 +271,18 @@ class ApplicationDeadlineResult:
     revision_hash: str
     application_deadline_kind: str
     application_deadline_on: str | None
+    disposition: str
+    review_job_id: str | None
+    review_job_status: str | None
+
+
+@dataclass(frozen=True)
+class UserCategoryResult:
+    source_item_id: str
+    revision_hash: str
+    user_category: str
+    event_start_on: str | None
+    event_end_on: str | None
     disposition: str
     review_job_id: str | None
     review_job_status: str | None

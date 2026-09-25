@@ -75,6 +75,12 @@ SAFE_RPC_MESSAGES = frozenset(
         "invalid_application_deadline",
         "application_deadline_required",
         "application_deadline_review_not_open",
+        "invalid_user_category",
+        "user_category_required",
+        "user_category_review_not_open",
+        "invalid_event_period",
+        "event_period_required",
+        "invalid_user_category_period",
     }
 )
 

@@ -103,7 +103,8 @@ from ingest.source_identity import (
     canonical_source_id,
     curation_source_for_enqueue,
 )
-from ingest.store import LeaseLost, MemoryIngestStore
+from ingest.store import LeaseLost
+from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "ingest" / "fixtures"
 HWASUN_PATH = FIXTURES / "hwasun_policy.json"

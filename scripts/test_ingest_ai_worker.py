@@ -18,7 +18,8 @@ from ingest.models import Checkpoint, ObservationRecord, AI_STAGE
 from ingest.relevance import AXIS_JP_RESIDENTS_IN_KR, RULE_VERSION
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
 from ingest.source_identity import CANONICAL_POLICY_SOURCE
-from ingest.store import AI_CLAIM_LIMIT, MemoryIngestStore
+from ingest.store import AI_CLAIM_LIMIT
+from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 from test_ingest import observation_for
 
 SECRET_MARKER = "svc-secret-marker-DoNotLog"

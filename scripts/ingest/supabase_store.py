@@ -21,6 +21,7 @@ from ingest.models import (
     ClaimedJob,
     FinishRunResult,
     ApplicationDeadlineResult,
+    UserCategoryResult,
     GateFactsResult,
     ObservationRecord,
     ObservationResult,
@@ -124,6 +125,16 @@ APPLICATION_DEADLINE_RESULT_FIELDS = (
     "review_job_id",
     "review_job_status",
 )
+USER_CATEGORY_RESULT_FIELDS = (
+    "source_item_id",
+    "revision_hash",
+    "user_category",
+    "event_start_on",
+    "event_end_on",
+    "disposition",
+    "review_job_id",
+    "review_job_status",
+)
 
 GET_INGEST_SOURCE = "get_ingest_source"
 START_INGEST_RUN = "start_ingest_run"
@@ -138,6 +149,7 @@ RECONCILE_QUEUED_AI_JOB = "reconcile_queued_ai_job"
 RESOLVE_SOURCE_ITEM_PRODUCT_TYPE = "resolve_source_item_product_type"
 RESOLVE_SOURCE_ITEM_GATE_FACTS = "resolve_source_item_gate_facts"
 RESOLVE_SOURCE_ITEM_APPLICATION_DEADLINE = "resolve_source_item_application_deadline"
+RESOLVE_SOURCE_ITEM_USER_CATEGORY = "resolve_source_item_user_category"
 
 
 def _v4_proposal_record(record: ObservationRecord) -> ObservationRecord:
@@ -742,6 +754,45 @@ class SupabaseIngestStore:
             application_deadline_kind=_nonempty_str(row["application_deadline_kind"]),
             application_deadline_on=(
                 None if deadline_on_value in (None, "") else str(deadline_on_value)
+            ),
+            disposition=_nonempty_str(row["disposition"]),
+            review_job_id=_optional_uuid(row["review_job_id"]),
+            review_job_status=_optional_str(row["review_job_status"]),
+        )
+
+    def resolve_source_item_user_category(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        user_category: str,
+        event_start_on: str | None,
+        event_end_on: str | None,
+        reviewer: str,
+    ) -> UserCategoryResult:
+        data = _rpc_data(
+            self._client,
+            RESOLVE_SOURCE_ITEM_USER_CATEGORY,
+            {
+                "p_source_item_id": source_item_id,
+                "p_revision_hash": revision_hash,
+                "p_user_category": user_category,
+                "p_event_start_on": event_start_on,
+                "p_event_end_on": event_end_on,
+                "p_reviewer": reviewer,
+            },
+        )
+        row = _one_row(data)
+        _require_keys(row, USER_CATEGORY_RESULT_FIELDS)
+        return UserCategoryResult(
+            source_item_id=_uuid_str(row["source_item_id"]),
+            revision_hash=_revision_hash(row["revision_hash"]),
+            user_category=_nonempty_str(row["user_category"]),
+            event_start_on=(
+                None if row["event_start_on"] in (None, "") else str(row["event_start_on"])
+            ),
+            event_end_on=(
+                None if row["event_end_on"] in (None, "") else str(row["event_end_on"])
             ),
             disposition=_nonempty_str(row["disposition"]),
             review_job_id=_optional_uuid(row["review_job_id"]),
