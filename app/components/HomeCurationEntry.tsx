@@ -1,32 +1,22 @@
 import { ArrowUpRight } from "lucide-react";
-import ApplicationDeadlineText from "@/app/components/ApplicationDeadlineText";
+import CurationPeriodText from "@/app/components/CurationPeriodText";
 import { Link } from "@/i18n/navigation";
 import SignalGlyph from "@/app/components/SignalGlyph";
-import { categoryGlyphKind } from "@/app/lib/categories";
-import type { CurationCategoryKey } from "@/app/lib/categories";
+import { userCategoryGlyphKind } from "@/app/lib/userCategories";
+import type { UserCategory } from "@/app/lib/userCategories";
 
 interface HomeCurationEntryProps {
   slug: string;
-  category: CurationCategoryKey;
-  categoryLabel: string;
+  category: UserCategory | null;
+  categoryLabel: string | null;
   title: string;
   summary: string;
-  publishedAt: string;
-  publishedLabel: string;
   locale: string;
   deadlineKind: string | null;
   deadlineOn: string | null;
+  eventStartOn: string | null;
+  eventEndOn: string | null;
   todayKst: string;
-}
-
-function formatPublishedAt(value: string, locale: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat(locale, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
 }
 
 export default function HomeCurationEntry({
@@ -35,15 +25,14 @@ export default function HomeCurationEntry({
   categoryLabel,
   title,
   summary,
-  publishedAt,
-  publishedLabel,
   locale,
   deadlineKind,
   deadlineOn,
+  eventStartOn,
+  eventEndOn,
   todayKst,
 }: HomeCurationEntryProps) {
-  const published = formatPublishedAt(publishedAt, locale);
-  const glyph = categoryGlyphKind(category);
+  const glyph = category ? userCategoryGlyphKind(category) : "document";
 
   return (
     <Link
@@ -57,12 +46,17 @@ export default function HomeCurationEntry({
           <SignalGlyph kind={glyph} className="h-[1.375rem] w-[1.375rem] lg:h-7 lg:w-7" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="mb-1 text-xs font-semibold text-ink-sub">
-            {categoryLabel}
-          </p>
-          <ApplicationDeadlineText
-            kind={deadlineKind}
-            on={deadlineOn}
+          {categoryLabel && (
+            <p className="mb-1 text-xs font-semibold text-ink-sub">
+              {categoryLabel}
+            </p>
+          )}
+          <CurationPeriodText
+            category={category}
+            deadlineKind={deadlineKind}
+            deadlineOn={deadlineOn}
+            eventStartOn={eventStartOn}
+            eventEndOn={eventEndOn}
             todayKst={todayKst}
             locale={locale}
           />
@@ -72,11 +66,6 @@ export default function HomeCurationEntry({
           <p className="mt-2 line-clamp-2 min-h-[3.16em] text-[13px] leading-[1.58] tracking-[-0.018em] text-ink-sub lg:min-h-[3.24em] lg:text-sm lg:leading-[1.62]">
             {summary}
           </p>
-          {published && (
-            <p className="mt-3 text-xs font-semibold tabular-nums text-ink-sub">
-              {publishedLabel} · <time dateTime={publishedAt}>{published}</time>
-            </p>
-          )}
         </div>
         <ArrowUpRight
           className="h-[1.125rem] w-[1.125rem] shrink-0 text-ink-sub transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 lg:h-5 lg:w-5"

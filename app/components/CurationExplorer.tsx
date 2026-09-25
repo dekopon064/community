@@ -1,52 +1,34 @@
-"use client";
-
-import { useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import CurationCard from "@/app/components/CurationCard";
 import InfoStatePanel from "@/app/components/InfoStatePanel";
 import SignalRibbon from "@/app/components/SignalRibbon";
 import { Link } from "@/i18n/navigation";
 import type { LocalizedCuration } from "@/app/lib/types";
-import type { CurationCategoryKey } from "@/app/lib/categories";
-
-const ALL = "all" as const;
+import { USER_CATEGORIES, type UserCategory } from "@/app/lib/userCategories";
 
 export default function CurationExplorer({
   curations,
   todayKst,
+  selectedCategory,
 }: {
   curations: LocalizedCuration[];
   todayKst: string;
+  selectedCategory?: UserCategory;
 }) {
   const locale = useLocale();
   const t = useTranslations("Info");
   const categoriesT = useTranslations("Categories");
 
-  // 화면 분류 key는 DB 원문 category를 덮지 않고 locale 표시명에만 사용한다.
-  const categories = useMemo(
-    () => Array.from(new Set(curations.map((item) => item.categoryKey))),
-    [curations],
-  );
-
-  const [active, setActive] = useState<CurationCategoryKey | typeof ALL>(ALL);
-  const effectiveActive =
-    active === ALL || categories.includes(active) ? active : ALL;
-
   const filtered =
-    effectiveActive === ALL
+    selectedCategory === undefined
       ? curations
-      : curations.filter((item) => item.categoryKey === effectiveActive);
-
-  const filterOptions: Array<CurationCategoryKey | typeof ALL> = [
-    ALL,
-    ...categories,
-  ];
+      : curations.filter((item) => item.userCategory === selectedCategory);
 
   return (
     <div className="grid min-w-0 gap-10 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14">
       <aside className="lg:sticky lg:top-28 lg:self-start">
         <h1 className="max-w-[12ch] text-4xl font-bold leading-[1.08] tracking-[-0.04em] text-ink md:text-5xl">
-          {t("title")}
+          {selectedCategory ? categoriesT(selectedCategory) : t("title")}
         </h1>
         <p className="mt-5 max-w-md text-base leading-7 text-ink-sub">
           {t("intro")}
@@ -57,34 +39,36 @@ export default function CurationExplorer({
           {t("reviewNote")}
         </p>
 
-        <div
-          aria-label={t("filterLabel")}
-          className="-mx-5 mt-7 overflow-x-auto px-5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:overflow-visible lg:px-0"
-        >
-          <div className="flex gap-2 lg:flex-wrap">
-            {filterOptions.map((category) => {
-              const isActive = effectiveActive === category;
-              const label =
-                category === ALL ? t("all") : categoriesT(category);
-            return (
-              <button
-                key={category}
-                type="button"
-                onClick={() => setActive(category)}
-                aria-pressed={isActive}
-                aria-controls="curation-results"
-                className={`min-h-11 shrink-0 rounded-full px-4 py-2 text-sm font-bold transition-colors ${
-                  isActive
-                    ? "bg-ink text-canvas-white"
-                    : "border border-stone bg-transparent text-ink-sub hover:text-ink"
-                }`}
-              >
-                  {label}
-              </button>
-            );
-          })}
-          </div>
-        </div>
+        {selectedCategory ? (
+          <Link
+            href="/info"
+            className="mt-7 inline-flex min-h-11 items-center text-sm font-bold text-ink underline underline-offset-4"
+          >
+            {t("showAllAction")}
+          </Link>
+        ) : (
+          <nav
+            aria-label={t("filterLabel")}
+            className="-mx-5 mt-7 overflow-x-auto px-5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:overflow-visible lg:px-0"
+          >
+            <div className="flex gap-2 lg:flex-wrap">
+              {(["all", ...USER_CATEGORIES] as const).map((category) => (
+                <Link
+                  key={category}
+                  href={category === "all" ? "/info" : `/info/category/${category}`}
+                  aria-current={category === "all" ? "page" : undefined}
+                  className={`inline-flex min-h-11 shrink-0 items-center rounded-full px-4 py-2 text-sm font-bold transition-colors ${
+                    category === "all"
+                      ? "bg-ink text-canvas-white"
+                      : "border border-stone bg-transparent text-ink-sub hover:text-ink"
+                  }`}
+                >
+                  {category === "all" ? t("all") : categoriesT(category)}
+                </Link>
+              ))}
+            </div>
+          </nav>
+        )}
       </aside>
 
       <section aria-labelledby="curation-results-title" className="min-w-0">
@@ -102,35 +86,35 @@ export default function CurationExplorer({
               <CurationCard
                 key={item.id}
                 slug={item.slug}
-                category={item.categoryKey}
-                categoryLabel={categoriesT(item.categoryKey)}
+                category={item.userCategory}
+                categoryLabel={item.userCategory ? categoriesT(item.userCategory) : null}
                 title={item.title}
                 summary={item.summary}
                 summaryLabel={t("atAGlance")}
-                publishedAt={item.created_at}
-                publishedLabel={t("publishedAt")}
                 locale={locale}
                 deadlineKind={item.application_deadline_kind}
                 deadlineOn={item.application_deadline_on}
+                eventStartOn={item.event_start_on}
+                eventEndOn={item.event_end_on}
                 todayKst={todayKst}
               />
             ))
           ) : (
             <InfoStatePanel
               title={
-                curations.length === 0
+                !selectedCategory && curations.length === 0
                   ? t("emptyTitle")
                   : t("filteredEmptyTitle")
               }
               description={
-                curations.length === 0
+                !selectedCategory && curations.length === 0
                   ? t("emptyDescription")
                   : t("filteredEmptyDescription")
               }
               role="status"
               headingLevel={2}
             >
-              {curations.length === 0 ? (
+              {!selectedCategory && curations.length === 0 ? (
                 <Link
                   href="/"
                   className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white transition-colors hover:bg-focus"
@@ -138,13 +122,12 @@ export default function CurationExplorer({
                   {t("homeAction")}
                 </Link>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setActive(ALL)}
+                <Link
+                  href="/info"
                   className="min-h-11 rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white transition-colors hover:bg-focus"
                 >
                   {t("showAllAction")}
-                </button>
+                </Link>
               )}
             </InfoStatePanel>
           )}

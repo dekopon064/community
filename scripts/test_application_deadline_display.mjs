@@ -4,8 +4,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   formatApplicationDeadline,
+  formatCurationPeriod,
   todayKst,
 } from "../app/lib/applicationDeadlineDisplay.ts";
+import { isUserCategory, USER_CATEGORIES } from "../app/lib/userCategories.ts";
 
 const today = "2026-09-24";
 
@@ -45,6 +47,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const pages = [
   "app/[locale]/page.tsx",
   "app/[locale]/info/page.tsx",
+  "app/[locale]/info/category/[category]/page.tsx",
   "app/[locale]/info/[id]/page.tsx",
 ];
 for (const name of pages) {
@@ -66,10 +69,9 @@ const card = readFileSync(
   "utf8",
 );
 assert.match(home, /todayKst=\{today\}/);
-assert.match(entry, /ApplicationDeadlineText/);
-assert.match(detail, /ApplicationDeadlineText/);
-assert.match(card, /ApplicationDeadlineText/);
-assert.match(card, /formatApplicationDeadline|ApplicationDeadlineText/);
+assert.match(entry, /CurationPeriodText/);
+assert.match(detail, /CurationPeriodText/);
+assert.match(card, /CurationPeriodText/);
 
 const explorer = readFileSync(
   join(root, "../app/components/CurationExplorer.tsx"),
@@ -80,5 +82,44 @@ assert.match(explorer, /todayKst=\{todayKst\}/);
 
 const packageJson = readFileSync(join(root, "../package.json"), "utf8");
 assert.doesNotMatch(packageJson, /date-fns|dayjs|luxon/);
+
+function period(category, deadlineKind, deadlineOn, eventStartOn, eventEndOn, locale = "ko") {
+  return formatCurationPeriod({
+    category,
+    deadlineKind,
+    deadlineOn,
+    eventStartOn,
+    eventEndOn,
+    todayKst: today,
+    locale,
+  });
+}
+assert.equal(period("policy", "fixed", "2026-09-25", null, null), "D-1");
+assert.equal(period("program", "none", null, null, null, "ja"), "随時募集");
+assert.equal(period("event", null, null, "2026-10-03", "2026-10-04"), "행사 2026.10.03–2026.10.04");
+assert.equal(period("event", null, null, "2026-10-03", "2026-10-04", "ja"), "開催 2026年10月3日～2026年10月4日");
+assert.equal(period("event", null, null, "2026-10-03", "2026-10-03"), "행사 2026.10.03");
+assert.equal(period("event", null, null, "2026-10-04", "2026-10-03"), null);
+assert.equal(period("youth_space", "fixed", "2026-09-25", null, null), null);
+assert.equal(period("living", "closed", null, null, null), null);
+assert.equal(period(null, "fixed", "2026-09-25", null, null), null);
+assert.deepEqual(USER_CATEGORIES, ["policy", "program", "event", "youth_space", "living"]);
+assert.equal(isUserCategory("event"), true);
+assert.equal(isUserCategory("other"), false);
+assert.equal(isUserCategory(null), false);
+
+const curationsSource = readFileSync(join(root, "../app/lib/curations.ts"), "utf8");
+assert.match(curationsSource, /isUserCategory\(row\.user_category\)/);
+assert.doesNotMatch(curationsSource, /!isUserCategory\(row\.user_category\)/);
+assert.doesNotMatch(curationsSource, /classifyCurationCategory/);
+const categoryPage = readFileSync(
+  join(root, "../app/[locale]/info/category/[category]/page.tsx"),
+  "utf8",
+);
+assert.match(categoryPage, /if \(!isUserCategory\(category\)\) notFound\(\)/);
+const header = readFileSync(join(root, "../app/components/Header.tsx"), "utf8");
+assert.match(header, /USER_CATEGORIES\.map/);
+assert.match(header, /isInfoDetail = \/\^\\\/info/);
+assert.match(header, /ITEMS\.slice\(1\)\.map/);
 
 console.log("ok");
