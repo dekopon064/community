@@ -22,7 +22,8 @@ from ingest.relevance import (
 )
 from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
-from ingest.store import BLOCKING_REVIEW_STAGES, MemoryIngestStore
+from ingest.store import BLOCKING_REVIEW_STAGES
+from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 from test_ingest import (
     Clock,
     load_content,

@@ -9,7 +9,8 @@ from datetime import datetime, timedelta, timezone
 from ingest.gate_facts import GATE_FACTS_SCHEMA_VERSION
 from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import CANONICAL_POLICY_SOURCE, curation_source_for_enqueue
-from ingest.store import MemoryIngestStore, _Candidate, _Publication
+from ingest.store import _Candidate, _Publication
+from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 from test_ingest import policy_item
 from test_ingest_assessment import _event_item, _policy_connector
 

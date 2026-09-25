@@ -21,7 +21,7 @@ from ingest.product_type import (
 )
 from ingest.rpc_errors import RpcFailure
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
-from ingest.store import MemoryIngestStore
+from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 from test_ingest import Clock, load_content, observation_for, policy_item, v3_content_observation
 from test_ingest_review_decision import (
     _approve,

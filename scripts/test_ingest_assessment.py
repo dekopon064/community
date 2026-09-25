@@ -34,7 +34,7 @@ from ingest.product_type import (
 from ingest.region import extract_eligibility_facts
 from ingest.relevance import classify_foreign_resident_eligibility
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
-from ingest.store import MemoryIngestStore
+from legacy_category_test_store import LegacyCategoryFixtureStore as MemoryIngestStore
 from test_ingest import (
     FakeConnector,
     NO_SLEEP,

@@ -37,6 +37,7 @@ from ingest.models import (
     CLASSIFIER_REVIEWER_PREFIX,
     FinishRunResult,
     ApplicationDeadlineResult,
+    UserCategoryResult,
     GateFactsResult,
     JobPlan,
     ObservationRecord,
@@ -75,6 +76,14 @@ from ingest.gate_facts import (
     parse_gate_facts,
 )
 from ingest.rpc_errors import RpcFailure
+from ingest.user_category import (
+    APPLICATION_CATEGORIES,
+    EVENT_PERIOD_UNKNOWN,
+    USER_CATEGORIES,
+    USER_CATEGORY_UNCONFIRMED,
+    EventPeriod,
+    validated_event_period,
+)
 from ingest.source_identity import (
     CANONICAL_CONTENT_SOURCE,
     CANONICAL_POLICY_SOURCE,
@@ -219,6 +228,18 @@ class IngestStore(Protocol):
     ) -> ProductTypeResult:
         ...
 
+    def resolve_source_item_user_category(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        user_category: str,
+        event_start_on: str | None,
+        event_end_on: str | None,
+        reviewer: str,
+    ) -> UserCategoryResult:
+        ...
+
     def resolve_source_item_gate_facts(
         self,
         *,
@@ -278,6 +299,9 @@ class _Candidate:
     reviewed_by: str | None = None
     application_deadline_kind: str | None = None
     application_deadline_on: str | None = None
+    user_category: str | None = None
+    event_start_on: str | None = None
+    event_end_on: str | None = None
 
 
 @dataclass
@@ -426,6 +450,8 @@ class MemoryIngestStore:
         self.product_types: dict[tuple[str, str], _ProductType] = {}
         self.candidates: list[_Candidate] = []
         self.application_deadlines: dict[tuple[str, str], ApplicationDeadline] = {}
+        self.user_categories: dict[tuple[str, str], str] = {}
+        self.event_periods: dict[tuple[str, str], EventPeriod] = {}
         self._fail_permission_event = False
         self._fail_decision_core = False
         self._fail_decision_core_after_mapped = False
@@ -1350,6 +1376,91 @@ class MemoryIngestStore:
             self.decisions = snapshot["decisions"]
             raise
 
+    def resolve_source_item_user_category(
+        self,
+        *,
+        source_item_id: str,
+        revision_hash: str,
+        user_category: str,
+        event_start_on: str | None,
+        event_end_on: str | None,
+        reviewer: str,
+    ) -> UserCategoryResult:
+        snapshot = {
+            "items": copy.deepcopy(self.items),
+            "jobs": copy.deepcopy(self.jobs),
+            "user_categories": copy.deepcopy(self.user_categories),
+            "event_periods": copy.deepcopy(self.event_periods),
+        }
+        try:
+            category = (user_category or "").strip()
+            if category not in USER_CATEGORIES:
+                raise RpcFailure("invalid_user_category")
+            if not 1 <= len((reviewer or "").strip()) <= 128:
+                raise RpcFailure("invalid_reviewer")
+            period = None
+            if category == "event":
+                try:
+                    period = validated_event_period(event_start_on, event_end_on)
+                except ValueError:
+                    raise RpcFailure("invalid_event_period") from None
+            elif event_start_on is not None or event_end_on is not None:
+                raise RpcFailure("invalid_event_period")
+            item = self._item_by_id(source_item_id)
+            v_hash = (revision_hash or "").strip()
+            if item.revision_hash != v_hash:
+                raise RpcFailure("revision_mismatch")
+            review = self._job_for(item.id, v_hash, "content_review")
+            if (
+                review is None
+                or review.status not in {"queued", "claimed"}
+                or USER_CATEGORY_UNCONFIRMED not in review.reason_codes
+            ):
+                raise RpcFailure("user_category_review_not_open")
+            ai_job = self._job_for(item.id, v_hash, AI_STAGE)
+            now = self._clock()
+            if ai_job is not None and self._is_malformed_claimed(ai_job):
+                raise RpcFailure("ai_job_malformed_lease")
+            if ai_job is not None and self._is_live_claimed(ai_job, now):
+                raise RpcFailure("ai_job_claimed")
+            key = (item.id, v_hash)
+            if category != "event" and key in self.event_periods:
+                raise RpcFailure("invalid_event_period")
+            self.user_categories[key] = category
+            if period is not None:
+                self.event_periods[key] = period
+            period_reasons = {
+                USER_CATEGORY_UNCONFIRMED,
+                APPLICATION_DEADLINE_UNKNOWN,
+                EVENT_PERIOD_UNKNOWN,
+            }
+            review.reason_codes = tuple(
+                dict.fromkeys(
+                    (
+                        *(reason for reason in review.reason_codes if reason not in period_reasons),
+                        *self._required_period_reasons(item),
+                    )
+                )
+            )
+            self._reevaluate_after_period_fact(item, now)
+            review_after = self._job_for(item.id, v_hash, "content_review")
+            return UserCategoryResult(
+                source_item_id=item.id,
+                revision_hash=v_hash,
+                user_category=category,
+                event_start_on=None if period is None else period.start_on,
+                event_end_on=None if period is None else period.end_on,
+                disposition=item.disposition,
+                review_job_id=None if review_after is None else review_after.id,
+                review_job_status=None if review_after is None else review_after.status,
+            )
+        except Exception:
+            self.items = snapshot["items"]
+            self.jobs = snapshot["jobs"]
+            self.user_categories = snapshot["user_categories"]
+            self.event_periods = snapshot["event_periods"]
+            raise
+
     def _resolve_source_item_application_deadline_inner(
         self,
         *,
@@ -1386,7 +1497,7 @@ class MemoryIngestStore:
             for code in review.reason_codes
             if code != APPLICATION_DEADLINE_UNKNOWN
         )
-        self._reevaluate_after_deadline(item, now)
+        self._reevaluate_after_period_fact(item, now)
         review_after = self._job_for(item.id, v_hash, "content_review")
         return ApplicationDeadlineResult(
             source_item_id=item.id,
@@ -1398,7 +1509,7 @@ class MemoryIngestStore:
             review_job_status=None if review_after is None else review_after.status,
         )
 
-    def _reevaluate_after_deadline(self, item: _Item, now: datetime) -> None:
+    def _reevaluate_after_period_fact(self, item: _Item, now: datetime) -> None:
         row = self._product_type_row(item.id, item.revision_hash)
         if row is not None and self._is_v1_complete_product_type_row(row):
             authority = evaluate_capital_v1(
@@ -1416,7 +1527,11 @@ class MemoryIngestStore:
                 reasons = tuple(
                     code
                     for code in review.reason_codes
-                    if code != APPLICATION_DEADLINE_UNKNOWN
+                    if code not in {
+                        APPLICATION_DEADLINE_UNKNOWN,
+                        USER_CATEGORY_UNCONFIRMED,
+                        EVENT_PERIOD_UNKNOWN,
+                    }
                 )
             authority = evaluate_capital_v1(
                 body_usable=item.body_usable,
@@ -1444,10 +1559,21 @@ class MemoryIngestStore:
         canonical = canonical_source_id(source)
         item = None if canonical is None else self.items.get((canonical, source_item_id))
         fact = None
+        category = None
+        event_period = None
         if item is not None and item.revision_hash == source_revision_hash:
-            fact = self.application_deadlines.get((item.id, item.revision_hash))
-        if fact is None:
+            key = (item.id, item.revision_hash)
+            category = self.user_categories.get(key)
+            if category in APPLICATION_CATEGORIES:
+                fact = self.application_deadlines.get(key)
+            elif category == "event":
+                event_period = self.event_periods.get(key)
+        if category is None:
+            raise RpcFailure("user_category_required")
+        if category in APPLICATION_CATEGORIES and fact is None:
             raise RpcFailure("application_deadline_required")
+        if category == "event" and event_period is None:
+            raise RpcFailure("event_period_required")
         for candidate in self.candidates:
             if (
                 candidate.source == source
@@ -1461,8 +1587,11 @@ class MemoryIngestStore:
                 source=source,
                 source_item_id=source_item_id,
                 source_revision_hash=source_revision_hash,
-                application_deadline_kind=fact.kind,
-                application_deadline_on=fact.on,
+                application_deadline_kind=None if fact is None else fact.kind,
+                application_deadline_on=None if fact is None else fact.on,
+                user_category=category,
+                event_start_on=None if event_period is None else event_period.start_on,
+                event_end_on=None if event_period is None else event_period.end_on,
             )
         )
         return {"outcome": "inserted"}
@@ -1489,12 +1618,50 @@ class MemoryIngestStore:
         ]
         deadline_kind = None
         deadline_on = None
+        user_category = None
+        event_start_on = None
+        event_end_on = None
         if matched:
             chosen = matched[-1]
-            if chosen.application_deadline_kind is None:
-                raise RpcFailure("application_deadline_required")
-            deadline_kind = chosen.application_deadline_kind
-            deadline_on = chosen.application_deadline_on
+            user_category = chosen.user_category
+            if user_category not in USER_CATEGORIES:
+                raise RpcFailure("user_category_required")
+            if user_category in APPLICATION_CATEGORIES:
+                if chosen.event_start_on is not None or chosen.event_end_on is not None:
+                    raise RpcFailure("application_deadline_required")
+                try:
+                    deadline = _validated_deadline(
+                        chosen.application_deadline_kind or "",
+                        chosen.application_deadline_on,
+                    )
+                except RpcFailure:
+                    raise RpcFailure("application_deadline_required") from None
+                deadline_kind = deadline.kind
+                deadline_on = deadline.on
+            elif user_category == "event":
+                if (
+                    chosen.application_deadline_kind is not None
+                    or chosen.application_deadline_on is not None
+                ):
+                    raise RpcFailure("event_period_required")
+                try:
+                    period = validated_event_period(
+                        chosen.event_start_on, chosen.event_end_on
+                    )
+                except ValueError:
+                    raise RpcFailure("event_period_required") from None
+                event_start_on = period.start_on
+                event_end_on = period.end_on
+            elif any(
+                value is not None
+                for value in (
+                    chosen.application_deadline_kind,
+                    chosen.application_deadline_on,
+                    chosen.event_start_on,
+                    chosen.event_end_on,
+                )
+            ):
+                raise RpcFailure("invalid_user_category_period")
         curation_id = str(uuid.uuid4())
         self.public_curations[curation_id] = {
             "id": curation_id,
@@ -1504,6 +1671,9 @@ class MemoryIngestStore:
             "source_item_id": external_key,
             "application_deadline_kind": deadline_kind,
             "application_deadline_on": deadline_on,
+            "user_category": user_category,
+            "event_start_on": event_start_on,
+            "event_end_on": event_end_on,
         }
         now = self._clock()
         self.publication_events.append(
@@ -1738,7 +1908,7 @@ class MemoryIngestStore:
             return False
         if not self._has_approve_ai(item.id, revision_hash):
             return False
-        if (item.id, revision_hash) not in self.application_deadlines:
+        if not self._period_facts_ready(item, revision_hash):
             return False
         if self._has_unresolved_blocking_review(item.id, revision_hash):
             return False
@@ -1754,7 +1924,7 @@ class MemoryIngestStore:
         row = self._product_type_row(item.id, revision_hash)
         if row is None or not self._is_v1_complete_product_type_row(row):
             return False
-        if (item.id, revision_hash) not in self.application_deadlines:
+        if not self._period_facts_ready(item, revision_hash):
             return False
         if self._has_unresolved_blocking_review(item.id, revision_hash):
             return False
@@ -2231,25 +2401,32 @@ class MemoryIngestStore:
         for record, result in zip(records, results):
             if result.duplicate_in_batch:
                 continue
-            if result.outcome not in {"new", "changed"}:
-                continue
             item = self.items[(source_id, record.external_key)]
             if item.revision_hash != record.revision_hash:
                 raise RpcFailure("revision_mismatch")
+            if result.outcome == "unchanged":
+                if item.disposition != "non_target" and not self._period_facts_ready(
+                    item, item.revision_hash
+                ):
+                    self._refresh_period_review(item, now)
+                    self._ensure_queued_ai_job_v1(item, item.revision_hash, now, ())
+                continue
+            if result.outcome not in {"new", "changed"}:
+                continue
             key = (item.id, item.revision_hash)
             if key in self.product_types:
-                self._refresh_deadline_review(item, now)
+                self._refresh_period_review(item, now)
                 self._ensure_queued_ai_job_v1(item, item.revision_hash, now, ())
                 continue
             if record.product_type_classification is None:
-                self._refresh_deadline_review(item, now)
+                self._refresh_period_review(item, now)
                 self._ensure_queued_ai_job_v1(item, item.revision_hash, now, ())
                 continue
             parsed = self._parsed_product_type_classification(
                 record.product_type_classification
             )
             if parsed["kind"] == PRODUCT_TYPE_KIND_REVIEW:
-                self._refresh_deadline_review(item, now)
+                self._refresh_period_review(item, now)
                 self._ensure_queued_ai_job_v1(item, item.revision_hash, now, ())
                 continue
             if record.gate_facts is None:
@@ -2378,12 +2555,32 @@ class MemoryIngestStore:
             candidate.reviewed_at = now
             candidate.reviewed_by = reviewer
 
-    def _jobs_with_deadline(
+    def _required_period_reasons(self, item: _Item) -> tuple[str, ...]:
+        key = (item.id, item.revision_hash)
+        category = self.user_categories.get(key)
+        if category is None:
+            return (USER_CATEGORY_UNCONFIRMED,)
+        if category in APPLICATION_CATEGORIES and key not in self.application_deadlines:
+            return (APPLICATION_DEADLINE_UNKNOWN,)
+        if category == "event" and key not in self.event_periods:
+            return (EVENT_PERIOD_UNKNOWN,)
+        return ()
+
+    def _period_facts_ready(self, item: _Item, revision_hash: str) -> bool:
+        if item.revision_hash != revision_hash:
+            return False
+        category = self.user_categories.get((item.id, revision_hash))
+        if category is None:
+            return False
+        return not self._required_period_reasons(item)
+
+    def _jobs_with_period_facts(
         self, item: _Item, authority: EvaluationResult
     ) -> tuple[JobPlan, ...]:
         if authority.disposition == "non_target":
             return authority.jobs
-        if (item.id, item.revision_hash) in self.application_deadlines:
+        missing = self._required_period_reasons(item)
+        if not missing:
             return authority.jobs
         updated: list[JobPlan] = []
         found = False
@@ -2392,71 +2589,54 @@ class MemoryIngestStore:
                 updated.append(job)
                 continue
             found = True
-            if APPLICATION_DEADLINE_UNKNOWN in job.reason_codes:
-                updated.append(job)
-            else:
-                updated.append(
-                    replace(
-                        job,
-                        reason_codes=job.reason_codes
-                        + (APPLICATION_DEADLINE_UNKNOWN,),
-                    )
-                )
-        if not found:
             updated.append(
-                JobPlan(
-                    stage="content_review",
-                    reason_codes=(APPLICATION_DEADLINE_UNKNOWN,),
+                replace(
+                    job,
+                    reason_codes=tuple(dict.fromkeys((*job.reason_codes, *missing))),
                 )
             )
+        if not found:
+            updated.append(JobPlan(stage="content_review", reason_codes=missing))
         return tuple(updated)
 
-    def _refresh_deadline_review(self, item: _Item, now: datetime) -> None:
+    def _refresh_period_review(self, item: _Item, now: datetime) -> None:
         if item.disposition == "non_target":
             return
-        fact = self.application_deadlines.get((item.id, item.revision_hash))
+        missing = self._required_period_reasons(item)
+        period_reasons = {
+            USER_CATEGORY_UNCONFIRMED,
+            APPLICATION_DEADLINE_UNKNOWN,
+            EVENT_PERIOD_UNKNOWN,
+        }
         job = self._job_for(item.id, item.revision_hash, "content_review")
-        if fact is None:
-            if job is None:
-                self._insert_job(
-                    item.id,
-                    item.revision_hash,
-                    "content_review",
-                    now,
-                    (APPLICATION_DEADLINE_UNKNOWN,),
-                )
-                return
-            if self._is_live_claimed(job, now):
-                return
-            codes = tuple(
-                dict.fromkeys((*job.reason_codes, APPLICATION_DEADLINE_UNKNOWN))
+        existing = () if job is None else job.reason_codes
+        reasons = tuple(
+            dict.fromkeys(
+                (*(code for code in existing if code not in period_reasons), *missing)
             )
-            if job.status == "queued" or self._is_lease_expired_claimed(job, now):
-                job.reason_codes = codes
-            elif job.status not in {"queued", "claimed"}:
+        )
+        if job is not None and self._is_live_claimed(job, now):
+            if reasons:
+                job.reason_codes = reasons
+            return
+        if job is None:
+            if reasons:
+                self._insert_job(item.id, item.revision_hash, "content_review", now, reasons)
+            return
+        if reasons:
+            if job.status not in {"queued", "claimed"}:
                 job.status = "queued"
                 job.available_at = now
                 job.claimed_by = None
                 job.claim_lease_until = None
                 job.completed_at = None
                 job.next_retry_at = None
-                job.reason_codes = codes
-            return
-        if job is None or APPLICATION_DEADLINE_UNKNOWN not in job.reason_codes:
-            return
-        if self._is_live_claimed(job, now):
-            return
-        remaining = tuple(
-            code for code in job.reason_codes if code != APPLICATION_DEADLINE_UNKNOWN
-        )
-        if job.status == "queued" or self._is_lease_expired_claimed(job, now):
-            if remaining:
-                job.reason_codes = remaining
-            else:
-                job.status = "completed"
-                job.completed_at = now
-                job.claimed_by = None
-                job.claim_lease_until = None
+            job.reason_codes = reasons
+        elif job.status in {"queued", "claimed"}:
+            job.status = "completed"
+            job.completed_at = now
+            job.claimed_by = None
+            job.claim_lease_until = None
 
     def _apply_evaluation_authority(
         self,
@@ -2479,7 +2659,7 @@ class MemoryIngestStore:
             )
         else:
             authority = replace(
-                authority, jobs=self._jobs_with_deadline(item, authority)
+                authority, jobs=self._jobs_with_period_facts(item, authority)
             )
             reasons = (
                 authority.jobs[0].reason_codes if authority.jobs else fallback_reasons
