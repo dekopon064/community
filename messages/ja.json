@@ -5,7 +5,6 @@
   "Nav": {
     "label": "主要ナビゲーション",
     "home": "ホーム",
-    "info": "すべて",
     "categoryLabel": "情報カテゴリー",
     "policy": "政策",
     "program": "プログラム",
@@ -59,16 +58,14 @@
     "intro": "政策、プログラム、イベント、青年スペース、暮らしの情報を探せます。",
     "reviewNote": "それぞれの情報について、公式の発信元と原文をあわせて確認できます。",
     "filterLabel": "情報カテゴリーを選ぶ",
-    "all": "すべて",
     "resultCount": "情報 {count}件",
     "atAGlance": "ひと目でわかる概要",
     "publishedAt": "公開日",
     "emptyTitle": "公開中の情報はまだありません。",
     "emptyDescription": "準備が整った情報から、順次公開します。",
     "filteredEmptyTitle": "このカテゴリーの情報はありません。",
-    "filteredEmptyDescription": "別のカテゴリーを選ぶか、すべての情報をご覧ください。",
-    "homeAction": "ホームへ",
-    "showAllAction": "すべて見る"
+    "filteredEmptyDescription": "別のカテゴリーを選んでください。",
+    "homeAction": "ホームへ"
   },
   "LocaleSwitcher": {
     "label": "言語を選択",

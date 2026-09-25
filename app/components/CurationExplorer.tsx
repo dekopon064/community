@@ -39,31 +39,19 @@ export default function CurationExplorer({
           {t("reviewNote")}
         </p>
 
-        {selectedCategory ? (
-          <Link
-            href="/info"
-            className="mt-7 inline-flex min-h-11 items-center text-sm font-bold text-ink underline underline-offset-4"
-          >
-            {t("showAllAction")}
-          </Link>
-        ) : (
+        {!selectedCategory && (
           <nav
             aria-label={t("filterLabel")}
             className="-mx-5 mt-7 overflow-x-auto px-5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:overflow-visible lg:px-0"
           >
             <div className="flex gap-2 lg:flex-wrap">
-              {(["all", ...USER_CATEGORIES] as const).map((category) => (
+              {USER_CATEGORIES.map((category) => (
                 <Link
                   key={category}
-                  href={category === "all" ? "/info" : `/info/category/${category}`}
-                  aria-current={category === "all" ? "page" : undefined}
-                  className={`inline-flex min-h-11 shrink-0 items-center rounded-full px-4 py-2 text-sm font-bold transition-colors ${
-                    category === "all"
-                      ? "bg-ink text-canvas-white"
-                      : "border border-stone bg-transparent text-ink-sub hover:text-ink"
-                  }`}
+                  href={`/info/category/${category}`}
+                  className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-stone bg-transparent px-4 py-2 text-sm font-bold text-ink-sub transition-colors hover:text-ink"
                 >
-                  {category === "all" ? t("all") : categoriesT(category)}
+                  {categoriesT(category)}
                 </Link>
               ))}
             </div>
@@ -121,14 +109,7 @@ export default function CurationExplorer({
                 >
                   {t("homeAction")}
                 </Link>
-              ) : (
-                <Link
-                  href="/info"
-                  className="min-h-11 rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white transition-colors hover:bg-focus"
-                >
-                  {t("showAllAction")}
-                </Link>
-              )}
+              ) : null}
             </InfoStatePanel>
           )}
         </div>

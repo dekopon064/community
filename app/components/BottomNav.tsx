@@ -1,18 +1,17 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Home, Info, Mailbox, type LucideIcon } from "lucide-react";
+import { Home, Mailbox, type LucideIcon } from "lucide-react";
 import { Link, usePathname } from "@/i18n/navigation";
 
 interface Tab {
-  id: "home" | "info" | "mailbox";
+  id: "home" | "mailbox";
   href: string;
   icon: LucideIcon;
 }
 
 const TABS: Tab[] = [
   { id: "home", href: "/", icon: Home },
-  { id: "info", href: "/info", icon: Info },
   { id: "mailbox", href: "/feedback", icon: Mailbox },
 ];
 

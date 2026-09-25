@@ -7,7 +7,6 @@ import { Link, usePathname } from "@/i18n/navigation";
 
 const ITEMS = [
   { id: "home", href: "/" },
-  { id: "info", href: "/info" },
   ...USER_CATEGORIES.map((category) => ({
     id: category,
     href: `/info/category/${category}`,
@@ -18,7 +17,6 @@ export default function Header() {
   const t = useTranslations("Header");
   const nav = useTranslations("Nav");
   const pathname = usePathname();
-  const isInfoDetail = /^\/info\/[^/]+$/.test(pathname);
 
   return (
     <header className="sticky top-0 z-50 border-b border-stone/90 bg-canvas-white">
@@ -33,9 +31,7 @@ export default function Header() {
 
         <nav className="ml-8 hidden items-center gap-5 lg:flex" aria-label={nav("label")}>
           {ITEMS.map(({ id, href }) => {
-            const isActive =
-              pathname === href ||
-              (id === "info" && isInfoDetail);
+            const isActive = pathname === href;
             return (
               <Link
                 key={id}
@@ -63,7 +59,7 @@ export default function Header() {
       >
         <div className="flex min-w-max items-center gap-5">
           {ITEMS.slice(1).map(({ id, href }) => {
-            const isActive = pathname === href || (id === "info" && isInfoDetail);
+            const isActive = pathname === href;
             return (
               <Link
                 key={id}
