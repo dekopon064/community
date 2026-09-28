@@ -76,6 +76,8 @@ def process_ai_jobs(
     revision_precheck: PrecheckFn | None = None,
     limit: int = AI_CLAIM_LIMIT,
     require_jobs: bool = False,
+    target_source_item_id: str | None = None,
+    target_revision_hash: str | None = None,
 ) -> AiWorkerResult:
     if not ai_dependencies_ready(
         supabase=supabase, summarize_ko=summarize_ko, enqueue=enqueue
@@ -83,12 +85,15 @@ def process_ai_jobs(
         return AiWorkerResult(status=AI_SKIPPED_NOT_CONFIGURED)
 
     try:
-        jobs = store.claim_processing_jobs(
-            "ai_enrichment",
-            limit=limit,
-            worker_id=WORKER_ID,
-            lease_seconds=DEFAULT_JOB_LEASE_SECONDS,
-        )
+        claim_kwargs: dict[str, Any] = {
+            "limit": limit,
+            "worker_id": WORKER_ID,
+            "lease_seconds": DEFAULT_JOB_LEASE_SECONDS,
+        }
+        if target_source_item_id is not None or target_revision_hash is not None:
+            claim_kwargs["target_source_item_id"] = target_source_item_id
+            claim_kwargs["target_revision_hash"] = target_revision_hash
+        jobs = store.claim_processing_jobs("ai_enrichment", **claim_kwargs)
     except Exception:
         return AiWorkerResult(status=AI_STATE_UNKNOWN)
 

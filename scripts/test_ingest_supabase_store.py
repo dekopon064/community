@@ -9,9 +9,10 @@ from typing import Any, Callable
 
 from ingest.models import Checkpoint, ObservationRecord
 from ingest.rpc_errors import RpcAmbiguous, RpcFailure, RpcTimeout
-from ingest.store import LeaseLost
+from ingest.store import DEFAULT_JOB_LEASE_SECONDS, LeaseLost
 from ingest.supabase_store import (
     CLAIM_PROCESSING_JOBS,
+    CLAIM_TARGET_PROCESSING_JOB,
     COMPLETE_PROCESSING_JOB,
     FAIL_PROCESSING_JOB,
     FINISH_INGEST_RUN,
@@ -254,6 +255,31 @@ class SupabaseIngestStoreRpcTests(unittest.TestCase):
         )
         self.assertEqual(jobs, [])
         self.assertEqual(len(client.calls), 1)
+
+    def test_targeted_claim_uses_dedicated_rpc_and_checks_result(self) -> None:
+        target_id = "22222222-2222-2222-2222-222222222222"
+        revision = "a" * 64
+        client = FakeClient({CLAIM_TARGET_PROCESSING_JOB: lambda _p: [_claimed_row()]})
+        jobs = SupabaseIngestStore(client).claim_processing_jobs(
+            "ai_enrichment", limit=1, worker_id="w",
+            target_source_item_id=target_id, target_revision_hash=revision,
+        )
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(client.calls, [(CLAIM_TARGET_PROCESSING_JOB, {
+            "p_source_item_id": target_id,
+            "p_revision_hash": revision,
+            "p_worker_id": "w",
+            "p_lease_seconds": DEFAULT_JOB_LEASE_SECONDS,
+        })])
+        self.assertEqual(client.table_calls, [])
+
+        mismatch = FakeClient({CLAIM_TARGET_PROCESSING_JOB: lambda _p: [_claimed_row()]})
+        with self.assertRaises(RpcAmbiguous):
+            SupabaseIngestStore(mismatch).claim_processing_jobs(
+                "ai_enrichment", limit=1, worker_id="w",
+                target_source_item_id="33333333-3333-3333-3333-333333333333",
+                target_revision_hash=revision,
+            )
 
     def test_claim_null_dict_string_and_missing_field_are_ambiguous(self) -> None:
         cases = (None, {"job_id": "x"}, "jobs")

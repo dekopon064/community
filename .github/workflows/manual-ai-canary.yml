@@ -1,0 +1,37 @@
+name: Manual AI canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: machimoa-ingest-production
+  cancel-in-progress: false
+
+jobs:
+  ai:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: machimoa-ingest-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install ingest dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Process Boseong current revision only
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          AI_PROVIDER: ${{ vars.AI_PROVIDER }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >-
+          python scripts/run_ingest_architecture.py
+          --ai-only --execute --ai-limit 1
+          --ai-source-item-id babb1e07-a8c8-458e-ba07-10979c1726a6
+          --ai-revision-hash 562607cbaaa3d52ac0bcdc1e973826bf1f12dde979eba309a0a264918891c4f0
