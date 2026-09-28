@@ -113,6 +113,8 @@ def run_ai_only(
     enqueue: Callable[..., dict[str, Any]] | None = None,
     revision_precheck: Callable[..., bool] | None = None,
     ai_limit: int = AI_CLAIM_LIMIT,
+    target_source_item_id: str | None = None,
+    target_revision_hash: str | None = None,
 ) -> IngestArchitectureResult:
     if not ai_dependencies_ready(
         supabase=supabase, summarize_ko=summarize_ko, enqueue=enqueue
@@ -128,6 +130,8 @@ def run_ai_only(
             revision_precheck=revision_precheck,
             limit=ai_limit,
             require_jobs=True,
+            target_source_item_id=target_source_item_id,
+            target_revision_hash=target_revision_hash,
         )
     return IngestArchitectureResult(
         exit_code=0,

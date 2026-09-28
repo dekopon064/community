@@ -171,6 +171,8 @@ class IngestStore(Protocol):
         limit: int = AI_CLAIM_LIMIT,
         worker_id: str,
         lease_seconds: int = DEFAULT_JOB_LEASE_SECONDS,
+        target_source_item_id: str | None = None,
+        target_revision_hash: str | None = None,
     ) -> list[ClaimedJob]:
         ...
 
@@ -820,9 +822,14 @@ class MemoryIngestStore:
         limit: int = AI_CLAIM_LIMIT,
         worker_id: str,
         lease_seconds: int = DEFAULT_JOB_LEASE_SECONDS,
+        target_source_item_id: str | None = None,
+        target_revision_hash: str | None = None,
     ) -> list[ClaimedJob]:
         if stage != AI_STAGE:
             return []
+        targeted = target_source_item_id is not None or target_revision_hash is not None
+        if targeted and (not target_source_item_id or not target_revision_hash or limit != 1):
+            raise ValueError("invalid_ai_target")
         now = self._clock()
         eligible = [
             job
@@ -832,6 +839,15 @@ class MemoryIngestStore:
             and self._claimable_item_for_ai_job(job) is not None
         ]
         eligible.sort(key=lambda job: (job.queued_at, job.id))
+        if targeted:
+            if not eligible:
+                return []
+            first = eligible[0]
+            if (first.source_item_id, first.revision_hash) != (
+                target_source_item_id,
+                target_revision_hash,
+            ):
+                raise ValueError("ai_target_mismatch")
         claimed: list[ClaimedJob] = []
         for job in eligible[:limit]:
             job.status = "claimed"

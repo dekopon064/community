@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import uuid
 from typing import Any, Sequence
 
 from ingest.ai_provider import (
@@ -148,6 +149,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="global AI claim limit; required with --run-ai/--ai-only, range 1-10",
     )
+    parser.add_argument(
+        "--ai-source-item-id",
+        default=None,
+        help="current source item UUID for a targeted one-job AI canary",
+    )
+    parser.add_argument(
+        "--ai-revision-hash",
+        default=None,
+        help="current revision hash for a targeted one-job AI canary",
+    )
     return parser
 
 
@@ -172,6 +183,18 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error("--ai-only requires --ai-limit")
     if args.ai_limit is not None and not (1 <= args.ai_limit <= 10):
         parser.error("--ai-limit must be an integer from 1 to 10")
+    targeted = args.ai_source_item_id is not None or args.ai_revision_hash is not None
+    if targeted:
+        if not args.ai_only or args.ai_limit != 1:
+            parser.error("AI target requires --ai-only --ai-limit 1")
+        try:
+            uuid.UUID(args.ai_source_item_id or "")
+        except ValueError:
+            parser.error("--ai-source-item-id must be a UUID")
+        if not args.ai_revision_hash or len(args.ai_revision_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in args.ai_revision_hash
+        ):
+            parser.error("--ai-revision-hash must be a lowercase SHA-256 hash")
 
 
 def _youth_api_key() -> str:
@@ -267,6 +290,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 enqueue=ai_helpers.get("enqueue"),
                 revision_precheck=ai_helpers.get("revision_precheck"),
                 ai_limit=args.ai_limit if args.ai_limit is not None else 1,
+                target_source_item_id=args.ai_source_item_id,
+                target_revision_hash=args.ai_revision_hash,
             )
             code = cli_ai_only_exit_code(result)
             _print_ai_only_summary(result, exit_code=code)

@@ -956,6 +956,40 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
         self.assertNotIn("ingest source=", stdout)
         self.assertEqual(stderr, "")
 
+    def test_targeted_ai_only_passes_exact_target_without_source_ingest(self) -> None:
+        target_id = "babb1e07-a8c8-458e-ba07-10979c1726a6"
+        revision = "a" * 64
+        with patch("run_ingest_architecture.create_ingest_client", return_value=SimpleNamespace()):
+            with patch("run_ingest_architecture.SupabaseIngestStore"):
+                with patch(
+                    "run_ingest_architecture._load_anthropic_ai_helpers",
+                    return_value={"summarize_ko": object(), "translate_ja": object(),
+                                  "enqueue": object(), "revision_precheck": object()},
+                ):
+                    with patch("run_ingest_architecture.run_ai_only", return_value=_ai_only_result()) as run:
+                        code, _, _ = self._run(
+                            AI_ONLY_ARGV + ["--ai-source-item-id", target_id,
+                                            "--ai-revision-hash", revision],
+                            ANTHROPIC_ENV,
+                        )
+        self.assertEqual(code, 0)
+        self.assertEqual(run.call_args.kwargs["target_source_item_id"], target_id)
+        self.assertEqual(run.call_args.kwargs["target_revision_hash"], revision)
+
+    def test_target_requires_ai_only_limit_one_and_valid_revision(self) -> None:
+        target_id = "babb1e07-a8c8-458e-ba07-10979c1726a6"
+        for args in (
+            ["--ai-only", "--execute", "--ai-limit", "2",
+             "--ai-source-item-id", target_id, "--ai-revision-hash", "a" * 64],
+            ["--ai-only", "--execute", "--ai-limit", "1",
+             "--ai-source-item-id", target_id],
+            ["--ai-only", "--execute", "--ai-limit", "1",
+             "--ai-source-item-id", target_id, "--ai-revision-hash", "BAD"],
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                cli.main(args)
+            self.assertEqual(caught.exception.code, 2)
+
     def test_ai_only_without_source_results_has_no_index_error(self) -> None:
         stdout = io.StringIO()
         result = _ai_only_result(status=AI_NO_JOBS, claimed=0, completed=0)
