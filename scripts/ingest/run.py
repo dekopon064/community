@@ -65,10 +65,13 @@ def run_ingest_architecture(
     revision_precheck: Callable[..., bool] | None = None,
     run_ai: bool = True,
     ai_limit: int = AI_CLAIM_LIMIT,
+    page_limit: int | None = None,
 ) -> IngestArchitectureResult:
     """실제 API·Anthropic·DB는 주입된 의존성이 있을 때만 호출된다."""
+    if page_limit is not None and run_ai:
+        raise ValueError("bounded ingest cannot run AI")
     sleeper = PRODUCTION_SLEEP if sleep is None else sleep
-    results = run_ingest(connectors, store, sleep=sleeper)
+    results = run_ingest(connectors, store, sleep=sleeper, page_limit=page_limit)
 
     if not run_ai:
         ai_result = AiWorkerResult(status=AI_DISABLED)
