@@ -1,7 +1,7 @@
 import { useLocale, useTranslations } from "next-intl";
+import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationCard from "@/app/components/CurationCard";
 import InfoStatePanel from "@/app/components/InfoStatePanel";
-import SignalRibbon from "@/app/components/SignalRibbon";
 import { Link } from "@/i18n/navigation";
 import type { LocalizedCuration } from "@/app/lib/types";
 import { USER_CATEGORIES, type UserCategory } from "@/app/lib/userCategories";
@@ -27,15 +27,18 @@ export default function CurationExplorer({
   return (
     <div className="grid min-w-0 gap-10 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14">
       <aside className="lg:sticky lg:top-28 lg:self-start">
-        <h1 className="max-w-[12ch] text-4xl font-bold leading-[1.08] tracking-[-0.04em] text-ink md:text-5xl">
-          {selectedCategory ? categoriesT(selectedCategory) : t("title")}
-        </h1>
-        <p className="mt-5 max-w-md text-base leading-7 text-ink-sub">
+        <div className="flex items-center gap-2.5 md:gap-3">
+          {selectedCategory && (
+            <CategoryIcon category={selectedCategory} size={48} className="h-10 w-10 shrink-0 md:h-12 md:w-12" />
+          )}
+          <h1 className="max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-ink md:text-5xl">
+            {selectedCategory ? categoriesT(selectedCategory) : t("title")}
+          </h1>
+        </div>
+        <p className="mt-5 max-w-md text-base leading-7 text-info-body">
           {t("intro")}
         </p>
-        <SignalRibbon className="mt-7 ml-auto block h-8 w-44 text-sky/70 lg:ml-0" />
-
-        <p className="mt-7 border-t border-stone pt-5 text-sm leading-6 text-ink-sub">
+        <p className="mt-7 border-t border-info-rule pt-5 text-sm leading-6 text-info-muted">
           {t("reviewNote")}
         </p>
 
@@ -49,7 +52,7 @@ export default function CurationExplorer({
                 <Link
                   key={category}
                   href={`/info/category/${category}`}
-                  className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-stone bg-transparent px-4 py-2 text-sm font-bold text-ink-sub transition-colors hover:text-ink"
+                  className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-info-rule bg-info-surface px-4 py-2 text-sm font-semibold text-info-muted transition-colors hover:bg-white hover:text-ink"
                 >
                   {categoriesT(category)}
                 </Link>
@@ -63,12 +66,12 @@ export default function CurationExplorer({
         <p
           id="curation-results-title"
           aria-live="polite"
-          className="mb-5 text-sm font-bold text-ink"
+          className="mb-4 text-sm font-bold text-ink"
         >
           {t("resultCount", { count: filtered.length })}
         </p>
 
-        <div id="curation-results" className="flex min-w-0 flex-col gap-4">
+        <div id="curation-results" className="flex min-w-0 flex-col border-t border-info-rule">
           {filtered.length > 0 ? (
             filtered.map((item) => (
               <CurationCard

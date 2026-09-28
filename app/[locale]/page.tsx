@@ -1,5 +1,4 @@
 import { getTranslations, setRequestLocale } from "next-intl/server";
-import HomeAtlasBackdrop from "@/app/components/HomeAtlasBackdrop";
 import HomeCurationEntry from "@/app/components/HomeCurationEntry";
 import HomeMailbox from "@/app/components/HomeMailbox";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
@@ -30,8 +29,7 @@ export default async function Home({
   const isJapanese = locale === "ja";
 
   return (
-    <div className="relative isolate min-h-[calc(100dvh-4.25rem)] overflow-hidden bg-canvas lg:min-h-[calc(100dvh-4.5rem)]">
-      <HomeAtlasBackdrop />
+    <div className="min-h-[calc(100dvh-4.25rem)] bg-canvas lg:min-h-[calc(100dvh-4.5rem)]">
       <div className="relative mx-auto max-w-xl px-4 pb-24 pt-[49px] sm:px-8 lg:max-w-7xl lg:grid lg:grid-cols-[minmax(13.5rem,0.82fr)_minmax(0,1.18fr)_18.5rem] lg:items-start lg:gap-x-8 lg:px-8 lg:pb-16 lg:pt-[51px]">
         <section className="relative lg:pt-[69px]">
           <h1
@@ -65,12 +63,16 @@ export default async function Home({
               t("headline")
             )}
           </h1>
-          <p className="mt-5 max-w-sm text-base leading-7 text-ink-sub md:text-lg">
+          <p className="mt-5 max-w-sm text-base leading-7 text-info-body md:text-lg">
             {t("intro")}
           </p>
         </section>
 
-        <section aria-label={t("sectionTitle")} className="mt-[33px] space-y-[18px] lg:mt-0 lg:space-y-8">
+        <section aria-labelledby="home-curations-title" className="mt-[33px] min-w-0 lg:mt-0">
+          <h2 id="home-curations-title" className="mb-4 text-lg font-bold tracking-[-0.02em] text-ink">
+            {t("sectionTitle")}
+          </h2>
+          <div className="border-t border-info-rule">
           {primary ? (
             <HomeCurationEntry
               slug={primary.slug}
@@ -105,6 +107,7 @@ export default async function Home({
               todayKst={today}
             />
           )}
+          </div>
         </section>
 
         <aside className="relative hidden min-w-0 pl-5 lg:block lg:pt-[82px]">

@@ -2,12 +2,11 @@ import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Link } from "@/i18n/navigation";
+import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
 import CurationTrustPanel from "@/app/components/CurationTrustPanel";
 import Markdown from "@/app/components/Markdown";
-import SignalGlyph from "@/app/components/SignalGlyph";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
-import { userCategoryGlyphKind } from "@/app/lib/userCategories";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 
 export const dynamic = "force-dynamic";
@@ -39,21 +38,15 @@ export default async function InfoDetailPage({
       </Link>
 
       <header className="max-w-4xl">
-        <div className="flex items-center gap-3 text-sm font-bold text-ink-sub">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-mineral text-ink">
-            <SignalGlyph
-              kind={item.userCategory ? userCategoryGlyphKind(item.userCategory) : "document"}
-              className="h-7 w-7"
-            />
-          </span>
-          {item.userCategory && <span>{categoriesT(item.userCategory)}</span>}
-        </div>
-        <h1 className="mt-5 break-words text-3xl font-bold leading-[1.16] tracking-[-0.04em] text-ink md:text-5xl">
+        {item.userCategory && (
+          <div className="flex items-center gap-2.5 text-sm font-semibold text-ink">
+            <CategoryIcon category={item.userCategory} size={20} className="h-5 w-5 shrink-0" />
+            <span>{categoriesT(item.userCategory)}</span>
+          </div>
+        )}
+        <h1 className="mt-4 break-words text-[clamp(2rem,5vw,3.25rem)] font-bold leading-[1.17] tracking-[-0.025em] text-ink [overflow-wrap:anywhere]">
           {item.title}
         </h1>
-        <p className="mt-5 max-w-3xl text-lg leading-8 text-ink-sub md:text-xl md:leading-9">
-          {item.summary}
-        </p>
         <CurationPeriodText
           category={item.userCategory}
           deadlineKind={item.application_deadline_kind}
@@ -62,7 +55,11 @@ export default async function InfoDetailPage({
           eventEndOn={item.event_end_on}
           todayKst={todayKst()}
           locale={locale}
+          detail
         />
+        <p className="mt-6 max-w-3xl text-lg leading-8 text-info-body md:mt-7 md:text-xl md:leading-9">
+          {item.summary}
+        </p>
       </header>
 
       <div className="mt-10 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
