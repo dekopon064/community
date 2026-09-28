@@ -1343,6 +1343,72 @@ class JobClaimTests(unittest.TestCase):
 
 
 class OrchestratorTests(unittest.TestCase):
+    def test_bounded_ingest_cannot_run_ai(self) -> None:
+        store = MemoryIngestStore()
+        with self.assertRaisesRegex(ValueError, "bounded ingest cannot run AI"):
+            run_ingest_architecture(
+                store=store, connectors=[FakeConnector()], page_limit=1, run_ai=True
+            )
+        self.assertEqual(store.runs, {})
+
+    def test_one_page_canary_does_not_complete_truncated_bootstrap(self) -> None:
+        store = MemoryIngestStore()
+        first = BatchResult(
+            items=(policy_item("p1", zip_cd="11680", oper_cd="11680"),),
+            next_checkpoint=Checkpoint.for_rest_page(2),
+            natural_end=False,
+        )
+        second = BatchResult(
+            items=(policy_item("p2", zip_cd="11680", oper_cd="11680"),),
+            next_checkpoint=None,
+            natural_end=True,
+        )
+        connector = FakeConnector(batches=[first, second])
+        result = run_connector(connector, store, page_limit=1, sleep=lambda _s: None)
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "canary_page_limit")
+        self.assertEqual(connector.calls, 1)
+        self.assertFalse(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        self.assertIn((CANONICAL_POLICY_SOURCE, "p1"), store.items)
+        self.assertNotIn((CANONICAL_POLICY_SOURCE, "p2"), store.items)
+
+        full = run_connector(
+            FakeConnector(batches=[first, second]), store, sleep=lambda _s: None
+        )
+        self.assertEqual(full.status, "complete")
+        self.assertTrue(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        self.assertIn((CANONICAL_POLICY_SOURCE, "p2"), store.items)
+
+    def test_one_page_canary_rejects_oversized_api_page_before_write(self) -> None:
+        store = MemoryIngestStore()
+        item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        connector = FakeConnector(
+            batches=[BatchResult(
+                items=(item,) * 6,
+                next_checkpoint=Checkpoint.for_rest_page(2),
+                natural_end=False,
+            )]
+        )
+        result = run_connector(connector, store, page_limit=1, sleep=lambda _s: None)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stop_reason, "canary_oversized_page")
+        self.assertNotIn((CANONICAL_POLICY_SOURCE, "p1"), store.items)
+        self.assertFalse(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+
+    def test_one_page_canary_limits_already_bootstrapped_source(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        connector = FakeConnector(batches=[BatchResult(
+            items=(policy_item("p1", zip_cd="11680", oper_cd="11680"),),
+            next_checkpoint=Checkpoint.for_rest_page(2),
+            natural_end=False,
+        )])
+        result = run_connector(connector, store, page_limit=1, sleep=lambda _s: None)
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "canary_page_limit")
+        self.assertEqual(connector.calls, 1)
+        self.assertTrue(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+
     def test_bootstrap_incomplete_does_not_set_complete_flag(self) -> None:
         store = MemoryIngestStore()
         item = policy_item("p1", zip_cd="11680", oper_cd="11680")

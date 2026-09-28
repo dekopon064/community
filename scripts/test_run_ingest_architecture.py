@@ -161,6 +161,38 @@ class CliExitMatrixTests(unittest.TestCase):
 
 
 class CliArgumentTests(unittest.TestCase):
+    def test_one_page_canary_rejects_ai_options(self) -> None:
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                cli.main([
+                    "--source", CANONICAL_POLICY_SOURCE, "--execute",
+                    "--canary-one-page", "--run-ai", "--ai-limit", "1",
+                ])
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_one_page_canary_passes_limit_without_ai(self) -> None:
+        env = {
+            "SUPABASE_URL": "https://example.invalid",
+            "SUPABASE_SERVICE_KEY": "local-test-key",
+            "YOUTH_CONTENT_API_KEY": "local-content-key",
+        }
+        source = SourceRunResult(
+            CANONICAL_CONTENT_SOURCE, status="complete",
+            stop_reason="canary_page_limit", batches_ok=1,
+            http_request_count=1, bootstrap_complete=False,
+        )
+        with patch.dict(os.environ, env, clear=True):
+            with patch("run_ingest_architecture.create_ingest_client", return_value=SimpleNamespace()):
+                with patch("run_ingest_architecture.run_ingest_architecture", return_value=_result(source=source)) as run:
+                    code = cli.main([
+                        "--source", CANONICAL_CONTENT_SOURCE,
+                        "--execute", "--canary-one-page",
+                    ])
+        self.assertEqual(code, 0)
+        self.assertEqual(run.call_args.kwargs["page_limit"], 1)
+        self.assertFalse(run.call_args.kwargs["run_ai"])
+        self.assertEqual(len(run.call_args.kwargs["connectors"]), 1)
+
     def test_source_is_required_and_single(self) -> None:
         with self.assertRaises(SystemExit) as missing:
             cli.main([])

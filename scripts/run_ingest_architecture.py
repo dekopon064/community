@@ -128,6 +128,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="operator approval to perform Youth/DB I/O",
     )
     parser.add_argument(
+        "--canary-one-page",
+        action="store_true",
+        help="process at most one API page without completing a truncated bootstrap",
+    )
+    parser.add_argument(
         "--run-ai",
         action="store_true",
         help="process global AI queue after source complete",
@@ -147,6 +152,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.canary_one_page and (args.ai_only or args.run_ai):
+        parser.error("--canary-one-page cannot be combined with AI options")
     if args.ai_only and args.source:
         parser.error("--ai-only cannot be used with --source")
     if args.ai_only and args.run_ai:
@@ -282,6 +289,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             revision_precheck=ai_helpers.get("revision_precheck"),
             run_ai=args.run_ai,
             ai_limit=args.ai_limit if args.ai_limit is not None else 10,
+            page_limit=1 if args.canary_one_page else None,
         )
         code = cli_exit_code(result, run_ai=args.run_ai)
         _print_summary(result, run_ai=args.run_ai, exit_code=code)

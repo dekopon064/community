@@ -142,7 +142,10 @@ def run_connector(
     permission_status: str | None = None,
     enabled: bool | None = None,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    page_limit: int | None = None,
 ) -> SourceRunResult:
+    if page_limit is not None and page_limit < 1:
+        raise ValueError("page_limit must be positive")
     capability = require_ordering_capability(connector)
     source_id = connector.canonical_source_id
     source_row = store.get_source(source_id)
@@ -179,6 +182,8 @@ def run_connector(
     bootstrap = not started.bootstrap_complete
     checkpoint = _starting_checkpoint(connector.start_mode, started.committed_checkpoint)
     max_pages = connector.bootstrap_max_pages if bootstrap else connector.max_pages
+    if page_limit is not None:
+        max_pages = min(max_pages, page_limit)
     max_items = connector.bootstrap_max_items if bootstrap else None
     streak = 0
     anomaly = False
@@ -221,6 +226,10 @@ def run_connector(
 
             pages_fetched += 1
             http_count = _http_count(connector)
+            if page_limit is not None and len(batch.items) > connector.page_size:
+                status = "failed"
+                stop_reason = "canary_oversized_page"
+                break
             records = []
             for item in batch.items:
                 record = connector.to_observation(
@@ -304,7 +313,11 @@ def run_connector(
                 mark_bootstrap_complete = bootstrap
                 break
         else:
-            if bootstrap and batches_ok > 0:
+            if page_limit is not None and batches_ok > 0:
+                # A bounded canary must not mark a truncated bootstrap complete.
+                status = "complete"
+                stop_reason = "canary_page_limit"
+            elif bootstrap and batches_ok > 0:
                 status = "complete"
                 stop_reason = "bootstrap_range_complete"
                 mark_bootstrap_complete = True
@@ -397,11 +410,12 @@ def run_ingest(
     store: IngestStore,
     *,
     sleep: SleepFn = lambda _seconds: None,
+    page_limit: int | None = None,
 ) -> list[SourceRunResult]:
     results: list[SourceRunResult] = []
     for connector in connectors:
         try:
-            results.append(run_connector(connector, store, sleep=sleep))
+            results.append(run_connector(connector, store, sleep=sleep, page_limit=page_limit))
         except InvalidOrderingCapability:
             raise
         except Exception:
