@@ -23,19 +23,19 @@ const components: Components = {
   ),
   p: (props) => (
     <p
-      className="my-4 break-words text-base leading-8 text-ink"
+      className="my-4 break-words text-base leading-8 text-info-body"
       {...props}
     />
   ),
   ul: (props) => (
     <ul
-      className="my-4 list-disc space-y-2 pl-5 text-base text-ink marker:text-coral"
+      className="my-4 list-disc space-y-2 pl-5 text-base text-info-body marker:text-info-status"
       {...props}
     />
   ),
   ol: (props) => (
     <ol
-      className="my-4 list-decimal space-y-2 pl-5 text-base text-ink marker:font-bold marker:text-coral"
+      className="my-4 list-decimal space-y-2 pl-5 text-base text-info-body marker:font-bold marker:text-info-status"
       {...props}
     />
   ),
@@ -52,7 +52,7 @@ const components: Components = {
   ),
   blockquote: (props) => (
     <blockquote
-      className="my-6 border-l border-stone pl-5 text-base italic leading-8 text-ink-sub"
+      className="my-6 border-l border-info-rule pl-5 text-base italic leading-8 text-info-body"
       {...props}
     />
   ),

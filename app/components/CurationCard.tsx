@@ -1,7 +1,5 @@
-import { ArrowUpRight } from "lucide-react";
+import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
-import SignalGlyph from "@/app/components/SignalGlyph";
-import { userCategoryGlyphKind } from "@/app/lib/userCategories";
 import { Link } from "@/i18n/navigation";
 import type { UserCategory } from "@/app/lib/userCategories";
 
@@ -11,7 +9,7 @@ export interface CurationCardProps {
   categoryLabel: string | null;
   title: string;
   summary: string;
-  summaryLabel: string;
+  summaryLabel?: string;
   locale: string;
   deadlineKind: string | null;
   deadlineOn: string | null;
@@ -20,7 +18,6 @@ export interface CurationCardProps {
   todayKst: string;
 }
 
-// 서버/클라이언트 무관하게 재사용 가능한 프레젠테이션 컴포넌트
 export default function CurationCard({
   slug,
   category,
@@ -38,19 +35,12 @@ export default function CurationCard({
   return (
     <Link
       href={`/info/${slug}`}
-      className="group block rounded-[1.35rem] border border-stone bg-canvas-white transition-[transform,border-color,box-shadow] hover:-translate-y-0.5 hover:border-sky hover:shadow-premium-sm focus-visible:-translate-y-0.5"
+      className="group block border-b border-info-rule bg-info-surface px-4 py-5 transition-colors hover:bg-white focus-visible:bg-white md:px-6 md:py-6"
     >
-      <article className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-4 p-5 md:gap-5 md:p-6">
-        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-mineral text-ink md:h-14 md:w-14">
-          <SignalGlyph
-            kind={category ? userCategoryGlyphKind(category) : "document"}
-            className="h-8 w-8 md:h-9 md:w-9"
-          />
-        </div>
-
-        <div className="min-w-0">
+      <article className={`grid min-w-0 gap-x-3 ${category ? "grid-cols-[24px_minmax(0,1fr)]" : "grid-cols-1"}`}>
+        <div className={`flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-6 ${category ? "col-start-2" : "col-start-1"}`}>
           {categoryLabel && (
-            <p className="text-xs font-semibold text-ink-sub">{categoryLabel}</p>
+            <span className="font-semibold text-ink">{categoryLabel}</span>
           )}
           <CurationPeriodText
             category={category}
@@ -61,24 +51,19 @@ export default function CurationCard({
             todayKst={todayKst}
             locale={locale}
           />
-          <h2 className="mt-1 break-words text-xl font-bold leading-snug tracking-[-0.035em] text-ink md:text-2xl">
+        </div>
+        {category && (
+          <CategoryIcon category={category} size={24} className="col-start-1 row-start-2 mt-3 h-6 w-6 shrink-0" />
+        )}
+        <div className={`${category ? "col-start-2" : "col-start-1"} row-start-2 min-w-0 pt-2`}>
+          <h2 className="break-words text-xl font-bold leading-[1.35] tracking-[-0.025em] text-ink md:text-[1.45rem]">
             {title}
           </h2>
-          <div className="mt-4 rounded-xl bg-mineral/70 px-3.5 py-3 md:px-4">
-            <p className="text-xs font-bold tracking-[-0.01em] text-ink">
-              {summaryLabel}
-            </p>
-            <p className="mt-1.5 line-clamp-3 break-words text-sm leading-6 text-ink-sub md:text-base md:leading-7">
-              {summary}
-            </p>
-          </div>
+          <p className="mt-2 line-clamp-2 break-words text-sm leading-6 text-info-body md:text-[0.95rem] md:leading-7">
+            {summaryLabel && <span className="sr-only">{summaryLabel}: </span>}
+            {summary}
+          </p>
         </div>
-
-        <ArrowUpRight
-          className="mt-1 h-5 w-5 shrink-0 text-ink-sub transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-          strokeWidth={1.8}
-          aria-hidden="true"
-        />
       </article>
     </Link>
   );

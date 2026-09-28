@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#102F5C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="행사">
+  <title>행사</title>
+  <path d="M3.6 10.2 3 9.8q-.2-.6.5-.8L17.1 5q.5-.1.8.5l1.3 2.9c-.9.4-1.1 1.1-.8 1.7"/>
+  <path d="M4.3 10.5H21v2.5c-1.2.2-1.8.9-1.8 2s.6 1.8 1.8 2v2.5H4.3V17c1.2-.2 1.8-.9 1.8-2s-.6-1.8-1.8-2v-2.5Z"/>
+  <path d="M16.1 12.5v1.1m0 2.4v1.1" stroke-width="1.5"/>
+</svg>

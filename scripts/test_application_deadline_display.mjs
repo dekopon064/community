@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import {
   formatApplicationDeadline,
   formatCurationPeriod,
+  getApplicationDeadlinePresentation,
+  getCurationPeriodPresentation,
   todayKst,
 } from "../app/lib/applicationDeadlineDisplay.ts";
 import { isUserCategory, USER_CATEGORIES } from "../app/lib/userCategories.ts";
@@ -21,12 +23,12 @@ assert.equal(label("none", null, "ko"), "상시 모집");
 assert.equal(label("none", null, "ja"), "随時募集");
 assert.equal(label("fixed", "2026-09-23", "ko"), "접수 종료");
 assert.equal(label("fixed", "2026-09-23", "ja"), "受付終了");
-assert.equal(label("fixed", "2026-09-24", "ko"), "D-Day");
-assert.equal(label("fixed", "2026-09-24", "ja"), "D-Day");
-assert.equal(label("fixed", "2026-09-25", "ko"), "D-1");
-assert.equal(label("fixed", "2026-09-25", "ja"), "D-1");
-assert.equal(label("fixed", "2026-10-24", "ko"), "D-30");
-assert.equal(label("fixed", "2026-10-25", "ko"), "마감 2026.10.25");
+assert.equal(label("fixed", "2026-09-24", "ko"), "오늘 접수 마감");
+assert.equal(label("fixed", "2026-09-24", "ja"), "本日申込締切");
+assert.equal(label("fixed", "2026-09-25", "ko"), "접수 마감 D-1");
+assert.equal(label("fixed", "2026-09-25", "ja"), "申込締切まであと1日");
+assert.equal(label("fixed", "2026-10-24", "ko"), "접수 마감 D-30");
+assert.equal(label("fixed", "2026-10-25", "ko"), "접수 마감 2026.10.25");
 assert.equal(label("fixed", "2026-10-25", "ja"), "申込締切 2026年10月25日");
 assert.equal(
   label("fixed", "2026-01-05", "ja", "2025-12-01"),
@@ -35,13 +37,28 @@ assert.equal(
 assert.equal(label(null, null, "ko"), null);
 assert.equal(label(null, "2026-09-24", "ja"), null);
 assert.equal(label("fixed", null, "ko"), null);
+assert.equal(label("fixed", "2026-02-30", "ko"), null);
+assert.equal(label("none", "2026-09-24", "ko"), null);
+
+const imminent = getApplicationDeadlinePresentation({
+  kind: "fixed", on: "2026-09-26", todayKst: today, locale: "ko",
+});
+assert.deepEqual(imminent, {
+  listLabel: "접수 마감 D-2",
+  detailLabel: "접수 마감까지 D-2",
+  tone: "accent",
+  detailDate: { label: "접수 마감일", startOn: "2026-09-26", startText: "2026.09.26" },
+});
+assert.equal(getApplicationDeadlinePresentation({
+  kind: "fixed", on: "2026-10-25", todayKst: today, locale: "ko",
+})?.detailDate?.startText, "2026.10.25");
 
 const beforeMidnight = todayKst(new Date("2026-09-23T14:59:59.000Z"));
 const atMidnight = todayKst(new Date("2026-09-23T15:00:00.000Z"));
 assert.equal(beforeMidnight, "2026-09-23");
 assert.equal(atMidnight, "2026-09-24");
-assert.equal(label("fixed", "2026-09-24", "ko", beforeMidnight), "D-1");
-assert.equal(label("fixed", "2026-09-24", "ko", atMidnight), "D-Day");
+assert.equal(label("fixed", "2026-09-24", "ko", beforeMidnight), "접수 마감 D-1");
+assert.equal(label("fixed", "2026-09-24", "ko", atMidnight), "오늘 접수 마감");
 
 const root = dirname(fileURLToPath(import.meta.url));
 const pages = [
@@ -69,7 +86,7 @@ const card = readFileSync(
   "utf8",
 );
 assert.match(home, /todayKst=\{today\}/);
-assert.match(entry, /CurationPeriodText/);
+assert.match(entry, /CurationCard/);
 assert.match(detail, /CurationPeriodText/);
 assert.match(card, /CurationPeriodText/);
 
@@ -94,11 +111,16 @@ function period(category, deadlineKind, deadlineOn, eventStartOn, eventEndOn, lo
     locale,
   });
 }
-assert.equal(period("policy", "fixed", "2026-09-25", null, null), "D-1");
+assert.equal(period("policy", "fixed", "2026-09-25", null, null), "접수 마감 D-1");
 assert.equal(period("program", "none", null, null, null, "ja"), "随時募集");
-assert.equal(period("event", null, null, "2026-10-03", "2026-10-04"), "행사 2026.10.03–2026.10.04");
-assert.equal(period("event", null, null, "2026-10-03", "2026-10-04", "ja"), "開催 2026年10月3日～2026年10月4日");
-assert.equal(period("event", null, null, "2026-10-03", "2026-10-03"), "행사 2026.10.03");
+assert.equal(period("event", null, null, "2026-10-03", "2026-10-04"), "행사 일정 2026.10.03–2026.10.04");
+assert.equal(period("event", null, null, "2026-10-03", "2026-10-04", "ja"), "開催期間 2026年10月3日～2026年10月4日");
+assert.equal(period("event", null, null, "2026-10-03", "2026-10-03"), "행사 일정 2026.10.03");
+assert.equal(getCurationPeriodPresentation({
+  category: "event", deadlineKind: null, deadlineOn: null,
+  eventStartOn: "2026-10-03", eventEndOn: "2026-10-04",
+  todayKst: today, locale: "ko",
+})?.detailDate?.endOn, "2026-10-04");
 assert.equal(period("event", null, null, "2026-10-04", "2026-10-03"), null);
 assert.equal(period("youth_space", "fixed", "2026-09-25", null, null), null);
 assert.equal(period("living", "closed", null, null, null), null);

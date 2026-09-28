@@ -4,8 +4,13 @@
   --color-canvas: #eef6fb;
   --color-canvas-white: #ffffff;
   --color-ink: #102f5c;
-  --color-ink-sub: #526783;
-  --color-stone: #d8e4ee;
+  --color-ink-sub: #52677c;
+  --color-stone: #c7d9e8;
+  --color-info-surface: #f9fcff;
+  --color-info-body: #3d5871;
+  --color-info-muted: #52677c;
+  --color-info-rule: #c7d9e8;
+  --color-info-status: #984419;
   --color-mineral: #dceef9;
   --color-sky: #82b8de;
   --color-coral: #a8564a;
