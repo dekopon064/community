@@ -1,0 +1,31 @@
+name: Manual Youthcenter sequence probe (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: machimoa-ingest-production
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: machimoa-ingest-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install ingest dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Probe five policy pages then one content page without DB or AI
+        env:
+          YOUTH_API_KEY: ${{ secrets.YOUTH_API_KEY }}
+          YOUTH_CONTENT_API_KEY: ${{ secrets.YOUTH_CONTENT_API_KEY }}
+        run: python scripts/probe_youthcenter_sequence.py --execute
