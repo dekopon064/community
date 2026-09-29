@@ -11,6 +11,7 @@ import sys
 import time
 import traceback
 import unittest
+from contextlib import redirect_stderr
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -1073,6 +1074,87 @@ class ContentJobPlanTests(unittest.TestCase):
 
 
 class HttpClientTests(unittest.TestCase):
+    def test_error_diagnostics_show_only_safe_context_and_retry_attempts(self) -> None:
+        responses = iter((
+            FakeStreamResponse(503, headers={"Retry-After": "2", "X-Request-ID": "req-1"}),
+            FakeStreamResponse(403, headers={
+                "Retry-After": "secret\nvalue",
+                "X-Request-ID": "secret\nvalue",
+            }),
+        ))
+        client = HttpClient(
+            budget=3, sleep=NO_SLEEP, transport=lambda *_a, **_k: next(responses)
+        )
+        output = io.StringIO()
+        with redirect_stderr(output), self.assertRaises(HttpStatusError):
+            client.get_json(
+                f"https://example.test/?apiKeyNm={HTTP_KEY_MARKER}",
+                params={"apiKeyNm": HTTP_KEY_MARKER},
+                source_id=CANONICAL_CONTENT_SOURCE, page_num=1,
+            )
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("source=youthcenter_content page=1 attempt=1 status=503", lines[0])
+        self.assertIn("retry_after=2 request_id=req-1", lines[0])
+        self.assertIn("attempt=2 status=403 retry_after=present request_id=-", lines[1])
+        self.assertNotIn(HTTP_KEY_MARKER, output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
+
+    def test_success_has_no_http_error_diagnostic(self) -> None:
+        client = HttpClient(
+            budget=1,
+            transport=lambda *_a, **_k: FakeStreamResponse(200, json_payload={"ok": True}),
+        )
+        output = io.StringIO()
+        with redirect_stderr(output):
+            client.get_json("https://example.test", source_id=CANONICAL_POLICY_SOURCE, page_num=1)
+        self.assertEqual(output.getvalue(), "")
+
+    def test_reflected_api_key_is_not_logged_as_request_id(self) -> None:
+        for key in ("x", "xy", "xyz", HTTP_KEY_MARKER):
+            with self.subTest(key=key):
+                response = FakeStreamResponse(403, headers={"X-Request-ID": key})
+                client = HttpClient(budget=1, transport=lambda *_a, **_k: response)
+                output = io.StringIO()
+                with redirect_stderr(output), self.assertRaises(HttpStatusError):
+                    client.get_json(
+                        "https://example.test", params={"apiKeyNm": key},
+                        source_id=CANONICAL_CONTENT_SOURCE, page_num=1,
+                    )
+                self.assertIn("request_id=-", output.getvalue())
+                self.assertNotIn(f"request_id={key}", output.getvalue())
+
+    def test_retry_after_http_date_is_normalized_and_invalid_value_hidden(self) -> None:
+        for header, expected in (
+            ("Wed, 30 Sep 2026 10:00:00 GMT", "2026-09-30T10:00:00Z"),
+            ("Wednesday, 30-Sep-26 10:00:00 GMT", "2026-09-30T10:00:00Z"),
+            ("Wed Sep 30 10:00:00 2026", "2026-09-30T10:00:00Z"),
+            ("Thu, 30 Sep 2026 10:00:00 GMT", "present"),
+            ("Wed, 30 Sep 2026 10:00:00 GMT\nsecret", "present"),
+        ):
+            with self.subTest(header=header):
+                response = FakeStreamResponse(429, headers={"Retry-After": header})
+                client = HttpClient(
+                    budget=1, max_attempts=1,
+                    transport=lambda *_a, **_k: response,
+                )
+                output = io.StringIO()
+                with redirect_stderr(output), self.assertRaises(HttpStatusError):
+                    client.get_json(
+                        "https://example.test", source_id=CANONICAL_CONTENT_SOURCE,
+                        page_num=1,
+                    )
+                self.assertIn(f"retry_after={expected}", output.getvalue())
+                self.assertNotIn("secret", output.getvalue())
+
+    def test_short_api_key_reflected_in_retry_after_is_hidden(self) -> None:
+        response = FakeStreamResponse(429, headers={"Retry-After": "7"})
+        client = HttpClient(budget=1, max_attempts=1, transport=lambda *_a, **_k: response)
+        output = io.StringIO()
+        with redirect_stderr(output), self.assertRaises(HttpStatusError):
+            client.get_json("https://example.test", params={"apiKeyNm": "7"})
+        self.assertIn("retry_after=-", output.getvalue())
+
     def test_default_sleeper_is_production_sleep(self) -> None:
         self.assertIs(HttpClient(budget=1).sleep, PRODUCTION_SLEEP)
         self.assertIs(PRODUCTION_SLEEP, time.sleep)

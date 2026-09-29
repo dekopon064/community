@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import json
 import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -23,6 +24,8 @@ from ingest.ai_worker import (
 from ingest.orchestrator import SourceRunResult
 from ingest.run import IngestArchitectureResult
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
+from ingest.http_client import HttpStatusError
+from ingest.http_client import HttpClient
 from ingest.store import MemoryIngestStore
 
 COMPLETE = SourceRunResult(
@@ -161,6 +164,84 @@ class CliExitMatrixTests(unittest.TestCase):
 
 
 class CliArgumentTests(unittest.TestCase):
+    def test_probe_rejects_missing_approval_and_ingest_or_ai_options(self) -> None:
+        cases = [
+            ["--source", CANONICAL_CONTENT_SOURCE, "--probe-one-page"],
+            ["--source", CANONICAL_CONTENT_SOURCE, "--execute", "--probe-one-page", "--canary-one-page"],
+            ["--source", CANONICAL_CONTENT_SOURCE, "--execute", "--probe-one-page", "--run-ai", "--ai-limit", "1"],
+        ]
+        for args in cases:
+            with self.subTest(args=args), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    cli.main(args)
+            self.assertEqual(caught.exception.code, 2)
+
+    def test_probe_reads_one_page_without_db_or_ai(self) -> None:
+        env = {"YOUTH_CONTENT_API_KEY": "local-test-key"}
+        batch = SimpleNamespace(items=(1, 2), meta=SimpleNamespace(http_status=200))
+        with patch.dict(os.environ, env, clear=True):
+            with patch("run_ingest_architecture.create_ingest_client") as db:
+                with patch("run_ingest_architecture.run_ingest_architecture") as ingest:
+                    with patch("run_ingest_architecture.YouthcenterContentConnector") as connector:
+                        connector.return_value.fetch_batch.return_value = batch
+                        output = io.StringIO()
+                        with redirect_stdout(output):
+                            code = cli.main([
+                                "--source", CANONICAL_CONTENT_SOURCE,
+                                "--execute", "--probe-one-page",
+                            ])
+        self.assertEqual(code, 0)
+        self.assertIn("status=ok http_status=200 items=2 http_requests=0", output.getvalue())
+        connector.return_value.fetch_batch.assert_called_once_with(None)
+        self.assertEqual(connector.call_args.kwargs["http"].budget, 1)
+        self.assertEqual(connector.call_args.kwargs["http"].max_attempts, 1)
+        db.assert_not_called()
+        ingest.assert_not_called()
+
+    def test_probe_real_connector_makes_exactly_one_fake_http_request(self) -> None:
+        calls: list[dict] = []
+
+        def transport(_url, **kwargs):
+            calls.append(kwargs)
+            payload = json.dumps({"result": {"youthPolicyList": []}}).encode()
+            return SimpleNamespace(
+                status_code=200, headers={},
+                iter_content=lambda **_kw: iter((payload,)), close=lambda: None,
+            )
+
+        http = HttpClient(budget=1, max_attempts=1, transport=transport)
+        with patch.dict(os.environ, {"YOUTH_CONTENT_API_KEY": "local-test-key"}, clear=True):
+            with patch("run_ingest_architecture.HttpClient", return_value=http):
+                with patch("run_ingest_architecture.create_ingest_client") as db:
+                    with patch("run_ingest_architecture.run_ingest_architecture") as ingest:
+                        with redirect_stdout(io.StringIO()) as output:
+                            code = cli.main([
+                                "--source", CANONICAL_CONTENT_SOURCE,
+                                "--execute", "--probe-one-page",
+                            ])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["params"]["pageNum"], 1)
+        self.assertEqual(calls[0]["params"]["pageSize"], 5)
+        self.assertIn("http_requests=1", output.getvalue())
+        db.assert_not_called()
+        ingest.assert_not_called()
+
+    def test_probe_http_403_fails_without_db_write(self) -> None:
+        with patch.dict(os.environ, {"YOUTH_CONTENT_API_KEY": "local-test-key"}, clear=True):
+            with patch("run_ingest_architecture.create_ingest_client") as db:
+                with patch("run_ingest_architecture.YouthcenterContentConnector") as connector:
+                    connector.return_value.fetch_batch.side_effect = HttpStatusError(403)
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        code = cli.main([
+                            "--source", CANONICAL_CONTENT_SOURCE,
+                            "--execute", "--probe-one-page",
+                        ])
+        self.assertEqual(code, 1)
+        self.assertIn("reason=http_403", output.getvalue())
+        db.assert_not_called()
+
     def test_one_page_canary_rejects_ai_options(self) -> None:
         with redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:

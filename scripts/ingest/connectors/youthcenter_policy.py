@@ -187,6 +187,8 @@ class YouthcenterPolicyConnector(BatchConnector):
                 "rtnType": "json",
             },
             headers=REQUEST_HEADERS,
+            source_id=self.canonical_source_id,
+            page_num=page_num,
         )
         items = _policy_list(payload)
         natural_end = len(items) < self.page_size
