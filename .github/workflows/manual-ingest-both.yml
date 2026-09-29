@@ -2,6 +2,12 @@ name: Manual ingest both sources
 
 on:
   workflow_dispatch:
+    inputs:
+      full_scan_once:
+        description: Scan up to the configured five pages without the unchanged streak stop
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -32,7 +38,13 @@ jobs:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           YOUTH_API_KEY: ${{ secrets.YOUTH_API_KEY }}
-        run: python scripts/run_ingest_architecture.py --source youthcenter_policy --execute
+          FULL_SCAN_ONCE: ${{ inputs.full_scan_once }}
+        run: |
+          if [ "$FULL_SCAN_ONCE" = "true" ]; then
+            python scripts/run_ingest_architecture.py --source youthcenter_policy --execute --full-scan-once
+          else
+            python scripts/run_ingest_architecture.py --source youthcenter_policy --execute
+          fi
       - name: Ingest and evaluate content without AI
         id: content
         if: always() && steps.install.outcome == 'success'
@@ -41,7 +53,13 @@ jobs:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           YOUTH_CONTENT_API_KEY: ${{ secrets.YOUTH_CONTENT_API_KEY }}
-        run: python scripts/run_ingest_architecture.py --source youthcenter_content --execute
+          FULL_SCAN_ONCE: ${{ inputs.full_scan_once }}
+        run: |
+          if [ "$FULL_SCAN_ONCE" = "true" ]; then
+            python scripts/run_ingest_architecture.py --source youthcenter_content --execute --full-scan-once
+          else
+            python scripts/run_ingest_architecture.py --source youthcenter_content --execute
+          fi
       - name: Report both source outcomes
         if: always()
         env:
