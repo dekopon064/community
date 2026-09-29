@@ -151,9 +151,12 @@ def run_connector(
     enabled: bool | None = None,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
     page_limit: int | None = None,
+    force_full_range: bool = False,
 ) -> SourceRunResult:
     if page_limit is not None and page_limit < 1:
         raise ValueError("page_limit must be positive")
+    if page_limit is not None and force_full_range:
+        raise ValueError("force_full_range cannot be combined with page_limit")
     capability = require_ordering_capability(connector)
     ordering_basis = getattr(connector, "ordering_stamp_basis", "updated_or_created")
     if ordering_basis not in {"created", "updated_or_created"}:
@@ -312,6 +315,7 @@ def run_connector(
                 capability == "require_descending"
                 and not bootstrap
                 and not anomaly
+                and not force_full_range
                 and streak >= connector.streak_needed
             ):
                 status = "complete"
@@ -424,11 +428,20 @@ def run_ingest(
     *,
     sleep: SleepFn = lambda _seconds: None,
     page_limit: int | None = None,
+    force_full_range: bool = False,
 ) -> list[SourceRunResult]:
     results: list[SourceRunResult] = []
     for connector in connectors:
         try:
-            results.append(run_connector(connector, store, sleep=sleep, page_limit=page_limit))
+            results.append(
+                run_connector(
+                    connector,
+                    store,
+                    sleep=sleep,
+                    page_limit=page_limit,
+                    force_full_range=force_full_range,
+                )
+            )
         except InvalidOrderingCapability:
             raise
         except Exception:

@@ -66,12 +66,21 @@ def run_ingest_architecture(
     run_ai: bool = True,
     ai_limit: int = AI_CLAIM_LIMIT,
     page_limit: int | None = None,
+    force_full_range: bool = False,
 ) -> IngestArchitectureResult:
     """실제 API·Anthropic·DB는 주입된 의존성이 있을 때만 호출된다."""
     if page_limit is not None and run_ai:
         raise ValueError("bounded ingest cannot run AI")
+    if force_full_range and (run_ai or page_limit is not None):
+        raise ValueError("full-range ingest cannot run AI or combine with page_limit")
     sleeper = PRODUCTION_SLEEP if sleep is None else sleep
-    results = run_ingest(connectors, store, sleep=sleeper, page_limit=page_limit)
+    results = run_ingest(
+        connectors,
+        store,
+        sleep=sleeper,
+        page_limit=page_limit,
+        force_full_range=force_full_range,
+    )
 
     if not run_ai:
         ai_result = AiWorkerResult(status=AI_DISABLED)

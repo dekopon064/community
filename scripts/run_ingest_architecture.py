@@ -143,6 +143,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="process at most one API page without completing a truncated bootstrap",
     )
     parser.add_argument(
+        "--full-scan-once",
+        action="store_true",
+        help="manually scan the configured range without the unchanged streak stop; no AI",
+    )
+    parser.add_argument(
         "--run-ai",
         action="store_true",
         help="process global AI queue after source complete",
@@ -174,6 +179,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.canary_one_page and (args.ai_only or args.run_ai):
         parser.error("--canary-one-page cannot be combined with AI options")
+    if args.full_scan_once and (args.canary_one_page or args.ai_only or args.run_ai):
+        parser.error("--full-scan-once cannot be combined with canary or AI options")
+    if args.full_scan_once and not args.execute:
+        parser.error("--full-scan-once requires --execute")
     if args.ai_only and args.source:
         parser.error("--ai-only cannot be used with --source")
     if args.ai_only and args.run_ai:
@@ -326,6 +335,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_ai=args.run_ai,
             ai_limit=args.ai_limit if args.ai_limit is not None else 10,
             page_limit=1 if args.canary_one_page else None,
+            force_full_range=args.full_scan_once,
         )
         code = cli_exit_code(result, run_ai=args.run_ai)
         _print_summary(result, run_ai=args.run_ai, exit_code=code)

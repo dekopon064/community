@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pathlib
+import contextlib
+import io
 import unittest
 
 from ingest.connectors.youthcenter_content import YouthcenterContentConnector
@@ -11,10 +13,10 @@ from ingest.ai_worker import AI_DISABLED, AiWorkerResult
 from ingest.http_client import HttpClient
 from ingest.models import BatchResult, Checkpoint, ObservationResult
 from ingest.orchestrator import advance_unchanged_streak, run_connector, run_ingest
-from ingest.run import IngestArchitectureResult
+from ingest.run import IngestArchitectureResult, run_ingest_architecture
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
 from ingest.store import MemoryIngestStore
-from run_ingest_architecture import cli_exit_code
+from run_ingest_architecture import _build_parser, _validate_args, cli_exit_code
 from test_ingest import FakeConnector, FakeStreamResponse, NO_SLEEP, _page_batches, policy_item
 
 
@@ -176,6 +178,66 @@ class SourceBoundsTests(unittest.TestCase):
         )
         self.assertEqual(cli_exit_code(cli_result, run_ai=False), 1)
 
+    def test_one_time_full_scan_ignores_streak_but_keeps_five_page_cap(self) -> None:
+        for source in (CANONICAL_POLICY_SOURCE, CANONICAL_CONTENT_SOURCE):
+            with self.subTest(source=source):
+                store = MemoryIngestStore()
+                items = [_item(f"{source}-full-{i}", i) for i in range(25)]
+                seed = run_connector(_connector(source, items), store, sleep=NO_SLEEP)
+                self.assertEqual(seed.stop_reason, "bootstrap_range_complete")
+                connector = _connector(source, items)
+                result = run_connector(
+                    connector, store, sleep=NO_SLEEP, force_full_range=True
+                )
+                self.assertEqual(connector.calls, 5)
+                self.assertEqual(result.batches_ok, 5)
+                self.assertEqual(result.status, "incomplete")
+                self.assertEqual(result.stop_reason, "range_exceeded")
+                self.assertTrue(store.sync[source].bootstrap_complete)
+
+    def test_one_time_full_scan_still_stops_at_natural_end(self) -> None:
+        source = CANONICAL_CONTENT_SOURCE
+        store = MemoryIngestStore()
+        items = [_item(f"full-short-{i}", i) for i in range(7)]
+        seed = run_connector(
+            _connector(source, items, natural_end=True), store, sleep=NO_SLEEP
+        )
+        self.assertEqual(seed.status, "complete")
+        connector = _connector(source, items, natural_end=True)
+        result = run_connector(
+            connector, store, sleep=NO_SLEEP, force_full_range=True
+        )
+        self.assertEqual(connector.calls, 2)
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "short_batch")
+
+    def test_one_time_full_scan_cannot_run_ai_or_combine_with_canary(self) -> None:
+        store = MemoryIngestStore()
+        with self.assertRaises(ValueError):
+            run_ingest_architecture(
+                store=store,
+                connectors=[_connector(CANONICAL_POLICY_SOURCE, [])],
+                force_full_range=True,
+                run_ai=True,
+            )
+        with self.assertRaises(ValueError):
+            run_ingest_architecture(
+                store=store,
+                connectors=[_connector(CANONICAL_POLICY_SOURCE, [])],
+                force_full_range=True,
+                page_limit=1,
+                run_ai=False,
+            )
+        parser = _build_parser()
+        for flags in (
+            ["--source", CANONICAL_POLICY_SOURCE, "--full-scan-once"],
+            ["--source", CANONICAL_POLICY_SOURCE, "--execute", "--full-scan-once", "--canary-one-page"],
+            ["--source", CANONICAL_POLICY_SOURCE, "--execute", "--full-scan-once", "--run-ai", "--ai-limit", "1"],
+        ):
+            with self.subTest(flags=flags), self.assertRaises(SystemExit):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    _validate_args(parser, parser.parse_args(flags))
+
     def test_oversized_normal_page_fails_before_writes(self) -> None:
         store = MemoryIngestStore()
         connector = FakeConnector(
@@ -207,6 +269,8 @@ class WorkflowContractTests(unittest.TestCase):
     def test_manual_both_sources_without_ai_or_schedule(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("full_scan_once:", workflow)
+        self.assertIn("--full-scan-once", workflow)
         self.assertNotIn("schedule:", workflow)
         self.assertNotIn("--run-ai", workflow)
         self.assertNotIn("--ai-only", workflow)
