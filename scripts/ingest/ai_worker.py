@@ -23,6 +23,9 @@ AI_STATE_UNKNOWN = "ai_state_unknown"
 AI_SKIPPED_SOURCE_INCOMPLETE = "ai_skipped_source_incomplete"
 AI_NO_JOBS = "ai_no_jobs"
 _RAW_PAYLOAD_SKIP_KEYS = frozenset({"atchfile", "atch_file", "facts"})
+_ONE_OFF_INCOMPLETE_SOURCE_ITEM_ID = "98396243-8907-4c70-b823-066d972c4ac2"
+_ONE_OFF_INCOMPLETE_REVISION = "c43eb4a979733eb688a75aa98fb6d9c28f5af61dc71850494d2d82a580e8476f"
+_ONE_OFF_INCOMPLETE_BODY = "홈페이지 링크: https://buly.kr/jc9Pam"
 SUMMARY_MAX_CHARS = 1000
 KO_SUMMARY_HEADER = "[한 줄 요약]"
 JA_SUMMARY_HEADER = "[要約]"
@@ -196,6 +199,14 @@ def _process_one(
 
     title = str(payload.get("plcyNm") or payload.get("pstTtl") or job.external_key)
     body = str(payload.get("plain_text") or "")
+    if (
+        job.source_id == "youthcenter_content"
+        and job.external_key == "48:10799"
+        and job.source_item_id == _ONE_OFF_INCOMPLETE_SOURCE_ITEM_ID
+        and job.revision_hash == _ONE_OFF_INCOMPLETE_REVISION
+        and body.strip() == _ONE_OFF_INCOMPLETE_BODY
+    ):
+        raise AiJobError("ai_schema_error")
     source_url = payload.get("source_url")
     content_ko, ai_status_ko, ai_model = _call_summarize(
         summarize_ko, body, source_url, title
