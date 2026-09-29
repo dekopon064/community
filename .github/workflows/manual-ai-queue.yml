@@ -1,0 +1,34 @@
+name: Manual AI queue
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: machimoa-ingest-production
+  cancel-in-progress: false
+
+jobs:
+  ai:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The DB claim lease is 600 seconds; end this run before it can be reclaimed.
+    timeout-minutes: 9
+    environment: machimoa-ingest-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install ingest dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Process at most one eligible AI job
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          AI_PROVIDER: ${{ vars.AI_PROVIDER }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/run_ingest_architecture.py --ai-only --execute --ai-limit 1
