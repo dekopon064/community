@@ -998,13 +998,31 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
         with redirect_stdout(stdout):
             code = cli.cli_ai_only_exit_code(result)
             cli._print_ai_only_summary(result, exit_code=code)
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         text = stdout.getvalue()
+        self.assertIn("작업 내용 없음", text)
         self.assertIn("ai_no_jobs", text)
-        self.assertIn("ingest exit=1", text)
+        self.assertIn("ingest exit=0", text)
         self.assertNotIn("ingest source=", text)
+        self.assertEqual(cli.cli_ai_only_exit_code(result, targeted=True), 1)
+        self.assertEqual(
+            cli.cli_ai_only_exit_code(
+                _ai_only_result(status=AI_NO_JOBS, claimed=1, completed=0)
+            ),
+            1,
+        )
 
-    def test_ai_only_claim_zero_exits_one(self) -> None:
+    def test_general_ai_only_does_not_hide_processing_errors(self) -> None:
+        for result in (
+            _ai_only_result(status=AI_PROCESSED, claimed=0, completed=0),
+            _ai_only_result(status=AI_PROCESSED, claimed=1, completed=0, retried=1),
+            _ai_only_result(status=AI_PROCESSED, claimed=1, completed=0, failed=1),
+            _ai_only_result(status=AI_STATE_UNKNOWN, claimed=1, state_unknown=1),
+        ):
+            with self.subTest(result=result.ai):
+                self.assertEqual(cli.cli_ai_only_exit_code(result), 1)
+
+    def test_general_ai_only_empty_queue_exits_zero(self) -> None:
         fake = _ai_only_result(status=AI_NO_JOBS, claimed=0, completed=0)
         with patch(
             "run_ingest_architecture.create_ingest_client",
@@ -1025,8 +1043,36 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
                         return_value=fake,
                     ):
                         code, stdout, stderr = self._run(AI_ONLY_ARGV, ANTHROPIC_ENV)
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         self.assertIn("status=ai_no_jobs", stdout.replace("ingest ai=", "status="))
+        self.assertIn("작업 내용 없음", stdout)
+        self.assertIn("ai_no_jobs", stdout)
+        self.assertIn("ingest exit=0", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_targeted_ai_only_empty_queue_still_fails(self) -> None:
+        fake = _ai_only_result(status=AI_NO_JOBS, claimed=0, completed=0)
+        with patch("run_ingest_architecture.create_ingest_client", return_value=SimpleNamespace()):
+            with patch("run_ingest_architecture.SupabaseIngestStore"):
+                with patch(
+                    "run_ingest_architecture._load_anthropic_ai_helpers",
+                    return_value={
+                        "summarize_ko": object(),
+                        "translate_ja": object(),
+                        "enqueue": object(),
+                        "revision_precheck": object(),
+                    },
+                ):
+                    with patch("run_ingest_architecture.run_ai_only", return_value=fake):
+                        code, stdout, stderr = self._run(
+                            AI_ONLY_ARGV + [
+                                "--ai-source-item-id", "babb1e07-a8c8-458e-ba07-10979c1726a6",
+                                "--ai-revision-hash", "a" * 64,
+                            ],
+                            ANTHROPIC_ENV,
+                        )
+        self.assertEqual(code, 1)
+        self.assertNotIn("작업 내용 없음", stdout)
         self.assertIn("ai_no_jobs", stdout)
         self.assertIn("ingest exit=1", stdout)
         self.assertEqual(stderr, "")

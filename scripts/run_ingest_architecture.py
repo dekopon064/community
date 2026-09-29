@@ -72,10 +72,16 @@ def cli_exit_code(result: IngestArchitectureResult, *, run_ai: bool) -> int:
     return 1
 
 
-def cli_ai_only_exit_code(result: IngestArchitectureResult) -> int:
+def cli_ai_only_exit_code(
+    result: IngestArchitectureResult, *, targeted: bool = False
+) -> int:
     ai = result.ai
     if ai.status == AI_NO_JOBS:
-        return 1
+        if targeted or any(
+            (ai.claimed, ai.completed, ai.failed, ai.retried, ai.state_unknown)
+        ):
+            return 1
+        return 0
     if ai.status != AI_PROCESSED:
         return 1
     if ai.claimed < 1:
@@ -107,6 +113,8 @@ def _print_summary(result: IngestArchitectureResult, *, run_ai: bool, exit_code:
 
 def _print_ai_only_summary(result: IngestArchitectureResult, *, exit_code: int) -> None:
     ai = result.ai
+    if ai.status == AI_NO_JOBS and exit_code == 0:
+        print("작업 내용 없음: 처리할 AI 대기열 항목이 없습니다.")
     print(
         "ingest ai="
         f"{ai.status} claimed={ai.claimed} completed={ai.completed} "
@@ -293,7 +301,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 target_source_item_id=args.ai_source_item_id,
                 target_revision_hash=args.ai_revision_hash,
             )
-            code = cli_ai_only_exit_code(result)
+            code = cli_ai_only_exit_code(
+                result, targeted=args.ai_source_item_id is not None
+            )
             _print_ai_only_summary(result, exit_code=code)
             return code
 
