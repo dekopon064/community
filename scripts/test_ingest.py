@@ -2134,7 +2134,7 @@ class StreakAndPageBoundTests(unittest.TestCase):
 
 
 class ConnectorRequestAndAttachmentTests(unittest.TestCase):
-    def test_content_request_uses_page_size_two_without_pstsecd(self) -> None:
+    def test_content_request_uses_page_size_five_without_pstsecd(self) -> None:
         captured: dict[str, Any] = {}
 
         def transport(url: str, **kwargs: Any) -> FakeStreamResponse:
@@ -2150,7 +2150,7 @@ class ConnectorRequestAndAttachmentTests(unittest.TestCase):
         )
         batch = connector.fetch_batch(None)
         self.assertEqual(captured["params"]["pageSize"], CONTENT_PAGE_SIZE)
-        self.assertEqual(captured["params"]["pageSize"], 2)
+        self.assertEqual(captured["params"]["pageSize"], 5)
         self.assertNotIn("pstSeCd", captured["params"])
         self.assertEqual(batch.items, ())
 
@@ -2257,17 +2257,18 @@ class ContentResponseSizeTests(unittest.TestCase):
         self.assertEqual(DEFAULT_MAX_RESPONSE_BYTES, 8_000_000)
         self.assertEqual(policy.http.max_response_bytes, 8_000_000)
         self.assertEqual(generic.max_response_bytes, 8_000_000)
-        self.assertEqual(CONTENT_PAGE_SIZE, 2)
+        self.assertEqual(CONTENT_PAGE_SIZE, 5)
         self.assertEqual(CONTENT_BOOTSTRAP_MAX_PAGES, 5)
-        self.assertEqual(CONTENT_BOOTSTRAP_MAX_ITEMS, 10)
+        self.assertEqual(CONTENT_BOOTSTRAP_MAX_ITEMS, 25)
         self.assertEqual(CONTENT_MAX_PAGES, 5)
         self.assertEqual(CONTENT_HTTP_BUDGET, 15)
-        self.assertEqual(content.page_size, 2)
+        self.assertEqual(content.page_size, 5)
         self.assertEqual(content.bootstrap_max_pages, 5)
-        self.assertEqual(content.bootstrap_max_items, 10)
+        self.assertEqual(content.bootstrap_max_items, 25)
         self.assertEqual(content.max_pages, 5)
         self.assertEqual(content.http_budget, 15)
-        self.assertEqual(content.ordering_capability, "untrusted")
+        self.assertEqual(content.ordering_capability, "require_descending")
+        self.assertEqual(content.ordering_stamp_basis, "created")
         self.assertEqual(content.http.timeout_seconds, 15)
         self.assertEqual(content.http.max_attempts, 3)
         self.assertEqual(DEFAULT_TIMEOUT_SECONDS, 15)
@@ -2906,19 +2907,21 @@ class SourceCompleteAiGateTests(unittest.TestCase):
 
 
 class OrderingCapabilityDeclarationTests(unittest.TestCase):
-    def test_policy_is_untrusted(self) -> None:
+    def test_policy_uses_registration_order(self) -> None:
         self.assertEqual(
-            YouthcenterPolicyConnector.ordering_capability, "untrusted"
+            YouthcenterPolicyConnector.ordering_capability, "require_descending"
         )
         connector = YouthcenterPolicyConnector(api_key_provider=lambda: "unused")
-        self.assertEqual(connector.ordering_capability, "untrusted")
+        self.assertEqual(connector.ordering_capability, "require_descending")
+        self.assertEqual(connector.ordering_stamp_basis, "created")
 
-    def test_content_is_untrusted(self) -> None:
+    def test_content_uses_registration_order(self) -> None:
         self.assertEqual(
-            YouthcenterContentConnector.ordering_capability, "untrusted"
+            YouthcenterContentConnector.ordering_capability, "require_descending"
         )
         connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
-        self.assertEqual(connector.ordering_capability, "untrusted")
+        self.assertEqual(connector.ordering_capability, "require_descending")
+        self.assertEqual(connector.ordering_stamp_basis, "created")
 
     def test_fake_connector_is_explicit_require_descending(self) -> None:
         self.assertEqual(FakeConnector.ordering_capability, "require_descending")
@@ -3310,16 +3313,16 @@ def _content_untrusted_fake(**kwargs: Any) -> FakeConnector:
 
 
 class ContentUntrustedBootstrapTests(unittest.TestCase):
-    def test_class_and_instance_are_untrusted(self) -> None:
+    def test_real_sources_are_strict_while_fixture_exercises_untrusted(self) -> None:
         self.assertEqual(
-            YouthcenterContentConnector.ordering_capability, "untrusted"
+            YouthcenterContentConnector.ordering_capability, "require_descending"
         )
         self.assertEqual(
             YouthcenterContentConnector(api_key_provider=lambda: "unused").ordering_capability,
-            "untrusted",
+            "require_descending",
         )
         self.assertEqual(
-            YouthcenterPolicyConnector.ordering_capability, "untrusted"
+            YouthcenterPolicyConnector.ordering_capability, "require_descending"
         )
 
     def test_non_monotonic_bootstrap_completes(self) -> None:

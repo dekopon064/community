@@ -99,6 +99,7 @@ def _print_summary(result: IngestArchitectureResult, *, run_ai: bool, exit_code:
         "ingest source="
         f"{source.source_id} status={source.status} stop_reason={source.stop_reason} "
         f"skipped={source.skipped} batches_ok={source.batches_ok} "
+        f"http_requests={source.http_request_count} "
         f"ordering={source.ordering_cli_token()}"
     )
     if run_ai:

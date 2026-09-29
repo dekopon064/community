@@ -1,0 +1,55 @@
+name: Manual ingest both sources
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: machimoa-ingest-production
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: machimoa-ingest-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install ingest dependencies
+        id: install
+        run: python -m pip install -r requirements.txt
+      - name: Ingest and evaluate policy without AI
+        id: policy
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          YOUTH_API_KEY: ${{ secrets.YOUTH_API_KEY }}
+        run: python scripts/run_ingest_architecture.py --source youthcenter_policy --execute
+      - name: Ingest and evaluate content without AI
+        id: content
+        if: always() && steps.install.outcome == 'success'
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          YOUTH_CONTENT_API_KEY: ${{ secrets.YOUTH_CONTENT_API_KEY }}
+        run: python scripts/run_ingest_architecture.py --source youthcenter_content --execute
+      - name: Report both source outcomes
+        if: always()
+        env:
+          POLICY_OUTCOME: ${{ steps.policy.outcome }}
+          CONTENT_OUTCOME: ${{ steps.content.outcome }}
+        run: |
+          echo "policy=$POLICY_OUTCOME content=$CONTENT_OUTCOME"
+          if [ "$POLICY_OUTCOME" != success ] || [ "$CONTENT_OUTCOME" != success ]; then
+            echo 'One or more ingest sources failed or exceeded its scan range.'
+            exit 1
+          fi

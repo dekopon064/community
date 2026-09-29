@@ -39,9 +39,9 @@ from ingest.source_identity import (
 
 CONTENT_LIST_URL = "https://www.youthcenter.go.kr/go/ythip/getContent"
 CONTENT_API_KEY_ENV = "YOUTH_CONTENT_API_KEY"
-CONTENT_PAGE_SIZE = 2
+CONTENT_PAGE_SIZE = 5
 CONTENT_BOOTSTRAP_MAX_PAGES = 5
-CONTENT_BOOTSTRAP_MAX_ITEMS = 10
+CONTENT_BOOTSTRAP_MAX_ITEMS = 25
 CONTENT_MAX_PAGES = 5
 CONTENT_HTTP_BUDGET = 15
 CONTENT_MAX_RESPONSE_BYTES = 16_000_000
@@ -187,10 +187,10 @@ class YouthcenterContentConnector(BatchConnector):
     bootstrap_max_items = CONTENT_BOOTSTRAP_MAX_ITEMS
     max_pages = CONTENT_MAX_PAGES
     http_budget = CONTENT_HTTP_BUDGET
-    # Processing policy, not an official getContent sort or pagination contract.
-    # Production observation found non-monotonic updated stamps.
-    # Diagnostics stay; untrusted does not block bounded range complete.
-    ordering_capability: OrderingCapability = "untrusted"
+    # Operational assumption: registration order is descending. Older edits can
+    # remain behind the unchanged boundary; updated-at is not the sort key.
+    ordering_capability: OrderingCapability = "require_descending"
+    ordering_stamp_basis = "created"
 
     def __init__(
         self,
