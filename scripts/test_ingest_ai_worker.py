@@ -153,6 +153,44 @@ class SpyStore(MemoryIngestStore):
         )
 
 
+class TargetedClaimTests(unittest.TestCase):
+    def test_wrong_oldest_job_aborts_before_ai_or_claim(self) -> None:
+        store = SpyStore()
+        _seed(store, 2)
+        ordered_jobs = sorted(
+            store.jobs_for_stage(AI_STAGE), key=lambda job: (job.queued_at, job.id)
+        )
+        later = ordered_jobs[1]
+        called: list[str] = []
+        result = process_ai_jobs(
+            store, limit=1, require_jobs=True,
+            target_source_item_id=later.source_item_id,
+            target_revision_hash=later.revision_hash,
+            **_ai_deps(summarize_ko=lambda *_a: called.append("ai")),
+        )
+        self.assertEqual(result.status, AI_STATE_UNKNOWN)
+        self.assertEqual(called, [])
+        self.assertEqual([job.status for job in store.jobs_for_stage(AI_STAGE)], ["queued", "queued"])
+
+    def test_matching_job_processes_only_one(self) -> None:
+        store = SpyStore()
+        _seed(store, 2)
+        first = min(
+            store.jobs_for_stage(AI_STAGE), key=lambda job: (job.queued_at, job.id)
+        )
+        result = process_ai_jobs(
+            store, limit=1, require_jobs=True,
+            target_source_item_id=first.source_item_id,
+            target_revision_hash=first.revision_hash,
+            **_ai_deps(),
+        )
+        self.assertEqual((result.claimed, result.completed), (1, 1))
+        self.assertEqual(first.status, "completed")
+        self.assertEqual(
+            [job.status for job in store.jobs_for_stage(AI_STAGE)].count("queued"), 1
+        )
+
+
 class AiClassBoundaryTests(unittest.TestCase):
     def test_deterministic_failure_fails_once(self) -> None:
         store = SpyStore()

@@ -93,7 +93,15 @@ class SourceRunResult:
         return format_ordering_cli_token(self.ordering_diagnostics)
 
 
-def record_sort_stamp(record: ObservationRecord) -> str | None:
+def record_sort_stamp(
+    record: ObservationRecord, *, basis: str = "updated_or_created"
+) -> str | None:
+    if basis == "created":
+        return (
+            record.source_created_at
+            if record.source_created_parse_status == "ok"
+            else None
+        )
     if record.source_updated_parse_status == "ok":
         return record.source_updated_at
     if record.source_created_parse_status == "ok":
@@ -104,11 +112,13 @@ def record_sort_stamp(record: ObservationRecord) -> str | None:
 def ordering_anomaly_in_records(
     records: Sequence[ObservationRecord],
     previous: str | None = None,
+    *,
+    basis: str = "updated_or_created",
 ) -> tuple[bool, str | None, frozenset[str]]:
     found: set[str] = set()
     last = previous
     for record in records:
-        stamp = record_sort_stamp(record)
+        stamp = record_sort_stamp(record, basis=basis)
         if stamp is None:
             found.add("missing_stamp")
             continue
@@ -118,20 +128,18 @@ def ordering_anomaly_in_records(
     return bool(found), last, frozenset(found)
 
 
-def streak_delta(results: Sequence[ObservationResult]) -> int | None:
-    """unchanged는 +1, new/changed는 0으로 리셋. 배치 내 중복은 무시.
-
-    Returns:
-        None if the batch contains a reset, otherwise added streak count.
-    """
-    added = 0
+def advance_unchanged_streak(
+    current: int, results: Sequence[ObservationResult]
+) -> int:
+    """Keep the trailing unchanged streak across pages, excluding batch duplicates."""
     for row in results:
         if row.duplicate_in_batch or row.skipped_streak:
             continue
         if row.outcome in {"new", "changed"}:
-            return None
-        added += 1
-    return added
+            current = 0
+        elif row.outcome == "unchanged":
+            current += 1
+    return current
 
 
 def run_connector(
@@ -142,8 +150,17 @@ def run_connector(
     permission_status: str | None = None,
     enabled: bool | None = None,
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    page_limit: int | None = None,
+    force_full_range: bool = False,
 ) -> SourceRunResult:
+    if page_limit is not None and page_limit < 1:
+        raise ValueError("page_limit must be positive")
+    if page_limit is not None and force_full_range:
+        raise ValueError("force_full_range cannot be combined with page_limit")
     capability = require_ordering_capability(connector)
+    ordering_basis = getattr(connector, "ordering_stamp_basis", "updated_or_created")
+    if ordering_basis not in {"created", "updated_or_created"}:
+        raise InvalidOrderingCapability()
     source_id = connector.canonical_source_id
     source_row = store.get_source(source_id)
     enabled_flag = source_row["enabled"] if enabled is None else enabled
@@ -179,6 +196,8 @@ def run_connector(
     bootstrap = not started.bootstrap_complete
     checkpoint = _starting_checkpoint(connector.start_mode, started.committed_checkpoint)
     max_pages = connector.bootstrap_max_pages if bootstrap else connector.max_pages
+    if page_limit is not None:
+        max_pages = min(max_pages, page_limit)
     max_items = connector.bootstrap_max_items if bootstrap else None
     streak = 0
     anomaly = False
@@ -221,6 +240,14 @@ def run_connector(
 
             pages_fetched += 1
             http_count = _http_count(connector)
+            if len(batch.items) > connector.page_size:
+                status = "incomplete" if batches_ok else "failed"
+                stop_reason = (
+                    "canary_oversized_page"
+                    if page_limit is not None
+                    else "oversized_page"
+                )
+                break
             records = []
             for item in batch.items:
                 record = connector.to_observation(
@@ -229,7 +256,7 @@ def run_connector(
                 if record.external_key:
                     records.append(record)
             found_anomaly, last_stamp, batch_diagnostics = ordering_anomaly_in_records(
-                records, last_stamp
+                records, last_stamp, basis=ordering_basis
             )
             ordering_diagnostics.update(batch_diagnostics)
             if found_anomaly:
@@ -264,11 +291,7 @@ def run_connector(
             checkpoint = batch.next_checkpoint
 
             if capability == "require_descending" and not anomaly:
-                delta = streak_delta(results)
-                if delta is None:
-                    streak = 0
-                else:
-                    streak += delta
+                streak = advance_unchanged_streak(streak, results)
 
             natural_short = batch.natural_end and bool(batch.items)
             if batch.natural_end and not batch.items:
@@ -292,6 +315,7 @@ def run_connector(
                 capability == "require_descending"
                 and not bootstrap
                 and not anomaly
+                and not force_full_range
                 and streak >= connector.streak_needed
             ):
                 status = "complete"
@@ -304,7 +328,11 @@ def run_connector(
                 mark_bootstrap_complete = bootstrap
                 break
         else:
-            if bootstrap and batches_ok > 0:
+            if page_limit is not None and batches_ok > 0:
+                # A bounded canary must not mark a truncated bootstrap complete.
+                status = "complete"
+                stop_reason = "canary_page_limit"
+            elif bootstrap and batches_ok > 0:
                 status = "complete"
                 stop_reason = "bootstrap_range_complete"
                 mark_bootstrap_complete = True
@@ -315,7 +343,9 @@ def run_connector(
                 stop_reason = "configured_range_complete"
             else:
                 status = "incomplete" if batches_ok else "failed"
-                stop_reason = "max_pages"
+                stop_reason = (
+                    "range_exceeded" if ordering_basis == "created" else "max_pages"
+                )
 
         if (
             capability == "require_descending"
@@ -397,11 +427,21 @@ def run_ingest(
     store: IngestStore,
     *,
     sleep: SleepFn = lambda _seconds: None,
+    page_limit: int | None = None,
+    force_full_range: bool = False,
 ) -> list[SourceRunResult]:
     results: list[SourceRunResult] = []
     for connector in connectors:
         try:
-            results.append(run_connector(connector, store, sleep=sleep))
+            results.append(
+                run_connector(
+                    connector,
+                    store,
+                    sleep=sleep,
+                    page_limit=page_limit,
+                    force_full_range=force_full_range,
+                )
+            )
         except InvalidOrderingCapability:
             raise
         except Exception:

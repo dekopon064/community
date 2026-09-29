@@ -1343,6 +1343,72 @@ class JobClaimTests(unittest.TestCase):
 
 
 class OrchestratorTests(unittest.TestCase):
+    def test_bounded_ingest_cannot_run_ai(self) -> None:
+        store = MemoryIngestStore()
+        with self.assertRaisesRegex(ValueError, "bounded ingest cannot run AI"):
+            run_ingest_architecture(
+                store=store, connectors=[FakeConnector()], page_limit=1, run_ai=True
+            )
+        self.assertEqual(store.runs, {})
+
+    def test_one_page_canary_does_not_complete_truncated_bootstrap(self) -> None:
+        store = MemoryIngestStore()
+        first = BatchResult(
+            items=(policy_item("p1", zip_cd="11680", oper_cd="11680"),),
+            next_checkpoint=Checkpoint.for_rest_page(2),
+            natural_end=False,
+        )
+        second = BatchResult(
+            items=(policy_item("p2", zip_cd="11680", oper_cd="11680"),),
+            next_checkpoint=None,
+            natural_end=True,
+        )
+        connector = FakeConnector(batches=[first, second])
+        result = run_connector(connector, store, page_limit=1, sleep=lambda _s: None)
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "canary_page_limit")
+        self.assertEqual(connector.calls, 1)
+        self.assertFalse(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        self.assertIn((CANONICAL_POLICY_SOURCE, "p1"), store.items)
+        self.assertNotIn((CANONICAL_POLICY_SOURCE, "p2"), store.items)
+
+        full = run_connector(
+            FakeConnector(batches=[first, second]), store, sleep=lambda _s: None
+        )
+        self.assertEqual(full.status, "complete")
+        self.assertTrue(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+        self.assertIn((CANONICAL_POLICY_SOURCE, "p2"), store.items)
+
+    def test_one_page_canary_rejects_oversized_api_page_before_write(self) -> None:
+        store = MemoryIngestStore()
+        item = policy_item("p1", zip_cd="11680", oper_cd="11680")
+        connector = FakeConnector(
+            batches=[BatchResult(
+                items=(item,) * 6,
+                next_checkpoint=Checkpoint.for_rest_page(2),
+                natural_end=False,
+            )]
+        )
+        result = run_connector(connector, store, page_limit=1, sleep=lambda _s: None)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stop_reason, "canary_oversized_page")
+        self.assertNotIn((CANONICAL_POLICY_SOURCE, "p1"), store.items)
+        self.assertFalse(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+
+    def test_one_page_canary_limits_already_bootstrapped_source(self) -> None:
+        store = MemoryIngestStore()
+        store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete = True
+        connector = FakeConnector(batches=[BatchResult(
+            items=(policy_item("p1", zip_cd="11680", oper_cd="11680"),),
+            next_checkpoint=Checkpoint.for_rest_page(2),
+            natural_end=False,
+        )])
+        result = run_connector(connector, store, page_limit=1, sleep=lambda _s: None)
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.stop_reason, "canary_page_limit")
+        self.assertEqual(connector.calls, 1)
+        self.assertTrue(store.sync[CANONICAL_POLICY_SOURCE].bootstrap_complete)
+
     def test_bootstrap_incomplete_does_not_set_complete_flag(self) -> None:
         store = MemoryIngestStore()
         item = policy_item("p1", zip_cd="11680", oper_cd="11680")
@@ -2068,7 +2134,7 @@ class StreakAndPageBoundTests(unittest.TestCase):
 
 
 class ConnectorRequestAndAttachmentTests(unittest.TestCase):
-    def test_content_request_uses_page_size_two_without_pstsecd(self) -> None:
+    def test_content_request_uses_page_size_five_without_pstsecd(self) -> None:
         captured: dict[str, Any] = {}
 
         def transport(url: str, **kwargs: Any) -> FakeStreamResponse:
@@ -2084,7 +2150,7 @@ class ConnectorRequestAndAttachmentTests(unittest.TestCase):
         )
         batch = connector.fetch_batch(None)
         self.assertEqual(captured["params"]["pageSize"], CONTENT_PAGE_SIZE)
-        self.assertEqual(captured["params"]["pageSize"], 2)
+        self.assertEqual(captured["params"]["pageSize"], 5)
         self.assertNotIn("pstSeCd", captured["params"])
         self.assertEqual(batch.items, ())
 
@@ -2191,17 +2257,18 @@ class ContentResponseSizeTests(unittest.TestCase):
         self.assertEqual(DEFAULT_MAX_RESPONSE_BYTES, 8_000_000)
         self.assertEqual(policy.http.max_response_bytes, 8_000_000)
         self.assertEqual(generic.max_response_bytes, 8_000_000)
-        self.assertEqual(CONTENT_PAGE_SIZE, 2)
+        self.assertEqual(CONTENT_PAGE_SIZE, 5)
         self.assertEqual(CONTENT_BOOTSTRAP_MAX_PAGES, 5)
-        self.assertEqual(CONTENT_BOOTSTRAP_MAX_ITEMS, 10)
+        self.assertEqual(CONTENT_BOOTSTRAP_MAX_ITEMS, 25)
         self.assertEqual(CONTENT_MAX_PAGES, 5)
         self.assertEqual(CONTENT_HTTP_BUDGET, 15)
-        self.assertEqual(content.page_size, 2)
+        self.assertEqual(content.page_size, 5)
         self.assertEqual(content.bootstrap_max_pages, 5)
-        self.assertEqual(content.bootstrap_max_items, 10)
+        self.assertEqual(content.bootstrap_max_items, 25)
         self.assertEqual(content.max_pages, 5)
         self.assertEqual(content.http_budget, 15)
-        self.assertEqual(content.ordering_capability, "untrusted")
+        self.assertEqual(content.ordering_capability, "require_descending")
+        self.assertEqual(content.ordering_stamp_basis, "created")
         self.assertEqual(content.http.timeout_seconds, 15)
         self.assertEqual(content.http.max_attempts, 3)
         self.assertEqual(DEFAULT_TIMEOUT_SECONDS, 15)
@@ -2840,19 +2907,21 @@ class SourceCompleteAiGateTests(unittest.TestCase):
 
 
 class OrderingCapabilityDeclarationTests(unittest.TestCase):
-    def test_policy_is_untrusted(self) -> None:
+    def test_policy_uses_registration_order(self) -> None:
         self.assertEqual(
-            YouthcenterPolicyConnector.ordering_capability, "untrusted"
+            YouthcenterPolicyConnector.ordering_capability, "require_descending"
         )
         connector = YouthcenterPolicyConnector(api_key_provider=lambda: "unused")
-        self.assertEqual(connector.ordering_capability, "untrusted")
+        self.assertEqual(connector.ordering_capability, "require_descending")
+        self.assertEqual(connector.ordering_stamp_basis, "created")
 
-    def test_content_is_untrusted(self) -> None:
+    def test_content_uses_registration_order(self) -> None:
         self.assertEqual(
-            YouthcenterContentConnector.ordering_capability, "untrusted"
+            YouthcenterContentConnector.ordering_capability, "require_descending"
         )
         connector = YouthcenterContentConnector(api_key_provider=lambda: "unused")
-        self.assertEqual(connector.ordering_capability, "untrusted")
+        self.assertEqual(connector.ordering_capability, "require_descending")
+        self.assertEqual(connector.ordering_stamp_basis, "created")
 
     def test_fake_connector_is_explicit_require_descending(self) -> None:
         self.assertEqual(FakeConnector.ordering_capability, "require_descending")
@@ -3244,16 +3313,16 @@ def _content_untrusted_fake(**kwargs: Any) -> FakeConnector:
 
 
 class ContentUntrustedBootstrapTests(unittest.TestCase):
-    def test_class_and_instance_are_untrusted(self) -> None:
+    def test_real_sources_are_strict_while_fixture_exercises_untrusted(self) -> None:
         self.assertEqual(
-            YouthcenterContentConnector.ordering_capability, "untrusted"
+            YouthcenterContentConnector.ordering_capability, "require_descending"
         )
         self.assertEqual(
             YouthcenterContentConnector(api_key_provider=lambda: "unused").ordering_capability,
-            "untrusted",
+            "require_descending",
         )
         self.assertEqual(
-            YouthcenterPolicyConnector.ordering_capability, "untrusted"
+            YouthcenterPolicyConnector.ordering_capability, "require_descending"
         )
 
     def test_non_monotonic_bootstrap_completes(self) -> None:

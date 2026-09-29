@@ -65,10 +65,22 @@ def run_ingest_architecture(
     revision_precheck: Callable[..., bool] | None = None,
     run_ai: bool = True,
     ai_limit: int = AI_CLAIM_LIMIT,
+    page_limit: int | None = None,
+    force_full_range: bool = False,
 ) -> IngestArchitectureResult:
     """실제 API·Anthropic·DB는 주입된 의존성이 있을 때만 호출된다."""
+    if page_limit is not None and run_ai:
+        raise ValueError("bounded ingest cannot run AI")
+    if force_full_range and (run_ai or page_limit is not None):
+        raise ValueError("full-range ingest cannot run AI or combine with page_limit")
     sleeper = PRODUCTION_SLEEP if sleep is None else sleep
-    results = run_ingest(connectors, store, sleep=sleeper)
+    results = run_ingest(
+        connectors,
+        store,
+        sleep=sleeper,
+        page_limit=page_limit,
+        force_full_range=force_full_range,
+    )
 
     if not run_ai:
         ai_result = AiWorkerResult(status=AI_DISABLED)
@@ -110,6 +122,8 @@ def run_ai_only(
     enqueue: Callable[..., dict[str, Any]] | None = None,
     revision_precheck: Callable[..., bool] | None = None,
     ai_limit: int = AI_CLAIM_LIMIT,
+    target_source_item_id: str | None = None,
+    target_revision_hash: str | None = None,
 ) -> IngestArchitectureResult:
     if not ai_dependencies_ready(
         supabase=supabase, summarize_ko=summarize_ko, enqueue=enqueue
@@ -125,6 +139,8 @@ def run_ai_only(
             revision_precheck=revision_precheck,
             limit=ai_limit,
             require_jobs=True,
+            target_source_item_id=target_source_item_id,
+            target_revision_hash=target_revision_hash,
         )
     return IngestArchitectureResult(
         exit_code=0,

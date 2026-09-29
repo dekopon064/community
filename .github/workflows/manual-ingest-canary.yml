@@ -1,0 +1,48 @@
+name: Manual ingest canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: One Youthcenter source to ingest and evaluate (one API page)
+        required: true
+        type: choice
+        options:
+          - youthcenter_content
+          - youthcenter_policy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: machimoa-ingest-production
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: machimoa-ingest-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install ingest dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Ingest one content page without AI
+        if: inputs.source == 'youthcenter_content'
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          YOUTH_CONTENT_API_KEY: ${{ secrets.YOUTH_CONTENT_API_KEY }}
+        run: python scripts/run_ingest_architecture.py --source youthcenter_content --execute --canary-one-page
+      - name: Ingest one policy page without AI
+        if: inputs.source == 'youthcenter_policy'
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          YOUTH_API_KEY: ${{ secrets.YOUTH_API_KEY }}
+        run: python scripts/run_ingest_architecture.py --source youthcenter_policy --execute --canary-one-page

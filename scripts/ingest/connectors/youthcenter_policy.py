@@ -39,7 +39,7 @@ POLICY_LIST_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
 POLICY_PAGE_SIZE = 5
 POLICY_BOOTSTRAP_MAX_PAGES = 5
 POLICY_BOOTSTRAP_MAX_ITEMS = 25
-POLICY_MAX_PAGES = 10
+POLICY_MAX_PAGES = 5
 POLICY_HTTP_BUDGET = 30
 
 REQUEST_HEADERS = {
@@ -162,7 +162,8 @@ class YouthcenterPolicyConnector(BatchConnector):
     bootstrap_max_items = POLICY_BOOTSTRAP_MAX_ITEMS
     max_pages = POLICY_MAX_PAGES
     http_budget = POLICY_HTTP_BUDGET
-    ordering_capability: OrderingCapability = "untrusted"
+    ordering_capability: OrderingCapability = "require_descending"
+    ordering_stamp_basis = "created"
 
     def __init__(
         self,

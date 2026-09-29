@@ -142,6 +142,7 @@ UPSERT_SOURCE_OBSERVATIONS = "upsert_source_observations_v3"
 UPSERT_SOURCE_OBSERVATIONS_V4 = "upsert_source_observations_v4"
 FINISH_INGEST_RUN = "finish_ingest_run"
 CLAIM_PROCESSING_JOBS = "claim_processing_jobs"
+CLAIM_TARGET_PROCESSING_JOB = "claim_processing_job_for_source_item"
 COMPLETE_PROCESSING_JOB = "complete_processing_job"
 FAIL_PROCESSING_JOB = "fail_processing_job"
 RESOLVE_INGEST_REVIEW_DECISION = "resolve_ingest_review_decision"
@@ -517,16 +518,37 @@ class SupabaseIngestStore:
         limit: int = AI_CLAIM_LIMIT,
         worker_id: str,
         lease_seconds: int = DEFAULT_JOB_LEASE_SECONDS,
+        target_source_item_id: str | None = None,
+        target_revision_hash: str | None = None,
     ) -> list[ClaimedJob]:
-        data = _rpc_data(
-            self._client,
-            CLAIM_PROCESSING_JOBS,
+        targeted = target_source_item_id is not None or target_revision_hash is not None
+        if targeted and (
+            stage != AI_STAGE
+            or not target_source_item_id
+            or not target_revision_hash
+            or limit != 1
+        ):
+            raise ValueError("invalid_ai_target")
+        rpc_name = CLAIM_TARGET_PROCESSING_JOB if targeted else CLAIM_PROCESSING_JOBS
+        params = (
             {
+                "p_source_item_id": target_source_item_id,
+                "p_revision_hash": target_revision_hash,
+                "p_worker_id": worker_id,
+                "p_lease_seconds": lease_seconds,
+            }
+            if targeted
+            else {
                 "p_stage": stage,
                 "p_limit": limit,
                 "p_worker_id": worker_id,
                 "p_lease_seconds": lease_seconds,
-            },
+            }
+        )
+        data = _rpc_data(
+            self._client,
+            rpc_name,
+            params,
         )
         rows = _require_list(data)
         jobs: list[ClaimedJob] = []
@@ -553,6 +575,15 @@ class SupabaseIngestStore:
                     disposition=_nonempty_str(row["disposition"]),
                 )
             )
+        if targeted and (
+            len(jobs) > 1
+            or any(
+                (job.source_item_id, job.revision_hash)
+                != (target_source_item_id, target_revision_hash)
+                for job in jobs
+            )
+        ):
+            raise RpcAmbiguous()
         return jobs
 
     def complete_processing_job(self, job_id: str, *, worker_id: str) -> None:

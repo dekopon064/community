@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import uuid
 from typing import Any, Sequence
 
 from ingest.ai_provider import (
@@ -71,10 +72,16 @@ def cli_exit_code(result: IngestArchitectureResult, *, run_ai: bool) -> int:
     return 1
 
 
-def cli_ai_only_exit_code(result: IngestArchitectureResult) -> int:
+def cli_ai_only_exit_code(
+    result: IngestArchitectureResult, *, targeted: bool = False
+) -> int:
     ai = result.ai
     if ai.status == AI_NO_JOBS:
-        return 1
+        if targeted or any(
+            (ai.claimed, ai.completed, ai.failed, ai.retried, ai.state_unknown)
+        ):
+            return 1
+        return 0
     if ai.status != AI_PROCESSED:
         return 1
     if ai.claimed < 1:
@@ -92,6 +99,7 @@ def _print_summary(result: IngestArchitectureResult, *, run_ai: bool, exit_code:
         "ingest source="
         f"{source.source_id} status={source.status} stop_reason={source.stop_reason} "
         f"skipped={source.skipped} batches_ok={source.batches_ok} "
+        f"http_requests={source.http_request_count} "
         f"ordering={source.ordering_cli_token()}"
     )
     if run_ai:
@@ -106,6 +114,8 @@ def _print_summary(result: IngestArchitectureResult, *, run_ai: bool, exit_code:
 
 def _print_ai_only_summary(result: IngestArchitectureResult, *, exit_code: int) -> None:
     ai = result.ai
+    if ai.status == AI_NO_JOBS and exit_code == 0:
+        print("작업 내용 없음: 처리할 AI 대기열 항목이 없습니다.")
     print(
         "ingest ai="
         f"{ai.status} claimed={ai.claimed} completed={ai.completed} "
@@ -128,6 +138,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="operator approval to perform Youth/DB I/O",
     )
     parser.add_argument(
+        "--canary-one-page",
+        action="store_true",
+        help="process at most one API page without completing a truncated bootstrap",
+    )
+    parser.add_argument(
+        "--full-scan-once",
+        action="store_true",
+        help="manually scan the configured range without the unchanged streak stop; no AI",
+    )
+    parser.add_argument(
         "--run-ai",
         action="store_true",
         help="process global AI queue after source complete",
@@ -143,10 +163,26 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="global AI claim limit; required with --run-ai/--ai-only, range 1-10",
     )
+    parser.add_argument(
+        "--ai-source-item-id",
+        default=None,
+        help="current source item UUID for a targeted one-job AI canary",
+    )
+    parser.add_argument(
+        "--ai-revision-hash",
+        default=None,
+        help="current revision hash for a targeted one-job AI canary",
+    )
     return parser
 
 
 def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.canary_one_page and (args.ai_only or args.run_ai):
+        parser.error("--canary-one-page cannot be combined with AI options")
+    if args.full_scan_once and (args.canary_one_page or args.ai_only or args.run_ai):
+        parser.error("--full-scan-once cannot be combined with canary or AI options")
+    if args.full_scan_once and not args.execute:
+        parser.error("--full-scan-once requires --execute")
     if args.ai_only and args.source:
         parser.error("--ai-only cannot be used with --source")
     if args.ai_only and args.run_ai:
@@ -165,6 +201,18 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         parser.error("--ai-only requires --ai-limit")
     if args.ai_limit is not None and not (1 <= args.ai_limit <= 10):
         parser.error("--ai-limit must be an integer from 1 to 10")
+    targeted = args.ai_source_item_id is not None or args.ai_revision_hash is not None
+    if targeted:
+        if not args.ai_only or args.ai_limit != 1:
+            parser.error("AI target requires --ai-only --ai-limit 1")
+        try:
+            uuid.UUID(args.ai_source_item_id or "")
+        except ValueError:
+            parser.error("--ai-source-item-id must be a UUID")
+        if not args.ai_revision_hash or len(args.ai_revision_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in args.ai_revision_hash
+        ):
+            parser.error("--ai-revision-hash must be a lowercase SHA-256 hash")
 
 
 def _youth_api_key() -> str:
@@ -260,8 +308,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 enqueue=ai_helpers.get("enqueue"),
                 revision_precheck=ai_helpers.get("revision_precheck"),
                 ai_limit=args.ai_limit if args.ai_limit is not None else 1,
+                target_source_item_id=args.ai_source_item_id,
+                target_revision_hash=args.ai_revision_hash,
             )
-            code = cli_ai_only_exit_code(result)
+            code = cli_ai_only_exit_code(
+                result, targeted=args.ai_source_item_id is not None
+            )
             _print_ai_only_summary(result, exit_code=code)
             return code
 
@@ -282,6 +334,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             revision_precheck=ai_helpers.get("revision_precheck"),
             run_ai=args.run_ai,
             ai_limit=args.ai_limit if args.ai_limit is not None else 10,
+            page_limit=1 if args.canary_one_page else None,
+            force_full_range=args.full_scan_once,
         )
         code = cli_exit_code(result, run_ai=args.run_ai)
         _print_summary(result, run_ai=args.run_ai, exit_code=code)
