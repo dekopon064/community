@@ -24,9 +24,11 @@ from ingest.ai_worker import (
 )
 from ingest.connectors.youthcenter_content import (
     CONTENT_API_KEY_ENV,
+    CONTENT_MAX_RESPONSE_BYTES,
     YouthcenterContentConnector,
 )
 from ingest.connectors.youthcenter_policy import YouthcenterPolicyConnector
+from ingest.http_client import DEFAULT_MAX_RESPONSE_BYTES, HttpClient, HttpStatusError
 from ingest.run import IngestArchitectureResult, run_ai_only, run_ingest_architecture
 from ingest.source_identity import CANONICAL_CONTENT_SOURCE, CANONICAL_POLICY_SOURCE
 from ingest.supabase_store import create_ingest_client
@@ -143,6 +145,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="process at most one API page without completing a truncated bootstrap",
     )
     parser.add_argument(
+        "--probe-one-page",
+        action="store_true",
+        help="read one Youthcenter page without Supabase writes or AI; requires --execute",
+    )
+    parser.add_argument(
         "--full-scan-once",
         action="store_true",
         help="manually scan the configured range without the unchanged streak stop; no AI",
@@ -177,6 +184,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.probe_one_page:
+        if not args.execute or not args.source:
+            parser.error("--probe-one-page requires --source and --execute")
+        if any((
+            args.canary_one_page, args.full_scan_once, args.run_ai, args.ai_only,
+            args.ai_limit is not None, args.ai_source_item_id, args.ai_revision_hash,
+        )):
+            parser.error("--probe-one-page cannot be combined with ingest or AI options")
     if args.canary_one_page and (args.ai_only or args.run_ai):
         parser.error("--canary-one-page cannot be combined with AI options")
     if args.full_scan_once and (args.canary_one_page or args.ai_only or args.run_ai):
@@ -234,6 +249,54 @@ def _missing_source_execute_message(source: str) -> str | None:
     return None
 
 
+def _missing_probe_key_message(source: str) -> str | None:
+    if source == CANONICAL_POLICY_SOURCE:
+        return MISSING_POLICY_KEY_MESSAGE if _missing_env((POLICY_API_KEY_ENV,)) else None
+    return MISSING_CONTENT_KEY_MESSAGE if _missing_env((CONTENT_API_KEY_ENV,)) else None
+
+
+def _probe_one_page(source: str) -> int:
+    """One HTTP attempt on page 1; never constructs a DB client or runs AI."""
+    missing = _missing_probe_key_message(source)
+    if missing is not None:
+        print(missing, file=sys.stderr)
+        return 1
+    http = HttpClient(
+        budget=1,
+        max_attempts=1,
+        max_response_bytes=(
+            CONTENT_MAX_RESPONSE_BYTES
+            if source == CANONICAL_CONTENT_SOURCE
+            else DEFAULT_MAX_RESPONSE_BYTES
+        ),
+    )
+    connector = (
+        YouthcenterPolicyConnector(http=http, api_key_provider=_youth_api_key)
+        if source == CANONICAL_POLICY_SOURCE
+        else YouthcenterContentConnector(http=http, api_key_provider=_youth_content_api_key)
+    )
+    try:
+        batch = connector.fetch_batch(None)
+    except HttpStatusError as exc:
+        print(
+            f"probe source={source} page=1 status=failed reason=http_{exc.status} "
+            f"http_requests={http.request_count}"
+        )
+        return 1
+    except Exception:
+        # Do not print third-party exceptions: they may contain the API key or URL.
+        print(
+            f"probe source={source} page=1 status=failed reason=request_or_parse_failed "
+            f"http_requests={http.request_count}"
+        )
+        return 1
+    print(
+        f"probe source={source} page=1 status=ok http_status={batch.meta.http_status} "
+        f"items={len(batch.items)} http_requests={http.request_count}"
+    )
+    return 0
+
+
 def _missing_ai_only_execute_message() -> str | None:
     if _missing_env(REQUIRED_SUPABASE_ENV):
         return MISSING_ENV_MESSAGE
@@ -271,6 +334,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "no-op"
         )
         return 0
+
+    if args.probe_one_page:
+        return _probe_one_page(args.source)
 
     provider: str | None = None
     provider_key: str | None = None

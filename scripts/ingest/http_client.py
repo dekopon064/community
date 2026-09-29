@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
+import sys
 import time
 from dataclasses import dataclass, field
+from datetime import timezone
+from email.utils import format_datetime, parsedate_to_datetime
 from typing import Any, Callable, Mapping
 
 import requests
@@ -19,6 +23,77 @@ PRODUCTION_SLEEP: Callable[[float], None] = time.sleep
 
 SleepFn = Callable[[float], None]
 TransportFn = Callable[..., Any]
+_SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+_RFC850_DATE = re.compile(
+    r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), "
+    r"[0-9]{2}-[A-Za-z]{3}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT\Z"
+)
+_ASCTIME_DATE = re.compile(
+    r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Za-z]{3} "
+    r"(?: [1-9]|[12][0-9]|3[01]) [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}\Z"
+)
+
+
+def _safe_header(headers: Any, name: str, *, request_id: bool = False) -> str:
+    if headers is None or not hasattr(headers, "get"):
+        return "-"
+    raw = headers.get(name)
+    if not isinstance(raw, str):
+        return "-"
+    if request_id:
+        return raw if _SAFE_REQUEST_ID.fullmatch(raw) else "-"
+    if re.fullmatch(r"[0-9]{1,6}", raw):
+        return raw
+    # Parse only valid HTTP-date shapes and log a canonical UTC timestamp.
+    # A round-trip or recognized obsolete form keeps attacker text out of logs.
+    if len(raw) <= 64:
+        try:
+            parsed = parsedate_to_datetime(raw)
+            utc = (
+                parsed.replace(tzinfo=timezone.utc)
+                if parsed.tzinfo is None
+                else parsed.astimezone(timezone.utc)
+            )
+            canonical = format_datetime(utc, usegmt=True)
+            if canonical[:3] == raw[:3] and (
+                canonical == raw
+                or _RFC850_DATE.fullmatch(raw)
+                or _ASCTIME_DATE.fullmatch(raw)
+            ):
+                return utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return "present"
+
+
+def _log_http_status(
+    response: Any, *, source_id: str | None, page_num: int | None,
+    attempt: int, status: int, params: Mapping[str, Any] | None,
+) -> None:
+    headers = getattr(response, "headers", None)
+    source = source_id if source_id in {"youthcenter_policy", "youthcenter_content"} else "-"
+    page = page_num if isinstance(page_num, int) and 1 <= page_num <= 100000 else "-"
+    secret_values = tuple(
+        str(value) for key, value in (params or {}).items()
+        if ("key" in key.lower() or "token" in key.lower())
+        and value is not None and str(value)
+    )
+    request_id = next(
+        (value for name in ("X-Request-ID", "X-Correlation-ID", "CF-Ray")
+         if (value := _safe_header(headers, name, request_id=True)) != "-"),
+        "-",
+    )
+    retry_after = _safe_header(headers, "Retry-After")
+    if any(secret in request_id for secret in secret_values):
+        request_id = "-"
+    if any(secret in retry_after for secret in secret_values):
+        retry_after = "-"
+    print(
+        f"ingest_http source={source} page={page} attempt={attempt} "
+        f"status={status} retry_after={retry_after} "
+        f"request_id={request_id}",
+        file=sys.stderr,
+    )
 
 
 class HttpBudgetExhausted(RuntimeError):
@@ -67,6 +142,8 @@ class HttpClient:
         *,
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
+        source_id: str | None = None,
+        page_num: int | None = None,
     ) -> tuple[Any, int, int]:
         """JSON을 반환한다. query·본문·키는 예외에 넣지 않는다.
 
@@ -100,6 +177,11 @@ class HttpClient:
 
                 status = int(getattr(response, "status_code", 0) or 0)
                 last_status = status
+                if status >= 400:
+                    _log_http_status(
+                        response, source_id=source_id, page_num=page_num,
+                        attempt=attempt, status=status, params=params,
+                    )
                 if status in RETRYABLE_STATUSES:
                     if attempt >= self.max_attempts:
                         raise HttpStatusError(status)

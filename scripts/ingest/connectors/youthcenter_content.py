@@ -219,6 +219,8 @@ class YouthcenterContentConnector(BatchConnector):
                 "rtnType": "json",
             },
             headers=REQUEST_HEADERS,
+            source_id=self.canonical_source_id,
+            page_num=page_num,
         )
         items = _content_list(payload)
         natural_end = len(items) < self.page_size
