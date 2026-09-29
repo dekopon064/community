@@ -35,7 +35,7 @@ export default function CurationCard({
   return (
     <Link
       href={`/info/${slug}`}
-      className="group block border-b border-info-rule bg-info-surface px-4 py-5 transition-colors hover:bg-white focus-visible:bg-white md:px-6 md:py-6"
+      className="group block border-b border-info-rule bg-info-surface px-4 py-5 transition-colors hover:bg-info-hover focus-visible:bg-info-hover md:px-6 md:py-6"
     >
       <article className={`grid min-w-0 gap-x-3 ${category ? "grid-cols-[24px_minmax(0,1fr)]" : "grid-cols-1"}`}>
         <div className={`flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-6 ${category ? "col-start-2" : "col-start-1"}`}>

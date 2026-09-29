@@ -1,4 +1,3 @@
-import Image from "next/image";
 import type { UserCategory } from "@/app/lib/userCategories";
 
 const ICONS: Record<UserCategory, string> = {
@@ -19,13 +18,20 @@ export default function CategoryIcon({
   className?: string;
 }) {
   return (
-    <Image
-      src={ICONS[category]}
-      width={size}
-      height={size}
-      alt=""
+    <span
       aria-hidden="true"
-      className={className}
+      className={`inline-block bg-ink ${className ?? ""}`}
+      style={{
+        ...(className ? {} : { width: size, height: size }),
+        maskImage: `url(${ICONS[category]})`,
+        WebkitMaskImage: `url(${ICONS[category]})`,
+        maskSize: "contain",
+        WebkitMaskSize: "contain",
+        maskRepeat: "no-repeat",
+        WebkitMaskRepeat: "no-repeat",
+        maskPosition: "center",
+        WebkitMaskPosition: "center",
+      }}
     />
   );
 }

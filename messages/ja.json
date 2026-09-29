@@ -74,6 +74,10 @@
     "current": "現在の言語: {language}",
     "switch": "{language}に切り替える"
   },
+  "ThemeToggle": {
+    "lightToDark": "現在はライトモード、ダークモードに切り替え",
+    "darkToLight": "現在はダークモード、ライトモードに切り替え"
+  },
   "Categories": {
     "policy": "政策",
     "program": "プログラム",

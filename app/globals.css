@@ -15,7 +15,30 @@
   --color-sky: #82b8de;
   --color-coral: #a8564a;
   --color-focus: #1e5e9d;
+  --color-info-hover: #ffffff;
+  --color-action-hover: #1e5e9d;
   --shadow-premium-sm: 0 10px 26px rgba(29, 70, 106, 0.09);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: #171717;
+  --color-canvas-white: #242424;
+  --color-ink: #f3f3f1;
+  --color-ink-sub: #bdbdb8;
+  --color-stone: #555555;
+  --color-info-surface: #242424;
+  --color-info-body: #bdbdb8;
+  --color-info-muted: #bdbdb8;
+  --color-info-rule: #555555;
+  --color-info-status: #c5f467;
+  --color-mineral: #242424;
+  --color-sky: #bdbdb8;
+  --color-coral: #c5f467;
+  --color-focus: #c5f467;
+  --color-info-hover: #171717;
+  --color-action-hover: #bdbdb8;
+  --shadow-premium-sm: none;
 }
 
 @theme inline {
@@ -36,8 +59,90 @@ body {
 }
 
 :focus-visible {
-  outline: 3px solid #1e5e9d;
+  outline: 3px solid var(--color-focus);
   outline-offset: 3px;
+}
+
+html {
+  color-scheme: light;
+}
+
+html[data-theme="dark"] ::selection {
+  background: var(--color-info-status);
+  color: var(--color-canvas);
+}
+
+html[data-theme="dark"] .site-header,
+html[data-theme="dark"] .site-bottom-nav {
+  background: var(--color-canvas);
+}
+
+.locale-switcher {
+  box-shadow: inset 0 0 0 1px var(--color-stone);
+}
+
+html[data-theme="dark"] .locale-switcher {
+  background: var(--color-canvas);
+}
+
+.theme-toggle {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.theme-toggle .theme-sun,
+.theme-toggle .theme-moon {
+  display: block;
+}
+
+.theme-toggle .theme-moon,
+html[data-theme="dark"] .theme-toggle .theme-sun {
+  display: none;
+}
+
+html[data-theme="dark"] .theme-toggle .theme-moon {
+  display: block;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .theme-toggle:hover {
+    background: var(--color-canvas);
+  }
+
+  html[data-theme="dark"] .theme-toggle:hover {
+    background: var(--color-canvas-white);
+  }
+}
+
+html[data-theme="dark"] .home-atlas-backdrop {
+  display: none;
+}
+
+html[data-theme="dark"] .feedback-consent-row,
+html[data-theme="dark"] .feedback-consent-row[data-invalid="true"] {
+  background: var(--color-canvas-white);
+}
+
+html[data-theme="dark"] .feedback-notice-fade {
+  display: none;
+}
+
+html[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select {
+  border-color: var(--color-ink-sub);
+  caret-color: var(--color-ink);
+}
+
+html[data-theme="dark"] :is(input, textarea, select)[aria-invalid="true"] {
+  border-color: var(--color-info-status);
+}
+
+html[data-theme="dark"] .event-period-label {
+  color: var(--color-ink);
+}
+
+html[data-theme="dark"] .event-period-date {
+  color: var(--color-info-status);
 }
 
 @media (prefers-reduced-motion: reduce) {

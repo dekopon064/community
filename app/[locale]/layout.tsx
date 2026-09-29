@@ -9,6 +9,7 @@ import "@/app/globals.css";
 import Header from "@/app/components/Header";
 import SiteFooter from "@/app/components/SiteFooter";
 import BottomNav from "@/app/components/BottomNav";
+import ThemeBootstrap from "@/app/components/ThemeBootstrap";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -87,8 +88,12 @@ export default async function LocaleLayout({
   return (
     <html
       lang={locale}
+      suppressHydrationWarning
       className={`${notoSans.variable} ${geistSans.variable} ${geistMono.variable} antialiased`}
     >
+      <head>
+        <ThemeBootstrap />
+      </head>
       <body className="bg-canvas">
         <NextIntlClientProvider>
           <div className="relative flex min-h-screen w-full flex-col bg-canvas text-ink">

@@ -97,7 +97,7 @@ export default async function CurationTrustPanel({
             href={source.href}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-3 flex min-h-11 items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm font-bold text-canvas-white transition-colors hover:bg-focus"
+            className="mt-3 flex min-h-11 items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm font-bold text-canvas-white transition-colors hover:bg-action-hover"
           >
             <span className="min-w-0">
               <span className="block">{t("openSource")}</span>

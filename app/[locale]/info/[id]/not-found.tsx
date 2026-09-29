@@ -13,7 +13,7 @@ export default async function CurationNotFound() {
       >
         <Link
           href="/info"
-          className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white transition-colors hover:bg-focus"
+          className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white transition-colors hover:bg-action-hover"
         >
           {t("goToList")}
         </Link>

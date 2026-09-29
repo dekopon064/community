@@ -2,6 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import LocaleSwitcher from "@/app/components/LocaleSwitcher";
+import ThemeToggle from "@/app/components/ThemeToggle";
 import { USER_CATEGORIES } from "@/app/lib/userCategories";
 import { Link, usePathname } from "@/i18n/navigation";
 
@@ -19,7 +20,7 @@ export default function Header() {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-50 border-b border-stone/90 bg-canvas-white">
+    <header className="site-header sticky top-0 z-50 border-b border-stone/90 bg-canvas-white">
       <div className="mx-auto flex h-16 max-w-7xl items-center px-5 lg:h-[4.5rem] lg:px-8">
         <Link
           href="/"
@@ -49,7 +50,8 @@ export default function Header() {
           })}
         </nav>
 
-        <div className="ml-auto">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          <ThemeToggle />
           <LocaleSwitcher />
         </div>
       </div>
