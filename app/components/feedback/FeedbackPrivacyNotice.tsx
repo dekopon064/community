@@ -104,11 +104,12 @@ export default function FeedbackPrivacyNotice({
         </div>
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 hidden h-12 bg-gradient-to-t from-canvas-white to-transparent md:block"
+          className="feedback-notice-fade pointer-events-none absolute inset-x-0 bottom-0 hidden h-12 bg-gradient-to-t from-canvas-white to-transparent md:block"
         />
       </div>
       <div
-        className={`border-t px-4 py-4 md:px-6 ${
+        data-invalid={consentInvalid}
+        className={`feedback-consent-row border-t px-4 py-4 md:px-6 ${
           consentInvalid
             ? "border-coral bg-coral/5"
             : "border-stone bg-mineral/70"

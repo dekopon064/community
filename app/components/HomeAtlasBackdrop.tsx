@@ -2,7 +2,7 @@ export default function HomeAtlasBackdrop() {
   return (
     <>
       <svg
-        className="pointer-events-none absolute inset-0 -z-10 hidden h-full w-full lg:block"
+        className="home-atlas-backdrop pointer-events-none absolute inset-0 -z-10 hidden h-full w-full lg:block"
         viewBox="0 0 1440 828"
         preserveAspectRatio="none"
         aria-hidden="true"
@@ -42,7 +42,7 @@ export default function HomeAtlasBackdrop() {
       </svg>
 
       <svg
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[232px] w-full lg:hidden"
+        className="home-atlas-backdrop pointer-events-none absolute inset-x-0 top-0 -z-10 h-[232px] w-full lg:hidden"
         viewBox="0 0 390 232"
         preserveAspectRatio="none"
         aria-hidden="true"

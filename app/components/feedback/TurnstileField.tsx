@@ -14,7 +14,7 @@ type TurnstileApi = {
       sitekey: string;
       action: string;
       language: string;
-      theme: "light";
+      theme: "light" | "dark";
       size: "flexible";
       appearance: "always";
       callback: (token: string) => void;
@@ -73,6 +73,17 @@ export default function TurnstileField({
   const onTokenChangeRef = useRef(onTokenChange);
   const onWidgetStateChangeRef = useRef(onWidgetStateChange);
   const [scriptReady, setScriptReady] = useState(() => getTurnstile() !== null);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  useEffect(() => {
+    const syncTheme = () => {
+      setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+    };
+    syncTheme();
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     onTokenChangeRef.current = onTokenChange;
@@ -81,6 +92,7 @@ export default function TurnstileField({
 
   useEffect(() => {
     if (!scriptReady) return;
+    if (theme !== (document.documentElement.dataset.theme === "dark" ? "dark" : "light")) return;
 
     let cancelled = false;
     const api = getTurnstile();
@@ -98,7 +110,7 @@ export default function TurnstileField({
       sitekey: siteKey,
       action,
       language,
-      theme: "light",
+      theme,
       size: "flexible",
       appearance: "always",
       callback: (token) => {
@@ -132,7 +144,7 @@ export default function TurnstileField({
       widgetIdRef.current = null;
       onTokenChangeRef.current(null);
     };
-  }, [scriptReady, siteKey, action, language, resetSignal]);
+  }, [scriptReady, siteKey, action, language, resetSignal, theme]);
 
   const statusText =
     widgetState === "ready"

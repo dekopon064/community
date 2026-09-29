@@ -25,7 +25,7 @@ export default function LocaleSwitcher() {
     <div
       role="group"
       aria-label={t("label")}
-      className="inline-flex min-h-11 rounded-full border border-stone bg-canvas-white p-1"
+      className="locale-switcher inline-flex h-11 items-center rounded-full bg-canvas-white"
     >
       {LOCALES.map((option) => {
         const isActive = locale === option;
@@ -39,13 +39,17 @@ export default function LocaleSwitcher() {
             disabled={isPending}
             aria-pressed={isActive}
             aria-label={isActive ? t("current", { language }) : t("switch", { language })}
-            className={`min-h-11 min-w-11 rounded-full px-3 text-xs font-semibold transition-colors disabled:opacity-50 ${
-              isActive
-                ? "bg-ink text-canvas-white"
-                : "text-ink-sub hover:bg-mineral hover:text-ink"
-            }`}
+            className="grid h-11 min-w-11 place-items-center rounded-full bg-transparent px-1 text-xs font-semibold disabled:opacity-50"
           >
-            {language}
+            <span
+              className={`grid h-9 min-w-9 place-items-center rounded-full px-2 transition-colors ${
+                isActive
+                  ? "bg-ink text-canvas-white"
+                  : "text-ink-sub hover:bg-mineral hover:text-ink"
+              }`}
+            >
+              {language}
+            </span>
           </button>
         );
       })}

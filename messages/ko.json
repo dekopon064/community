@@ -75,6 +75,10 @@
     "current": "현재 언어: {language}",
     "switch": "{language}로 전환"
   },
+  "ThemeToggle": {
+    "lightToDark": "현재 라이트 모드, 다크 모드로 전환",
+    "darkToLight": "현재 다크 모드, 라이트 모드로 전환"
+  },
   "Categories": {
     "policy": "정책",
     "program": "프로그램",

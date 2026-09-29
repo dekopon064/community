@@ -52,7 +52,7 @@ export default function CurationExplorer({
                 <Link
                   key={category}
                   href={`/info/category/${category}`}
-                  className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-info-rule bg-info-surface px-4 py-2 text-sm font-semibold text-info-muted transition-colors hover:bg-white hover:text-ink"
+                  className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-info-rule bg-info-surface px-4 py-2 text-sm font-semibold text-info-muted transition-colors hover:bg-info-hover hover:text-ink"
                 >
                   {categoriesT(category)}
                 </Link>
@@ -108,7 +108,7 @@ export default function CurationExplorer({
               {!selectedCategory && curations.length === 0 ? (
                 <Link
                   href="/"
-                  className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white transition-colors hover:bg-focus"
+                  className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white transition-colors hover:bg-action-hover"
                 >
                   {t("homeAction")}
                 </Link>

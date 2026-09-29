@@ -290,7 +290,8 @@ export default function FeedbackForm({
           </p>
         </div>
         <div
-          className={`border-t px-4 py-4 md:px-6 ${
+          data-invalid={ageInvalid}
+          className={`feedback-consent-row border-t px-4 py-4 md:px-6 ${
             ageInvalid ? "border-coral bg-coral/5" : "border-stone bg-mineral/70"
           }`}
         >

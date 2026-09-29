@@ -53,10 +53,47 @@
 }
 
 .illustration {
+  --mailbox-body: var(--color-canvas-white);
+  --mailbox-side: var(--color-mineral);
+  --mailbox-post: var(--color-ink);
+  --mailbox-outline: var(--color-ink);
+  --mailbox-flag: var(--color-coral);
+  --mailbox-detail: var(--color-sky);
   display: block;
   width: 11.5rem;
   height: 11.5rem;
   max-width: 86%;
+}
+
+.post {
+  fill: var(--mailbox-post);
+}
+
+.body {
+  fill: var(--mailbox-body);
+  stroke: var(--mailbox-outline);
+}
+
+.side {
+  fill: var(--mailbox-side);
+  stroke: var(--mailbox-outline);
+}
+
+.slot {
+  fill: var(--mailbox-outline);
+}
+
+.flag {
+  stroke: var(--mailbox-flag);
+}
+
+.flagPivot {
+  fill: var(--mailbox-body);
+  stroke: var(--mailbox-flag);
+}
+
+.baseline {
+  stroke: var(--mailbox-detail);
 }
 
 .prompt {
@@ -219,6 +256,40 @@
 .widget[data-open="true"] .paper {
   opacity: 1;
   transform: translateY(0);
+}
+
+:global(html[data-theme="dark"]) .toggle::before {
+  background: var(--color-canvas-white);
+}
+
+:global(html[data-theme="dark"]) .illustration {
+  --mailbox-body: #2a3134;
+  --mailbox-side: #30383c;
+  --mailbox-post: #454e51;
+  --mailbox-outline: #899598;
+  --mailbox-flag: #be6b61;
+  --mailbox-detail: #748285;
+}
+
+:global(html[data-theme="dark"]) .paper {
+  border-color: var(--color-stone);
+  background: var(--color-canvas-white);
+  box-shadow: none;
+}
+
+:global(html[data-theme="dark"]) .paper::before {
+  background: var(--color-stone);
+}
+
+:global(html[data-theme="dark"]) .cta {
+  border-color: var(--color-stone);
+  background: var(--color-canvas);
+}
+
+:global(html[data-theme="dark"]) .cta:hover,
+:global(html[data-theme="dark"]) .cta:focus-visible {
+  border-color: var(--color-ink-sub);
+  background: var(--color-canvas-white);
 }
 
 @media (prefers-reduced-motion: reduce) {
