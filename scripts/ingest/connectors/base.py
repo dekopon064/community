@@ -27,6 +27,9 @@ class BatchConnector:
     batch_delay_seconds: float = 1.0
     # Subclasses must set this. There is no implicit default.
     ordering_capability: OrderingCapability
+    # Existing generic connectors retain the updated/created diagnostic;
+    # sources ordered by registration explicitly select "created".
+    ordering_stamp_basis = "updated_or_created"
 
     def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:
         raise NotImplementedError
