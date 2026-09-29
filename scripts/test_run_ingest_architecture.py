@@ -951,6 +951,8 @@ class CliProviderAndAiOnlyTests(unittest.TestCase):
         policy.assert_not_called()
         content.assert_not_called()
         self.assertEqual(run.call_args.kwargs["ai_limit"], 1)
+        self.assertIsNone(run.call_args.kwargs["target_source_item_id"])
+        self.assertIsNone(run.call_args.kwargs["target_revision_hash"])
         self.assertIn("ingest ai=", stdout)
         self.assertIn("ingest exit=0", stdout)
         self.assertNotIn("ingest source=", stdout)
