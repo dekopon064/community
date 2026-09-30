@@ -5,12 +5,19 @@ import { authRedirect, privateResponse } from "./http";
 type AuthClient = { auth: Pick<SupabaseClient["auth"], "signInWithOAuth" | "exchangeCodeForSession" | "getClaims" | "signOut"> };
 type ClientFactory = () => Promise<AuthClient | null>;
 
-export async function startGoogleLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string) {
+export async function startSocialLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string, kakaoEnabled = false) {
   if (!isSameOriginPost(request)) return privateResponse(new Response(null, { status: 403 }));
   const form = await request.formData().catch(() => null);
   if (!form) return privateResponse(new Response(null, { status: 400 }));
   const locale = authLocale(form.get("locale"));
   const next = safeReturnTo(form.get("next"), locale);
+  // Missing provider preserves existing Google-only forms and open browser tabs.
+  const providers = form.getAll("provider");
+  const provider = providers.length === 0 ? "google" : providers[0];
+  if (providers.length > 1 || (provider !== "google" && provider !== "kakao")) {
+    return privateResponse(new Response(null, { status: 400 }));
+  }
+  if (provider === "kakao" && !kakaoEnabled) return authRedirect(request, loginUrl(locale, next, "unavailable"));
   const origin = siteOrigin(request.url, configuredOrigin);
   if (!origin) return authRedirect(request, loginUrl(locale, next, "unavailable"));
   try {
@@ -20,7 +27,7 @@ export async function startGoogleLogin(request: Request, createClient: ClientFac
     callback.searchParams.set("locale", locale);
     callback.searchParams.set("next", next);
     const { data, error } = await client.auth.signInWithOAuth({
-      provider: "google", options: { redirectTo: callback.href, skipBrowserRedirect: true },
+      provider, options: { redirectTo: callback.href, skipBrowserRedirect: true },
     });
     if (error || !data.url) return authRedirect(request, loginUrl(locale, next, "failed"));
     return privateResponse(new Response(null, { status: 303, headers: { Location: data.url } }));
@@ -29,7 +36,7 @@ export async function startGoogleLogin(request: Request, createClient: ClientFac
   }
 }
 
-export async function finishGoogleLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string) {
+export async function finishSocialLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string) {
   const url = new URL(request.url);
   const locale = authLocale(url.searchParams.get("locale"));
   const next = safeReturnTo(url.searchParams.get("next"), locale);

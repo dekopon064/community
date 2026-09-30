@@ -18,7 +18,8 @@ const { safeReturnTo, siteOrigin, providerErrorNotice } = await import("../app/l
 assert.equal(providerErrorNotice("#error=access_denied&error_description=DO_NOT_ECHO"), "cancelled");
 assert.equal(providerErrorNotice("#error=server_error"), "failed");
 assert.equal(providerErrorNotice("#normal-section"), null);
-const { startGoogleLogin, finishGoogleLogin, readLoginState, endLogin } = await import("../app/lib/auth/handlers.ts");
+const { startSocialLogin, finishSocialLogin, readLoginState, endLogin } = await import("../app/lib/auth/handlers.ts");
+const { kakaoLoginEnabled } = await import("../app/lib/auth/config.ts");
 const { refreshLogin } = await import("../app/lib/auth/proxy.ts");
 const { parseAdminIds, verifyAdminAccess, requireVerifiedAdmin, AdminAccessError, adminAccessFailure } = await import("../app/lib/auth/admin-policy.ts");
 const { mayCacheResponse } = await import("../app/lib/serviceWorkerCachePolicy.ts");
@@ -63,7 +64,7 @@ const server = createServer(async (request, response) => {
   }
   if (url.pathname === "/auth/v1/logout") return response.end("{}");
   // This fake provider route is only for a local browser smoke test. It is
-  // deliberately not represented as verification of Google OAuth itself.
+  // deliberately not represented as verification of any real OAuth provider.
   if (url.pathname === "/auth/v1/authorize") {
     const callback = new URL(url.searchParams.get("redirect_to"));
     if (!["localhost", "127.0.0.1"].includes(callback.hostname)) { response.statusCode = 400; return response.end("{}"); }
@@ -72,7 +73,7 @@ const server = createServer(async (request, response) => {
       const adminCallback = new URL(callback); adminCallback.searchParams.set("code", "local-test-code");
       const regularCallback = new URL(callback); regularCallback.searchParams.set("code", "local-regular-code");
       const href = (url) => url.href.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
-      return response.end(`<main><h1>로컬 가짜 인증 계정 선택</h1><p>실제 Google 로그인이 아닌 로컬 시험입니다.</p><p><a href="${href(adminCallback)}">가짜 운영자 계정</a></p><p><a href="${href(regularCallback)}">가짜 일반 계정</a></p></main>`);
+      return response.end(`<main><h1>로컬 가짜 인증 계정 선택</h1><p>실제 소셜 로그인이 아닌 로컬 시험입니다.</p><p><a href="${href(adminCallback)}">가짜 운영자 계정</a></p><p><a href="${href(regularCallback)}">가짜 일반 계정</a></p></main>`);
     }
     callback.searchParams.set("code", "local-test-code");
     response.writeHead(302, { Location: callback.href });
@@ -103,7 +104,7 @@ if (process.argv.includes("--serve")) {
         },
       },
     });
-    const post = (path, next = "/ja/info?region=seoul#details", origin = site) => new Request(site + path, { method: "POST", headers: { Origin: origin }, body: new URLSearchParams({ locale: "ja", next }) });
+    const post = (path, next = "/ja/info?region=seoul#details", origin = site, provider) => new Request(site + path, { method: "POST", headers: { Origin: origin }, body: new URLSearchParams({ locale: "ja", next, ...(provider === undefined ? {} : { provider }) }) });
     function noCache(response) {
       assert.match(response.headers.get("cache-control"), /private.*no-store/);
       assert.equal(mayCacheResponse(response), false);
@@ -114,10 +115,30 @@ if (process.argv.includes("--serve")) {
     assert.equal(siteOrigin("https://attacker.test/api/auth/start"), null);
     assert.equal(siteOrigin("https://attacker.test/api/auth/start", "https://community.example"), null);
     assert.equal(siteOrigin("https://community.example/api/auth/start", "https://community.example"), "https://community.example");
-    assert.equal((await startGoogleLogin(post("/api/auth/start", "/ja", "https://evil.test"), factory)).status, 403);
+    assert.equal((await startSocialLogin(post("/api/auth/start", "/ja", "https://evil.test"), factory)).status, 403);
     assert.equal((await endLogin(post("/api/auth/logout", "/ja", "https://evil.test"), factory)).status, 403);
     const malformed = new Request(site + "/api/auth/start", { method: "POST", headers: { Origin: site, "Content-Type": "application/json" }, body: "{}" });
-    assert.equal((await startGoogleLogin(malformed, factory)).status, 400);
+    assert.equal((await startSocialLogin(malformed, factory)).status, 400);
+    for (const value of [undefined, "", "false", "TRUE", " true ", "1", "true"]) {
+      if (value === undefined) delete process.env.MACHIMOA_KAKAO_LOGIN_ENABLED;
+      else process.env.MACHIMOA_KAKAO_LOGIN_ENABLED = value;
+      assert.equal(kakaoLoginEnabled(), value === "true");
+    }
+    delete process.env.MACHIMOA_KAKAO_LOGIN_ENABLED;
+    let unsupportedCalls = 0;
+    const deniedFactory = async () => { unsupportedCalls++; throw new Error("must not reach Auth"); };
+    for (const provider of ["", "naver", "line", "custom:line", "service_role", "GOOGLE", "https://evil.test"]) {
+      const denied = await startSocialLogin(post("/api/auth/start", "/ko/admin", site, provider), deniedFactory, undefined, true);
+      assert.equal(denied.status, 400); noCache(denied);
+    }
+    const duplicate = post("/api/auth/start", "/ko/admin", site, "google");
+    const duplicateForm = new URLSearchParams(await duplicate.text()); duplicateForm.append("provider", "kakao");
+    const duplicateResponse = await startSocialLogin(new Request(duplicate.url, { method: "POST", headers: { Origin: site }, body: duplicateForm }), deniedFactory, undefined, true);
+    assert.equal(duplicateResponse.status, 400); noCache(duplicateResponse);
+    const disabledKakao = await startSocialLogin(post("/api/auth/start", "/ko/admin", site, "kakao"), deniedFactory);
+    assert.match(disabledKakao.headers.get("location"), /notice=unavailable/);
+    assert.equal(new URL(disabledKakao.headers.get("location")).searchParams.get("next"), "/ko/admin");
+    noCache(disabledKakao); assert.equal(unsupportedCalls, 0);
     assert.deepEqual(await (await readLoginState(factory, false)).json(), { status: "signed_out" });
     assert.deepEqual(await verifyAdminAccess(factory, user.id), { status: "signed_out" });
     const anonymousAdminPage = new NextRequest(site + "/ko/admin");
@@ -127,7 +148,7 @@ if (process.argv.includes("--serve")) {
     assert.equal(parseAdminIds("  ").size, 0);
     assert.equal(parseAdminIds(`${user.id.toUpperCase()}, ${user.id}`).size, 1);
     for (const bad of ["*", `${user.id},`, `${user.id},bad`, "00000000-0000-0000-0000-000000000000"]) assert.equal(parseAdminIds(bad), null);
-    const start = await startGoogleLogin(post("/api/auth/start"), factory);
+    const start = await startSocialLogin(post("/api/auth/start"), factory);
     noCache(start);
     const authorize = new URL(start.headers.get("location"));
     assert.equal(authorize.origin, backend);
@@ -137,12 +158,38 @@ if (process.argv.includes("--serve")) {
     assert.equal(callback.origin, site);
     assert.equal(callback.pathname, "/api/auth/callback");
     assert.ok(cookieWrites.some((cookie) => cookie.name.endsWith("-code-verifier") && cookie.options.httpOnly));
-    const cancelled = await finishGoogleLogin(new Request(callback.href + "&error=access_denied&error_description=secret"), factory);
+    const explicitGoogle = await startSocialLogin(post("/api/auth/start", "/ja", site, "google"), factory);
+    assert.equal(new URL(explicitGoogle.headers.get("location")).searchParams.get("provider"), "google");
+    const kakao = await startSocialLogin(post("/api/auth/start", "/ko/admin", site, "kakao"), factory, undefined, true);
+    noCache(kakao);
+    const kakaoAuthorize = new URL(kakao.headers.get("location"));
+    assert.equal(kakaoAuthorize.searchParams.get("provider"), "kakao");
+    assert.ok(kakaoAuthorize.searchParams.get("code_challenge"));
+    const kakaoCallback = new URL(kakaoAuthorize.searchParams.get("redirect_to"));
+    assert.equal(kakaoCallback.pathname, "/api/auth/callback");
+    assert.equal(kakaoCallback.searchParams.get("next"), "/ko/admin");
+    const kakaoCancel = await finishSocialLogin(new Request(kakaoCallback.href + "&error=access_denied&error_description=DO_NOT_ECHO"), factory);
+    assert.match(kakaoCancel.headers.get("location"), /notice=cancelled/);
+    assert.ok(!kakaoCancel.headers.get("location").includes("DO_NOT_ECHO")); noCache(kakaoCancel);
+    // Email-less Kakao account: verified sub still determines admin membership.
+    const kakaoUser = { ...regularUser, email: undefined, app_metadata: { provider: "kakao" } };
+    const kakaoFactory = async () => ({ auth: {
+      exchangeCodeForSession: async () => ({ error: null }),
+      getClaims: async () => ({ data: { claims: { sub: kakaoUser.id } }, error: null }),
+    } });
+    kakaoCallback.searchParams.set("code", "local-kakao-code");
+    const kakaoFinish = await finishSocialLogin(new Request(kakaoCallback), kakaoFactory);
+    assert.equal(kakaoFinish.headers.get("location"), site + "/ko/admin"); noCache(kakaoFinish);
+    assert.deepEqual(await (await readLoginState(kakaoFactory, true)).json(), { status: "signed_in" });
+    assert.deepEqual(await verifyAdminAccess(kakaoFactory, user.id), { status: "forbidden" });
+    // Restore the matching Google PKCE verifier before the SDK code exchange.
+    await startSocialLogin(post("/api/auth/start"), factory);
+    const cancelled = await finishSocialLogin(new Request(callback.href + "&error=access_denied&error_description=secret"), factory);
     noCache(cancelled);
     assert.match(cancelled.headers.get("location"), /notice=cancelled/);
     assert.ok(!cancelled.headers.get("location").includes("secret"));
     callback.searchParams.set("code", "local-test-code");
-    const result = await finishGoogleLogin(new Request(callback), factory);
+    const result = await finishSocialLogin(new Request(callback), factory);
     noCache(result);
     assert.equal(result.headers.get("location"), site + "/ja/info?region=seoul#details");
     assert.ok(cookieWrites.some((cookie) => /-auth-token(?:\.\d+)?$/.test(cookie.name) && cookie.options.httpOnly));
@@ -198,10 +245,10 @@ if (process.argv.includes("--serve")) {
     assert.equal((await (await readLoginState(factory, true)).json()).status, "expired");
     assert.notEqual((await verifyAdminAccess(factory, user.id)).status, "admin");
     jar.clear();
-    const badCallback = await finishGoogleLogin(new Request(site + "/api/auth/callback?code=bad&next=//evil.test"), factory);
+    const badCallback = await finishSocialLogin(new Request(site + "/api/auth/callback?code=bad&next=//evil.test"), factory);
     assert.match(badCallback.headers.get("location"), /^http:\/\/localhost:3100\/ko\/login\?/);
-    await startGoogleLogin(post("/api/auth/start"), factory);
-    await finishGoogleLogin(new Request(callback), factory);
+    await startSocialLogin(post("/api/auth/start"), factory);
+    await finishSocialLogin(new Request(callback), factory);
     assert.equal((await (await readLoginState(factory, true)).json()).status, "signed_in");
     cookieWrites = [];
     const signedOut = await endLogin(post("/api/auth/logout"), factory);
@@ -213,7 +260,7 @@ if (process.argv.includes("--serve")) {
     const unavailable = await readLoginState(async () => { throw new Error("private diagnostic"); }, true);
     assert.equal(unavailable.status, 503);
     assert.deepEqual(await unavailable.json(), { status: "unavailable" });
-    console.log("Auth + admin checks passed: PKCE, cookies, server UUID verification, fail-closed allowlist/guard, forged profiles/tokens, refresh/rewrite, return paths, CSRF, notices, logout and no-store. Local fake Auth only.");
+    console.log("Google/Kakao Auth + admin checks passed: provider allowlist/rollout gate, PKCE, cookies, server UUID verification, fail-closed guard, forged profiles/tokens, refresh/rewrite, return paths, CSRF, notices, logout and no-store. Local fake Auth only; no real provider login.");
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
