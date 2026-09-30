@@ -266,9 +266,13 @@ class SourceBoundsTests(unittest.TestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
-    def test_manual_both_sources_without_ai_or_schedule(self) -> None:
+    def test_manual_both_or_one_source_without_ai_or_schedule(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("default: both", workflow)
+        self.assertIn("          - both", workflow)
+        self.assertIn("          - youthcenter_policy", workflow)
+        self.assertIn("          - youthcenter_content", workflow)
         self.assertIn("full_scan_once:", workflow)
         self.assertIn("--full-scan-once", workflow)
         self.assertNotIn("schedule:", workflow)
@@ -280,6 +284,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("contents: read", workflow)
         self.assertLess(workflow.index("--source youthcenter_policy"), workflow.index("--source youthcenter_content"))
         self.assertIn("continue-on-error: true", workflow)
+        self.assertIn(
+            "inputs.source == 'both' || inputs.source == 'youthcenter_policy'",
+            workflow,
+        )
+        self.assertIn(
+            "inputs.source == 'both' || inputs.source == 'youthcenter_content'",
+            workflow,
+        )
+        self.assertIn("SOURCE_SELECTION: ${{ inputs.source || 'both' }}", workflow)
+        self.assertIn("[ \"$CONTENT_OUTCOME\" = skipped ]", workflow)
+        self.assertIn("[ \"$POLICY_OUTCOME\" = skipped ]", workflow)
         self.assertIn("steps.policy.outcome", workflow)
         self.assertIn("steps.content.outcome", workflow)
         self.assertIn("YOUTH_API_KEY: ${{ secrets.YOUTH_API_KEY }}", workflow)
