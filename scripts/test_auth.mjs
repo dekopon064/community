@@ -153,6 +153,7 @@ if (process.argv.includes("--serve")) {
     const authorize = new URL(start.headers.get("location"));
     assert.equal(authorize.origin, backend);
     assert.equal(authorize.searchParams.get("provider"), "google");
+    assert.equal(authorize.searchParams.has("scope"), false);
     assert.ok(authorize.searchParams.get("code_challenge"));
     const callback = new URL(authorize.searchParams.get("redirect_to"));
     assert.equal(callback.origin, site);
@@ -160,11 +161,19 @@ if (process.argv.includes("--serve")) {
     assert.ok(cookieWrites.some((cookie) => cookie.name.endsWith("-code-verifier") && cookie.options.httpOnly));
     const explicitGoogle = await startSocialLogin(post("/api/auth/start", "/ja", site, "google"), factory);
     assert.equal(new URL(explicitGoogle.headers.get("location")).searchParams.get("provider"), "google");
+    assert.equal(new URL(explicitGoogle.headers.get("location")).searchParams.has("scope"), false);
     const kakao = await startSocialLogin(post("/api/auth/start", "/ko/admin", site, "kakao"), factory, undefined, true);
     noCache(kakao);
     const kakaoAuthorize = new URL(kakao.headers.get("location"));
     assert.equal(kakaoAuthorize.searchParams.get("provider"), "kakao");
+    assert.equal(kakaoAuthorize.searchParams.get("scope"), "profile_nickname,profile_image");
+    assert.equal(kakaoAuthorize.searchParams.has("scopes"), false);
     assert.ok(kakaoAuthorize.searchParams.get("code_challenge"));
+    const injectedForm = new URLSearchParams({ locale: "ko", next: "/ko", provider: "kakao", scope: "account_email", scopes: "openid", queryParams: "account_email" });
+    const injected = await startSocialLogin(new Request(site + "/api/auth/start", { method: "POST", headers: { Origin: site }, body: injectedForm }), factory, undefined, true);
+    const injectedAuthorize = new URL(injected.headers.get("location"));
+    assert.equal(injectedAuthorize.searchParams.get("scope"), "profile_nickname,profile_image");
+    assert.equal(injectedAuthorize.searchParams.has("scopes"), false); noCache(injected);
     const kakaoCallback = new URL(kakaoAuthorize.searchParams.get("redirect_to"));
     assert.equal(kakaoCallback.pathname, "/api/auth/callback");
     assert.equal(kakaoCallback.searchParams.get("next"), "/ko/admin");

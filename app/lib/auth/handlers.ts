@@ -27,7 +27,13 @@ export async function startSocialLogin(request: Request, createClient: ClientFac
     callback.searchParams.set("locale", locale);
     callback.searchParams.set("next", next);
     const { data, error } = await client.auth.signInWithOAuth({
-      provider, options: { redirectTo: callback.href, skipBrowserRedirect: true },
+      provider, options: {
+        redirectTo: callback.href, skipBrowserRedirect: true,
+        // Supabase's Kakao defaults include account_email even with email optional.
+        // `scopes` only adds to those defaults; the provider's singular `scope`
+        // replaces them. Keep this server-owned and independent of form input.
+        ...(provider === "kakao" ? { queryParams: { scope: "profile_nickname,profile_image" } } : {}),
+      },
     });
     if (error || !data.url) return authRedirect(request, loginUrl(locale, next, "failed"));
     return privateResponse(new Response(null, { status: 303, headers: { Location: data.url } }));

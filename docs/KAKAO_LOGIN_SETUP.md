@@ -30,6 +30,19 @@ LINE은 연결 방식 조사만 했고 구현하지 않았습니다. 네이버�
 이메일 동의 없는 설정에서 카카오 `KOE205`가 나오면 요청된 scope와 앱 동의항목을 확인합니다.
 로그인 성공을 위해 임의로 추가 개인정보 동의를 늘리거나 비밀값을 보고하지 않습니다.
 
+### KOE205와 이메일 없는 로그인
+
+Supabase의 **Allow users without an email**은 이메일 없는 계정을 허용하는 설정이며,
+카카오 인가 요청에서 이메일 동의항목을 자동으로 제거하지 않습니다.
+기본 제공자의 요청은 `account_email profile_image profile_nickname`이므로,
+앱의 시작 handler에서 카카오에만 `queryParams.scope=profile_nickname,profile_image`를 지정합니다.
+SDK의 `options.scopes`는 기본값에 항목을 추가하므로 이 용도로 사용하지 않습니다.
+이 값은 서버에서 고정하며 브라우저의 scope 입력을 받지 않습니다. Google 요청은 그대로 유지합니다.
+
+2026-10-01 사용자 실계정 시험에서 KOE205가 보고됐고, 에이전트는 배포된 시작 경로의
+기본 이메일 요청과 제한한 scope가 실제 카카오 인가 URL에 반영되는 것을 확인했습니다.
+이는 인가 요청 검증이며 실제 계정의 동의·callback·세션 성공을 대신하지 않습니다.
+
 ## 로컬 검증
 
 - `npm run test:auth`: 가짜 loopback Auth와 실제 SSR SDK로 Google/Kakao 선택, PKCE, 쿠키,
@@ -76,6 +89,9 @@ Supabase 프로젝트의 실제 custom provider 설정 지원 및 로그인 왕�
 ## 공식 근거와 버튼 자산
 
 - [Supabase Kakao](https://supabase.com/docs/guides/auth/social-login/auth-kakao)
+- [Kakao KOE205 해결](https://developers.kakao.com/docs/ko/kakaologin/trouble-shooting)
+- [Supabase Kakao 기본 scope](https://github.com/supabase/auth/blob/master/internal/api/provider/kakao.go)
+- [Supabase 인가 파라미터 전달](https://github.com/supabase/auth/blob/master/internal/api/external.go)
 - [Supabase SSR](https://supabase.com/docs/guides/auth/server-side/creating-a-client?queryGroups=framework&framework=nextjs)
 - [Kakao 설정](https://developers.kakao.com/docs/ko/kakaologin/prerequisite)
 - [Kakao 버튼 규정](https://developers.kakao.com/docs/ko/kakaologin/design-guide)
