@@ -43,7 +43,7 @@ export default function QnaPage() {
   return (
     // pt-6: 헤더(sticky) 여유 여백, pb-24: 고정 바텀 네비(h-16) 가림 방지
     <div className="mx-auto min-h-[60vh] max-w-3xl bg-canvas px-5 pt-6 pb-24 md:px-8">
-      <h2 className="mb-6 text-lg font-bold text-ink">{t("title")}</h2>
+      <h2 className="mb-6 text-lg font-bold text-primary-text">{t("title")}</h2>
 
       <form className="flex flex-col gap-3">
         <input

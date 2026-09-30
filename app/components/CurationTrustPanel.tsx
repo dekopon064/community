@@ -45,7 +45,7 @@ export default async function CurationTrustPanel({
     >
       <h2
         id="curation-trust-title"
-        className="text-lg font-bold tracking-[-0.03em] text-ink"
+        className="text-lg font-bold tracking-[-0.03em] text-primary-text"
       >
         {t("title")}
       </h2>

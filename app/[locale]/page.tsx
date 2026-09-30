@@ -35,8 +35,8 @@ export default async function Home({
           <h1
             aria-label={headlineParts.length > 1 ? t("headline") : undefined}
             className={isJapanese
-              ? "max-w-[20ch] text-[clamp(1.625rem,7.4vw,2rem)] font-bold leading-[1.2] tracking-[-0.045em] text-ink md:text-[clamp(2rem,5vw,2.45rem)] lg:max-w-none lg:text-[2.625rem]"
-              : "max-w-[15ch] text-[1.875rem] font-bold leading-[1.25] tracking-[-0.055em] text-ink [text-wrap:balance] md:text-4xl lg:max-w-[13ch] lg:text-[2.625rem] lg:leading-[1.2]"}
+              ? "max-w-[20ch] text-[clamp(1.625rem,7.4vw,2rem)] font-bold leading-[1.2] tracking-[-0.045em] text-primary-text md:text-[clamp(2rem,5vw,2.45rem)] lg:max-w-none lg:text-[2.625rem]"
+              : "max-w-[15ch] text-[1.875rem] font-bold leading-[1.25] tracking-[-0.055em] text-primary-text [text-wrap:balance] md:text-4xl lg:max-w-[13ch] lg:text-[2.625rem] lg:leading-[1.2]"}
           >
             {headlineParts.length > 1 ? (
               <span aria-hidden="true">
@@ -69,7 +69,7 @@ export default async function Home({
         </section>
 
         <section aria-labelledby="home-curations-title" className="mt-[33px] min-w-0 lg:mt-0">
-          <h2 id="home-curations-title" className="mb-4 text-lg font-bold tracking-[-0.02em] text-ink">
+          <h2 id="home-curations-title" className="mb-4 text-lg font-bold tracking-[-0.02em] text-primary-text">
             {t("sectionTitle")}
           </h2>
           <div className="border-t border-info-rule">

@@ -31,7 +31,7 @@ export default function CurationExplorer({
           {selectedCategory && (
             <CategoryIcon category={selectedCategory} size={48} className="h-10 w-10 shrink-0 md:h-12 md:w-12" />
           )}
-          <h1 className="max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-ink md:text-5xl">
+          <h1 className="max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-primary-text md:text-5xl">
             {selectedCategory ? categoriesT(selectedCategory) : t("title")}
           </h1>
         </div>
@@ -66,7 +66,7 @@ export default function CurationExplorer({
         <p
           id="curation-results-title"
           aria-live="polite"
-          className="mb-4 text-sm font-bold text-ink"
+          className="mb-4 text-sm font-bold text-primary-text"
         >
           {t("resultCount", { count: filtered.length })}
         </p>
