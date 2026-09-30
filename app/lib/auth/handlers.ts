@@ -1,0 +1,89 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { authLocale, isSameOriginPost, loginUrl, safeReturnTo, siteOrigin } from "./urls";
+import { authRedirect, privateResponse } from "./http";
+
+type AuthClient = { auth: Pick<SupabaseClient["auth"], "signInWithOAuth" | "exchangeCodeForSession" | "getClaims" | "signOut"> };
+type ClientFactory = () => Promise<AuthClient | null>;
+
+export async function startGoogleLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string) {
+  if (!isSameOriginPost(request)) return privateResponse(new Response(null, { status: 403 }));
+  const form = await request.formData().catch(() => null);
+  if (!form) return privateResponse(new Response(null, { status: 400 }));
+  const locale = authLocale(form.get("locale"));
+  const next = safeReturnTo(form.get("next"), locale);
+  const origin = siteOrigin(request.url, configuredOrigin);
+  if (!origin) return authRedirect(request, loginUrl(locale, next, "unavailable"));
+  try {
+    const client = await createClient();
+    if (!client) return authRedirect(request, loginUrl(locale, next, "unavailable"));
+    const callback = new URL("/api/auth/callback", origin);
+    callback.searchParams.set("locale", locale);
+    callback.searchParams.set("next", next);
+    const { data, error } = await client.auth.signInWithOAuth({
+      provider: "google", options: { redirectTo: callback.href, skipBrowserRedirect: true },
+    });
+    if (error || !data.url) return authRedirect(request, loginUrl(locale, next, "failed"));
+    return privateResponse(new Response(null, { status: 303, headers: { Location: data.url } }));
+  } catch {
+    return authRedirect(request, loginUrl(locale, next, "failed"));
+  }
+}
+
+export async function finishGoogleLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string) {
+  const url = new URL(request.url);
+  const locale = authLocale(url.searchParams.get("locale"));
+  const next = safeReturnTo(url.searchParams.get("next"), locale);
+  if (!siteOrigin(request.url, configuredOrigin)) return authRedirect(request, loginUrl(locale, next, "unavailable"));
+  // Provider descriptions are untrusted and must never be echoed into the page.
+  if (url.searchParams.has("error")) {
+    const notice = url.searchParams.get("error") === "access_denied" ? "cancelled" : "failed";
+    return authRedirect(request, loginUrl(locale, next, notice));
+  }
+  const code = url.searchParams.get("code");
+  if (!code) return authRedirect(request, loginUrl(locale, next, "failed"));
+  try {
+    const client = await createClient();
+    if (!client) return authRedirect(request, loginUrl(locale, next, "unavailable"));
+    const { error } = await client.auth.exchangeCodeForSession(code);
+    if (error) return authRedirect(request, loginUrl(locale, next, "failed"));
+    const { data, error: verificationError } = await client.auth.getClaims();
+    if (verificationError || !data?.claims.sub) return authRedirect(request, loginUrl(locale, next, "failed"));
+    return authRedirect(request, next);
+  } catch {
+    return authRedirect(request, loginUrl(locale, next, "failed"));
+  }
+}
+
+export async function readLoginState(createClient: ClientFactory, hadSessionCookie: boolean) {
+  try {
+    const client = await createClient();
+    if (!client) return privateResponse(Response.json({ status: "unavailable" }));
+    const { data, error } = await client.auth.getClaims();
+    if (error) {
+      const expired = hadSessionCookie && (error.name === "AuthSessionMissingError" || ((error.status ?? 0) >= 400 && (error.status ?? 0) < 500));
+      return privateResponse(Response.json({ status: expired ? "expired" : "unavailable" }, { status: expired ? 200 : 503 }));
+    }
+    if (!data?.claims.sub) return privateResponse(Response.json({ status: hadSessionCookie ? "expired" : "signed_out" }));
+    // Identity is validated on the server. Tokens and profile metadata stay there.
+    return privateResponse(Response.json({ status: "signed_in" }));
+  } catch {
+    return privateResponse(Response.json({ status: "unavailable" }, { status: 503 }));
+  }
+}
+
+export async function endLogin(request: Request, createClient: ClientFactory) {
+  if (!isSameOriginPost(request)) return privateResponse(new Response(null, { status: 403 }));
+  const form = await request.formData().catch(() => null);
+  if (!form) return privateResponse(new Response(null, { status: 400 }));
+  const locale = authLocale(form.get("locale"));
+  const next = safeReturnTo(form.get("next"), locale);
+  try {
+    const client = await createClient();
+    if (!client) return authRedirect(request, loginUrl(locale, next, "unavailable"));
+    const { error } = await client.auth.signOut({ scope: "local" });
+    if (error) return authRedirect(request, loginUrl(locale, next, "logout_failed"));
+    return authRedirect(request, loginUrl(locale, next, "signed_out"));
+  } catch {
+    return authRedirect(request, loginUrl(locale, next, "logout_failed"));
+  }
+}

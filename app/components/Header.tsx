@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import LocaleSwitcher from "@/app/components/LocaleSwitcher";
 import ThemeToggle from "@/app/components/ThemeToggle";
+import AccountControl from "@/app/components/auth/AccountControl";
 import { USER_CATEGORIES } from "@/app/lib/userCategories";
 import { Link, usePathname } from "@/i18n/navigation";
 
@@ -21,11 +22,11 @@ export default function Header() {
 
   return (
     <header className="site-header sticky top-0 z-50 border-b border-stone/90 bg-canvas-white">
-      <div className="mx-auto flex h-16 max-w-7xl items-center px-5 lg:h-[4.5rem] lg:px-8">
+      <div className="mx-auto flex h-16 max-w-7xl items-center px-3 sm:px-5 lg:h-[4.5rem] lg:px-8">
         <Link
           href="/"
           lang="en"
-          className="font-brand text-[1.65rem] font-black tracking-[-0.055em] text-ink md:text-[1.8rem]"
+          className="font-brand text-[1.2rem] font-black tracking-[-0.055em] text-ink min-[375px]:text-[1.65rem] md:text-[1.8rem]"
         >
           {t("title")}
         </Link>
@@ -51,6 +52,7 @@ export default function Header() {
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          <AccountControl />
           <ThemeToggle />
           <LocaleSwitcher />
         </div>

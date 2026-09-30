@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { usePathname, useRouter } from "@/i18n/navigation";
+import { loginUrl, safeReturnTo } from "@/app/lib/auth/urls";
 
 const LOCALES = ["ko", "ja"] as const;
 
@@ -16,8 +17,15 @@ export default function LocaleSwitcher() {
   function selectLocale(nextLocale: (typeof LOCALES)[number]) {
     if (nextLocale === locale || isPending) return;
 
+    let destination = pathname;
+    if (pathname === "/login") {
+      const query = new URLSearchParams(window.location.search);
+      const notice = query.get("notice") || undefined;
+      const allowedNotice = ["cancelled", "failed", "expired", "unavailable", "signed_out", "logout_failed"].includes(notice || "") ? notice : undefined;
+      destination = loginUrl(nextLocale, safeReturnTo(query.get("next"), nextLocale), allowedNotice).slice(3);
+    }
     startTransition(() => {
-      router.replace(pathname, { locale: nextLocale });
+      router.replace(destination, { locale: nextLocale });
     });
   }
 
@@ -39,10 +47,10 @@ export default function LocaleSwitcher() {
             disabled={isPending}
             aria-pressed={isActive}
             aria-label={isActive ? t("current", { language }) : t("switch", { language })}
-            className="grid h-11 min-w-11 place-items-center rounded-full bg-transparent px-1 text-xs font-semibold disabled:opacity-50"
+            className="grid h-11 w-11 min-w-11 place-items-center rounded-full bg-transparent text-xs font-semibold disabled:opacity-50 sm:w-auto sm:px-1"
           >
             <span
-              className={`grid h-9 min-w-9 place-items-center rounded-full px-2 transition-colors ${
+              className={`grid h-9 min-w-9 place-items-center rounded-full px-0 transition-colors sm:px-2 ${
                 isActive
                   ? "bg-ink text-canvas-white"
                   : "text-ink-sub hover:bg-mineral hover:text-ink"

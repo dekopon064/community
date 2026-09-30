@@ -1,0 +1,181 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import type { CandidateContent, Facts, ReviewItem, ReviewKind, ListItem, ReviewCommand } from "@/app/lib/review/contracts";
+import { actionText, aiStatusText, categories, failureText, reasonText, sourceLink, statusText } from "@/app/lib/review/presentation";
+import { CandidateEditor, FactsEditor, fieldClass, primaryButton, secondaryButton } from "./ReviewEditors";
+
+class RequestFailure extends Error {
+  code: string; fields: Record<string, string>;
+  constructor(code: string, fields: Record<string, string> = {}) { super(code); this.code = code; this.fields = fields; }
+}
+async function call(path: string, body?: ReviewCommand, signal?: AbortSignal) {
+  const response = await fetch(path, { cache: "no-store", credentials: "same-origin", signal, ...(body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}) });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new RequestFailure(data?.code ?? "unavailable", data?.fields);
+  if (!["local-fixture", "database"].includes(data?.mode)) throw new RequestFailure("unavailable");
+  return data;
+}
+function time(value: string) { return new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+function focusTask(element: HTMLElement | null) {
+  element?.focus({ preventScroll: true });
+  element?.scrollIntoView({ block: "start" });
+}
+
+export default function ReviewWorkspace() {
+  const [kind, setKind] = useState<ReviewKind>("facts");
+  const [list, setList] = useState<ListItem[]>([]);
+  const [item, setItem] = useState<ReviewItem | null>(null);
+  const [facts, setFacts] = useState<Facts | null>(null);
+  const [content, setContent] = useState<CandidateContent | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState("");
+  const [note, setNote] = useState("");
+  const [confirmation, setConfirmation] = useState<"publish" | "reject" | "exclude" | null>(null);
+  const [reload, setReload] = useState(0);
+  const [mode, setMode] = useState<"database" | "local-fixture" | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const resultMessage = useRef<HTMLParagraphElement>(null);
+  const errorMessageBox = useRef<HTMLDivElement>(null);
+  const confirmationBox = useRef<HTMLElement>(null);
+  const dirty = Boolean(item && (item.kind === "facts" ? JSON.stringify(item.facts) !== JSON.stringify(facts) : JSON.stringify(item.content) !== JSON.stringify(content)));
+  const processed = item && (item.kind === "facts" ? item.status !== "open" : item.status !== "pending");
+  const locked = busy || Boolean(processed) || Boolean(confirmation);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    call(`/api/admin/review?kind=${kind}&offset=${offset}`, undefined, controller.signal).then((data) => {
+      setList(data.items); setMode(data.mode); setHasMore(data.hasMore); setError(""); setLoading(false);
+    }).catch((e) => { if (!controller.signal.aborted) { setError(e instanceof RequestFailure ? e.code : "unavailable"); setLoading(false); } });
+    return () => controller.abort();
+  }, [kind, reload, offset]);
+
+  // Move focus with the task, especially when the mobile detail is below the list.
+  useEffect(() => { if (item) focusTask(detailHeading.current); }, [item]);
+  useEffect(() => { if (error) focusTask(errorMessageBox.current); else if (notice) focusTask(resultMessage.current); }, [error, notice]);
+  useEffect(() => { if (confirmation) focusTask(confirmationBox.current); }, [confirmation]);
+
+  function accept(next: ReviewItem) {
+    setItem(next); setFacts(next.kind === "facts" ? next.facts : null); setContent(next.kind === "candidates" ? next.content : null);
+    setNote(""); setConfirmation(null); setErrors({});
+  }
+  async function select(id: string) {
+    if (busy || dirty || confirmation) return;
+    setBusy(true); setError(""); setNotice(""); setItem(null);
+    try { const data = await call(`/api/admin/review/${kind}/${id}`); accept(data.item); }
+    catch (e) { setError(e instanceof RequestFailure ? e.code : "unavailable"); }
+    finally { setBusy(false); }
+  }
+  function switchKind(next: ReviewKind) {
+    if (busy || dirty || confirmation || next === kind) return;
+    setKind(next); setOffset(0); setList([]); setItem(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(true);
+  }
+  async function submit(command: ReviewCommand) {
+    if (!item || busy) return;
+    setBusy(true); setError(""); setErrors({}); setNotice("");
+    try {
+      const data = await call(`/api/admin/review/${kind}/${item.id}`, command);
+      const next: ReviewItem = data.item; accept(next);
+      setList((old) => old.map((entry) => entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry));
+      const result = command.action === "save_facts" && next.kind === "facts" ?
+        next.status === "excluded" ? "사실 저장 후 대상 부적격으로 판정되었습니다. AI는 진행하지 않습니다." : `사실을 저장했습니다. 남은 확인 사유 ${next.reasons.length}개. ${aiStatusText[next.aiStatus]} 저장 요청에서 AI를 실행하지 않았습니다.` :
+        command.action === "save_candidate" ? "수정 내용을 비공개로 저장했습니다. AI 실행·재번역은 하지 않았습니다." :
+        command.action === "publish" ? "저장된 내용의 승인·게시와 이력을 기록했습니다." : command.action === "exclude" ? "사유를 기록하고 대상에서 제외했습니다." : "사유를 기록하고 후보를 반려했습니다.";
+      setNotice(data.mode === "local-fixture" ? `${result} 실제 DB 저장·게시는 아닌 로컬 시험 결과입니다.` : result);
+    } catch (e) {
+      setError(e instanceof RequestFailure ? e.code : "unavailable"); setErrors(e instanceof RequestFailure ? e.fields : {}); setConfirmation(null);
+    } finally { setBusy(false); }
+  }
+  function preconditions() { return { revision: item!.revision, version: item!.version }; }
+  const errorMessage = error ? failureText[error] ?? failureText.unavailable : "";
+  const source = item ? sourceLink(item.source.url) : null;
+
+  return <div className="mt-8">
+    <nav aria-label="검토 단계" className="flex flex-wrap gap-2 border-b border-info-rule pb-4">
+      <button type="button" aria-current={kind === "facts" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("facts")} className={kind === "facts" ? primaryButton : secondaryButton}>사람 사실 review</button>
+      <button type="button" aria-current={kind === "candidates" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("candidates")} className={kind === "candidates" ? primaryButton : secondaryButton}>AI 결과 후보 검토</button>
+    </nav>
+    <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
+    {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}
+    {error && <div ref={errorMessageBox} tabIndex={-1} role="alert" className="my-5 scroll-mt-36 border-y border-info-rule py-5">
+      <p className="max-w-3xl leading-7 text-info-status">{errorMessage}</p>
+      {error === "not_connected" && <p className="mt-3 max-w-3xl text-info-body">권한 확인은 완료됐습니다. 연결 전에는 아래 두 검토 단계의 실제 데이터가 표시되지 않습니다.</p>}
+      <div className="mt-4 flex flex-wrap gap-4">
+        {["signed_out", "forbidden"].includes(error) && <Link prefetch={false} className={secondaryButton} href="/ko/login?next=%2Fko%2Fadmin">로그인 상태 확인</Link>}
+        {!item && <button className={secondaryButton} disabled={busy || loading} onClick={() => { setLoading(true); setError(""); setReload((n) => n + 1); }}>목록 다시 확인</button>}
+        {item && <button className={secondaryButton} disabled={busy} onClick={async () => { setBusy(true); try { const data = await call(`/api/admin/review/${kind}/${item.id}`); accept(data.item); setError(""); setNotice(""); } catch (e) { setError(e instanceof RequestFailure ? e.code : "unavailable"); } finally { setBusy(false); } }}>입력을 버리고 최신 내용 불러오기</button>}
+      </div>
+    </div>}
+    {notice && <p ref={resultMessage} tabIndex={-1} role="status" className="my-5 scroll-mt-36 border-y border-info-rule py-4 leading-7 text-info-body">{notice}</p>}
+    {!loading && <div className="grid gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
+      <aside aria-label="검토 목록" className="min-w-0">
+        <h2 className="mb-3 text-lg font-bold">{kind === "facts" ? "사실 확인 항목" : "결과 후보"}</h2>
+        {!list.length && !error && <p className="py-6 leading-7 text-info-muted">현재 검토할 항목이 없습니다. 새 항목이 준비되면 이 목록에서 확인할 수 있습니다.</p>}
+        <ul className="divide-y divide-info-rule border-y border-info-rule">
+          {list.map((entry) => <li key={entry.id}><button disabled={busy || dirty || Boolean(confirmation)} aria-current={item?.id === entry.id ? "true" : undefined} className={`w-full px-3 py-5 text-left hover:bg-info-surface disabled:cursor-not-allowed disabled:opacity-60 ${item?.id === entry.id ? "bg-info-surface" : ""}`} onClick={() => select(entry.id)}>
+            <span className="block text-sm text-info-status">{statusText[entry.status] ?? "상태 확인 필요"}</span>
+            <span className="mt-2 block break-keep font-semibold leading-6">{entry.title}</span>
+            <span className="mt-2 block text-sm text-info-muted">{entry.sourceName}</span>
+            {entry.reasons.length > 0 && <span className="mt-2 block text-sm leading-6 text-info-body">{reasonText(entry.reasons[0]).title}{entry.reasons.length > 1 ? ` 외 ${entry.reasons.length - 1}개` : ""}</span>}
+          </button></li>)}
+        </ul>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || offset === 0} onClick={() => { setOffset((n) => Math.max(0, n - 25)); setItem(null); setLoading(true); }}>이전 목록</button>
+          <button className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || !hasMore} onClick={() => { setOffset((n) => n + 25); setItem(null); setLoading(true); }}>다음 목록</button>
+        </div>
+      </aside>
+      <section aria-label="선택한 항목 검토" aria-busy={busy} className="min-w-0">
+        {!item ? <p className="py-6 leading-7 text-info-muted">{busy ? "항목을 불러오는 중입니다." : "목록에서 항목을 선택하면 원문과 검토할 내용을 확인할 수 있습니다."}</p> : <>
+          <header className="border-b border-info-rule pb-5">
+            <p className="text-sm text-info-status">{statusText[item.status]}</p>
+            <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>
+            <p className="mt-3 text-sm leading-6 text-info-muted">{item.source.name}{item.kind === "candidates" ? ` · ${item.category ? categories[item.category] : "분류 확인 필요"} · ${item.period}` : ""}</p>
+          </header>
+          <details open={item.kind === "facts"} className="my-6 border-b border-info-rule pb-6">
+            <summary className="min-h-11 cursor-pointer py-2 font-semibold">원문 확인</summary>
+            {source ? <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a> : <p className="mt-3 text-info-muted">원문 링크를 제공할 수 없습니다.</p>}
+            <p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || "저장된 원문 본문이 없습니다. 원문 링크에서 확인해 주세요."}</p>
+          </details>
+          {item.kind === "facts" && <section className="mb-8" aria-label="남은 확인 사유">
+            <h3 className="text-lg font-bold">{item.reasons.length ? "확인할 사실과 판단" : "남은 확인 사유가 없습니다"}</h3>
+            <ul className="mt-3 space-y-4">{item.reasons.map((reason) => { const text = reasonText(reason); const help = reason === "event_period_unknown" && item.editableFields && !item.editableFields.includes("eventStart") ? "이미 확정된 카테고리의 기간만 수정하는 계약은 아직 없습니다. 원문의 개최 기간을 별도로 확인하고 기간 보완 계약을 검토해야 합니다." : text.help; return <li key={reason}><p className="font-semibold">{text.title}</p><p className="mt-1 leading-7 text-info-body">{help}</p><details className="mt-1 text-sm text-info-muted"><summary className="cursor-pointer py-1">사유 식별자</summary><code>{reason}</code></details></li>; })}</ul>
+            <p className="mt-4 text-sm leading-6 text-info-status">{aiStatusText[item.aiStatus]}</p>
+          </section>}
+          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts }); else if (content) void submit({ ...preconditions(), action: "save_candidate", content }); }}>
+            {item.kind === "facts" && facts ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} /> : content && <CandidateEditor value={content} onChange={setContent} errors={errors} disabled={locked} />}
+            {dirty && <p className="mt-6 leading-7 text-info-status">아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요.</p>}
+            {!processed && <div className="my-7 flex flex-wrap gap-3">
+              <button type="submit" disabled={busy || Boolean(confirmation) || !dirty} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
+              {dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(""); setNotice(""); }}>수정 취소</button>}
+              {item.kind === "candidates" && <button type="button" className={secondaryButton} disabled={busy || dirty || Boolean(confirmation)} onClick={() => setConfirmation("publish")}>승인하고 게시</button>}
+            </div>}
+          </form>
+          {!processed && (item.kind === "candidates" || item.excludeAllowed !== false) && <section className="border-t border-info-rule pt-6">
+            <h3 className="text-lg font-bold">{item.kind === "facts" ? "부적격으로 제외" : "후보 반려"}</h3>
+            <p className="mt-2 leading-7 text-info-muted">{item.kind === "facts" ? "대상이 아니거나 사실을 끝내 확인할 수 없다면 제외 사유를 남겨 주세요." : "공개하기 어려운 후보라면 반려 사유를 남겨 주세요."}</p>
+            <label htmlFor="review-note" className="mt-4 block font-semibold">{item.kind === "facts" ? "제외 사유" : "반려 사유"}</label>
+            <textarea id="review-note" className={fieldClass} rows={3} value={note} maxLength={item.kind === "facts" ? 500 : 4000} disabled={busy || Boolean(confirmation)} aria-invalid={Boolean(errors.note)} aria-describedby={errors.note ? "note-error" : undefined} onChange={(e) => setNote(e.target.value)} />
+            {errors.note && <p id="note-error" className="mt-2 text-sm text-info-status">{errors.note}</p>}
+            <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || dirty || !note.trim() || Boolean(confirmation)} onClick={() => setConfirmation(item.kind === "facts" ? "exclude" : "reject")}>{item.kind === "facts" ? "사유를 남기고 제외" : "사유를 남기고 반려"}</button>
+          </section>}
+          {confirmation && <section ref={confirmationBox} tabIndex={-1} aria-label="최종 처리 확인" className="mt-8 scroll-mt-36 border-y border-info-rule bg-info-surface px-5 py-6">
+            <h3 className="text-xl font-bold">{confirmation === "publish" ? "저장된 최종 내용으로 게시할까요?" : confirmation === "exclude" ? "이 항목을 제외할까요?" : "이 후보를 반려할까요?"}</h3>
+            <p className="mt-3 leading-7 text-info-body">{confirmation === "publish" ? `위에 표시된 한국어·일본어 저장본을 승인하고 게시합니다. 승인자·시각과 게시 이력을 함께 기록합니다.${mode === "local-fixture" ? " 현재는 실제 공개 없이 로컬 시험으로 처리됩니다." : ""}` : `기록할 사유: ${note}`}</p>
+            <div className="mt-5 flex flex-wrap gap-3"><button className={primaryButton} disabled={busy} onClick={() => void submit(confirmation === "publish" ? { ...preconditions(), action: "publish" } : { ...preconditions(), action: confirmation, note })}>{busy ? "처리 중…" : confirmation === "publish" ? "확인하고 게시" : "확인하고 처리"}</button><button className={secondaryButton} disabled={busy} onClick={() => setConfirmation(null)}>돌아가기</button></div>
+          </section>}
+          {item.kind === "candidates" && item.publishedAt && <p className="mt-7 text-info-body">{mode === "local-fixture" ? "시험 게시" : "게시"} 시각: {time(item.publishedAt)} (한국 시간)</p>}
+          <details className="mt-10 border-t border-info-rule pt-4" open={item.history.length > 0}>
+            <summary className="min-h-11 cursor-pointer py-2 font-semibold">저장·처리 이력 ({item.history.length})</summary>
+            {item.history.length ? <ol className="divide-y divide-info-rule">{item.history.map((entry, index) => <li key={index} className="py-4 text-sm leading-6"><p className="font-semibold">{actionText[entry.action] ?? "처리 기록"} · {time(entry.at)} (한국 시간)</p><p className="break-all text-info-muted">작업 계정: {entry.actor}</p>{entry.note && <p className="mt-1 whitespace-pre-wrap break-words text-info-body">{entry.note}</p>}</li>)}</ol> : <p className="py-3 text-info-muted">아직 저장·처리 이력이 없습니다.</p>}
+          </details>
+        </>}
+      </section>
+    </div>}
+  </div>;
+}

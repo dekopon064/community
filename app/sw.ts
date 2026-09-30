@@ -30,6 +30,14 @@ function readSupabaseOrigin(): string {
 
 const supabaseOrigin = readSupabaseOrigin();
 
+const authNetworkOnly = {
+  matcher: ({ url, sameOrigin }: { url: URL; sameOrigin: boolean }) =>
+    (sameOrigin && /^\/api\/(auth|admin)\//.test(url.pathname)) ||
+    (url.origin === supabaseOrigin && url.pathname.startsWith("/auth/")),
+  handler: new NetworkOnly(),
+  method: "GET" as const,
+};
+
 const feedbackPostOnly = {
   matcher: ({ url }: { url: URL }) =>
     url.origin === supabaseOrigin &&
@@ -76,7 +84,7 @@ const serwist = new Serwist({
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: true,
-  runtimeCaching: [feedbackPostOnly, pagesNetworkOnly, ...defaultCache],
+  runtimeCaching: [authNetworkOnly, feedbackPostOnly, pagesNetworkOnly, ...defaultCache],
 });
 
 serwist.addEventListeners();
