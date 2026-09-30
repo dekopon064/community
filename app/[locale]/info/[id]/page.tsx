@@ -5,7 +5,7 @@ import { Link } from "@/i18n/navigation";
 import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
 import CurationTrustPanel from "@/app/components/CurationTrustPanel";
-import Markdown from "@/app/components/Markdown";
+import CurationBody from "@/app/components/CurationBody";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 
@@ -64,7 +64,7 @@ export default async function InfoDetailPage({
 
       <div className="mt-10 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
         <article className="order-2 min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10 lg:order-1">
-          <Markdown>{item.content}</Markdown>
+          <CurationBody content={item.content} locale={locale} />
         </article>
 
         <div className="order-1 lg:order-2">
