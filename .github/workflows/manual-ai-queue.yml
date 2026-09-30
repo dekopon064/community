@@ -1,6 +1,9 @@
-name: Manual AI queue
+name: AI queue
 
 on:
+  schedule:
+    - cron: '0 10 * * *'
+      timezone: Asia/Seoul
   workflow_dispatch:
 
 permissions:
@@ -25,10 +28,11 @@ jobs:
           cache: pip
       - name: Install ingest dependencies
         run: python -m pip install -r requirements.txt
-      - name: Process at most one eligible AI job
+      - name: Process eligible AI jobs
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           AI_PROVIDER: ${{ vars.AI_PROVIDER }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python scripts/run_ingest_architecture.py --ai-only --execute --ai-limit 1
+          AI_LIMIT: ${{ github.event_name == 'schedule' && '5' || '1' }}
+        run: python scripts/run_ingest_architecture.py --ai-only --execute --ai-limit "$AI_LIMIT"

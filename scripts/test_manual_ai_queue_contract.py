@@ -1,4 +1,4 @@
-"""Offline contracts for the un-targeted, one-job manual AI queue workflow."""
+"""Offline contracts for scheduled and manual un-targeted AI queue runs."""
 
 from __future__ import annotations
 
@@ -32,17 +32,20 @@ def _items(store: MemoryIngestStore, *keys: str):
 
 
 class ManualAiQueueContractTests(unittest.TestCase):
-    def test_workflow_is_manual_one_job_and_has_no_target_or_ingest(self) -> None:
+    def test_workflow_schedules_five_jobs_and_keeps_manual_one_job(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("schedule:", workflow)
+        self.assertIn("cron: '0 10 * * *'", workflow)
+        self.assertIn("timezone: Asia/Seoul", workflow)
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertNotIn("schedule:", workflow)
         self.assertNotIn("push:", workflow)
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertIn("group: machimoa-ingest-production", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertIn("environment: machimoa-ingest-production", workflow)
         self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
-        self.assertIn("--ai-only --execute --ai-limit 1", workflow)
+        self.assertIn("AI_LIMIT: ${{ github.event_name == 'schedule' && '5' || '1' }}", workflow)
+        self.assertIn('--ai-only --execute --ai-limit "$AI_LIMIT"', workflow)
         self.assertNotIn("--ai-source-item-id", workflow)
         self.assertNotIn("--ai-revision-hash", workflow)
         self.assertNotIn("YOUTH_API_KEY", workflow)
@@ -86,6 +89,26 @@ class ManualAiQueueContractTests(unittest.TestCase):
             store.claim_processing_jobs("ai_enrichment", limit=1, worker_id="worker-three"),
             [],
         )
+
+    def test_five_claim_limit_leaves_sixth_for_next_run(self) -> None:
+        clock = Clock()
+        store = MemoryIngestStore(clock=clock)
+        items = _items(store, *(f"scheduled-{index}" for index in range(6)))
+        for item in items:
+            _resolve(store, item, "policy")
+
+        first_run = store.claim_processing_jobs(
+            "ai_enrichment", limit=5, worker_id="worker-one"
+        )
+        self.assertEqual(len(first_run), 5)
+        for job in first_run:
+            store.complete_processing_job(job.job_id, worker_id="worker-one")
+
+        next_run = store.claim_processing_jobs(
+            "ai_enrichment", limit=5, worker_id="worker-two"
+        )
+        self.assertEqual(len(next_run), 1)
+        self.assertNotIn(next_run[0].job_id, {job.job_id for job in first_run})
 
     def test_missing_category_or_period_open_review_and_stale_revision_block(self) -> None:
         clock = Clock()
