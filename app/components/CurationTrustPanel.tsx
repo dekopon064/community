@@ -82,7 +82,7 @@ export default async function CurationTrustPanel({
             href={source.href}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex min-h-11 items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm font-bold text-canvas-white transition-colors hover:bg-action-hover"
+            className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-source-border bg-source-surface px-[15px] py-[11px] text-sm font-bold text-source-text transition-colors hover:bg-source-hover"
           >
             <span className="min-w-0">
               <span className="flex items-center gap-2">
@@ -93,7 +93,7 @@ export default async function CurationTrustPanel({
                 />
                 <span>{t("reviewedTitle")}</span>
               </span>
-              <span className="mt-0.5 block truncate text-xs font-medium text-mineral">
+              <span className="mt-0.5 block truncate text-xs font-medium">
                 {source.hostname}
               </span>
             </span>
