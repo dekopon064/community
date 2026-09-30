@@ -1,6 +1,9 @@
-name: Manual ingest sources
+name: Ingest and evaluate sources
 
 on:
+  schedule:
+    - cron: '0 8 * * *'
+      timezone: Asia/Seoul
   workflow_dispatch:
     inputs:
       source:

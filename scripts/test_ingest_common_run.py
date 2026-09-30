@@ -266,8 +266,11 @@ class SourceBoundsTests(unittest.TestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
-    def test_manual_both_or_one_source_without_ai_or_schedule(self) -> None:
+    def test_scheduled_both_and_manual_one_source_without_ai(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("schedule:", workflow)
+        self.assertIn("cron: '0 8 * * *'", workflow)
+        self.assertIn("timezone: Asia/Seoul", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("default: both", workflow)
         self.assertIn("          - both", workflow)
@@ -275,7 +278,6 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("          - youthcenter_content", workflow)
         self.assertIn("full_scan_once:", workflow)
         self.assertIn("--full-scan-once", workflow)
-        self.assertNotIn("schedule:", workflow)
         self.assertNotIn("--run-ai", workflow)
         self.assertNotIn("--ai-only", workflow)
         self.assertNotIn("--canary-one-page", workflow)
