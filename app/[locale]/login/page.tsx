@@ -4,7 +4,7 @@ import { hasLocale } from "next-intl";
 import { getTranslations } from "next-intl/server";
 import { cookies } from "next/headers";
 import { createAuthClient } from "@/app/lib/auth/server";
-import { publicAuthConfig } from "@/app/lib/auth/config";
+import { kakaoLoginEnabled, publicAuthConfig } from "@/app/lib/auth/config";
 import { authLocale, safeReturnTo } from "@/app/lib/auth/urls";
 import { routing } from "@/i18n/routing";
 import LoginForm from "@/app/components/auth/LoginForm";
@@ -25,6 +25,7 @@ export default async function LoginPage({ params, searchParams }: {
   const next = safeReturnTo(query.next, locale);
   const browseNext = /^\/(ko|ja)\/admin(?:[/?#]|$)/.test(next) ? `/${locale}` : next;
   const t = await getTranslations({ locale, namespace: "Auth" });
+  const kakaoEnabled = kakaoLoginEnabled();
   const store = await cookies();
   const hadSession = store.getAll().some(({ name }) => /^sb-.+-auth-token(?:\.\d+)?$/.test(name)) || store.has("machimoa-auth-expired");
   // No refresh here: Proxy owns cookie writes on page requests.
@@ -44,7 +45,7 @@ export default async function LoginPage({ params, searchParams }: {
   return (
     <section className="mx-auto max-w-xl px-5 py-12 sm:py-20">
       <h1 className="text-3xl font-bold tracking-tight text-primary-text">{signedIn ? t("signedInTitle") : t("title")}</h1>
-      <p className="mt-4 max-w-prose leading-7 text-info-body">{signedIn ? t("signedInDescription") : t("description")}</p>
+      <p className="mt-4 max-w-prose leading-7 text-info-body">{signedIn ? t("signedInDescription") : t(kakaoEnabled ? "socialDescription" : "description")}</p>
       {notice && <p role={notice === "signed_out" ? "status" : "alert"} className="mt-6 border-y border-info-rule py-4 leading-7 text-info-status">{t(`notices.${notice}`)}</p>}
       {signedIn ? (
         <div className="mt-8 border-t border-info-rule pt-6">
@@ -55,7 +56,7 @@ export default async function LoginPage({ params, searchParams }: {
             <button type="submit" className="min-h-11 py-2 text-ink underline underline-offset-4">{t("logout")}</button>
           </form>
         </div>
-      ) : <LoginForm locale={locale} next={next} ready={!unavailable} />}
+      ) : <LoginForm locale={locale} next={next} ready={!unavailable} kakaoEnabled={kakaoEnabled} />}
       {!signedIn && <a href={browseNext} className="mt-6 inline-flex min-h-11 items-center text-ink underline underline-offset-4">{t("browse")}</a>}
     </section>
   );
