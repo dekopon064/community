@@ -1,8 +1,17 @@
-name: Manual ingest both sources
+name: Manual ingest sources
 
 on:
   workflow_dispatch:
     inputs:
+      source:
+        description: Run both sources or one selected source (up to five pages per source)
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - youthcenter_policy
+          - youthcenter_content
       full_scan_once:
         description: Scan up to the configured five pages without the unchanged streak stop
         required: false
@@ -33,6 +42,7 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Ingest and evaluate policy without AI
         id: policy
+        if: github.event_name != 'workflow_dispatch' || inputs.source == 'both' || inputs.source == 'youthcenter_policy'
         continue-on-error: true
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
@@ -47,7 +57,7 @@ jobs:
           fi
       - name: Ingest and evaluate content without AI
         id: content
-        if: always() && steps.install.outcome == 'success'
+        if: always() && steps.install.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.source == 'both' || inputs.source == 'youthcenter_content')
         continue-on-error: true
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
@@ -60,14 +70,26 @@ jobs:
           else
             python scripts/run_ingest_architecture.py --source youthcenter_content --execute
           fi
-      - name: Report both source outcomes
+      - name: Report selected source outcomes
         if: always()
         env:
+          SOURCE_SELECTION: ${{ inputs.source || 'both' }}
           POLICY_OUTCOME: ${{ steps.policy.outcome }}
           CONTENT_OUTCOME: ${{ steps.content.outcome }}
         run: |
-          echo "policy=$POLICY_OUTCOME content=$CONTENT_OUTCOME"
-          if [ "$POLICY_OUTCOME" != success ] || [ "$CONTENT_OUTCOME" != success ]; then
-            echo 'One or more ingest sources failed or exceeded its scan range.'
-            exit 1
-          fi
+          echo "selection=$SOURCE_SELECTION policy=$POLICY_OUTCOME content=$CONTENT_OUTCOME"
+          case "$SOURCE_SELECTION" in
+            both)
+              [ "$POLICY_OUTCOME" = success ] && [ "$CONTENT_OUTCOME" = success ] || exit 1
+              ;;
+            youthcenter_policy)
+              [ "$POLICY_OUTCOME" = success ] && [ "$CONTENT_OUTCOME" = skipped ] || exit 1
+              ;;
+            youthcenter_content)
+              [ "$POLICY_OUTCOME" = skipped ] && [ "$CONTENT_OUTCOME" = success ] || exit 1
+              ;;
+            *)
+              echo 'Invalid source selection.'
+              exit 1
+              ;;
+          esac
