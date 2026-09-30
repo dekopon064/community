@@ -50,20 +50,6 @@ export default async function CurationTrustPanel({
         {t("title")}
       </h2>
 
-      <div className="mt-5 flex gap-3 border-b border-stone pb-5">
-        <ShieldCheck
-          className="mt-0.5 h-5 w-5 shrink-0 text-coral"
-          strokeWidth={1.8}
-          aria-hidden="true"
-        />
-        <div>
-          <p className="text-sm font-bold text-ink">{t("reviewedTitle")}</p>
-          <p className="mt-1 text-sm leading-6 text-ink-sub">
-            {t("reviewedBody")}
-          </p>
-        </div>
-      </div>
-
       <div className="flex gap-3 border-b border-stone py-5">
         <CalendarDays
           className="mt-0.5 h-5 w-5 shrink-0 text-ink-sub"
@@ -91,16 +77,22 @@ export default async function CurationTrustPanel({
       </div>
 
       <div className="pt-5">
-        <p className="text-sm font-bold text-ink">{t("sourceTitle")}</p>
         {source ? (
           <a
             href={source.href}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-3 flex min-h-11 items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm font-bold text-canvas-white transition-colors hover:bg-action-hover"
+            className="flex min-h-11 items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm font-bold text-canvas-white transition-colors hover:bg-action-hover"
           >
             <span className="min-w-0">
-              <span className="block">{t("openSource")}</span>
+              <span className="flex items-center gap-2">
+                <ShieldCheck
+                  className="h-4 w-4 shrink-0 text-source-shield"
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+                <span>{t("reviewedTitle")}</span>
+              </span>
               <span className="mt-0.5 block truncate text-xs font-medium text-mineral">
                 {source.hostname}
               </span>
@@ -113,9 +105,12 @@ export default async function CurationTrustPanel({
             <span className="sr-only">{t("newWindow")}</span>
           </a>
         ) : (
-          <p className="mt-2 text-sm leading-6 text-ink-sub">
-            {t("sourceUnavailable")}
-          </p>
+          <div>
+            <p className="text-sm font-bold text-ink">{t("reviewedTitle")}</p>
+            <p className="mt-2 text-sm leading-6 text-ink-sub">
+              {t("sourceUnavailable")}
+            </p>
+          </div>
         )}
       </div>
     </aside>
