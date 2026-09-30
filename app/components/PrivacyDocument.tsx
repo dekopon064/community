@@ -31,7 +31,7 @@ export default function PrivacyDocument({
       </a>
 
       <header className="max-w-3xl">
-        <h1 className="text-3xl font-bold leading-[1.16] tracking-[-0.04em] text-ink md:text-4xl">
+        <h1 className="text-3xl font-bold leading-[1.16] tracking-[-0.04em] text-primary-text md:text-4xl">
           {document.title}
         </h1>
         <p className="mt-4 text-sm font-semibold tabular-nums text-ink-sub">
@@ -59,7 +59,7 @@ export default function PrivacyDocument({
           <section key={section.id} aria-labelledby={`privacy-${section.id}`}>
             <h2
               id={`privacy-${section.id}`}
-              className="text-xl font-bold tracking-[-0.03em] text-ink md:text-2xl"
+              className="text-xl font-bold tracking-[-0.03em] text-primary-text md:text-2xl"
             >
               {section.title}
             </h2>

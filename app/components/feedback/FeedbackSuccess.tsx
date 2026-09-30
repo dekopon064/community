@@ -63,7 +63,7 @@ export default function FeedbackSuccess({
       <h1
         ref={titleRef}
         tabIndex={-1}
-        className="text-2xl font-bold tracking-[-0.035em] text-ink md:text-3xl"
+        className="text-2xl font-bold tracking-[-0.035em] text-primary-text md:text-3xl"
       >
         {title}
       </h1>

@@ -30,7 +30,7 @@ function NoticeSection({
 }) {
   return (
     <section className="min-w-0">
-      <h4 className="text-sm font-bold text-ink">{title}</h4>
+      <h4 className="text-sm font-bold text-primary-text">{title}</h4>
       <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-6 text-ink-sub">
         {items.map((item) => (
           <li key={item}>{item}</li>
@@ -67,7 +67,7 @@ export default function FeedbackPrivacyNotice({
     <div className="overflow-hidden rounded-[1.25rem] border border-stone bg-canvas-white shadow-premium-sm">
       <h3
         id={legendId}
-        className="px-4 pt-5 text-base font-bold tracking-[-0.02em] text-ink md:px-6 md:pt-6 md:text-lg"
+        className="px-4 pt-5 text-base font-bold tracking-[-0.02em] text-primary-text md:px-6 md:pt-6 md:text-lg"
       >
         {copy.title}
       </h3>

@@ -40,7 +40,7 @@ export default function CurationCard({
       <article className={`grid min-w-0 gap-x-3 ${category ? "grid-cols-[24px_minmax(0,1fr)]" : "grid-cols-1"}`}>
         <div className={`flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-6 ${category ? "col-start-2" : "col-start-1"}`}>
           {categoryLabel && (
-            <span className="font-semibold text-ink">{categoryLabel}</span>
+            <span className="font-semibold text-primary-text">{categoryLabel}</span>
           )}
           <CurationPeriodText
             category={category}
@@ -56,7 +56,7 @@ export default function CurationCard({
           <CategoryIcon category={category} size={24} className="col-start-1 row-start-2 mt-3 h-6 w-6 shrink-0" />
         )}
         <div className={`${category ? "col-start-2" : "col-start-1"} row-start-2 min-w-0 pt-2`}>
-          <h2 className="break-words text-xl font-bold leading-[1.35] tracking-[-0.025em] text-ink md:text-[1.45rem]">
+          <h2 className="break-words text-xl font-bold leading-[1.35] tracking-[-0.025em] text-primary-text md:text-[1.45rem]">
             {title}
           </h2>
           <p className="mt-2 line-clamp-2 break-words text-sm leading-6 text-info-body md:text-[0.95rem] md:leading-7">

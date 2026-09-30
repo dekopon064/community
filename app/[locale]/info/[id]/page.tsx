@@ -39,12 +39,12 @@ export default async function InfoDetailPage({
 
       <header className="max-w-4xl">
         {item.userCategory && (
-          <div className="flex items-center gap-2.5 text-sm font-semibold text-ink">
+          <div className="flex items-center gap-2.5 text-sm font-semibold text-primary-text">
             <CategoryIcon category={item.userCategory} size={20} className="h-5 w-5 shrink-0" />
             <span>{categoriesT(item.userCategory)}</span>
           </div>
         )}
-        <h1 className="mt-4 break-words text-[clamp(2rem,5vw,3.25rem)] font-bold leading-[1.17] tracking-[-0.025em] text-ink [overflow-wrap:anywhere]">
+        <h1 className="mt-4 break-words text-[clamp(2rem,5vw,3.25rem)] font-bold leading-[1.17] tracking-[-0.025em] text-primary-text [overflow-wrap:anywhere]">
           {item.title}
         </h1>
         <CurationPeriodText

@@ -68,13 +68,13 @@ export default function CurationPeriodText({
           {period.detailDate.label && (
             <span className="mr-2 text-info-muted">{period.detailDate.label}</span>
           )}
-          <time dateTime={period.detailDate.startOn} className={`font-semibold tabular-nums text-ink ${category === "event" ? "event-period-date" : ""}`}>
+          <time dateTime={period.detailDate.startOn} className={`font-semibold tabular-nums text-primary-text ${category === "event" ? "event-period-date" : ""}`}>
             {period.detailDate.startText}
           </time>
           {period.detailDate.endOn && period.detailDate.endText && (
             <>
               <span aria-hidden="true" className={category === "event" ? "event-period-date" : undefined}>{locale === "ja" ? "～" : "–"}</span>
-              <time dateTime={period.detailDate.endOn} className={`font-semibold tabular-nums text-ink ${category === "event" ? "event-period-date" : ""}`}>
+              <time dateTime={period.detailDate.endOn} className={`font-semibold tabular-nums text-primary-text ${category === "event" ? "event-period-date" : ""}`}>
                 {period.detailDate.endText}
               </time>
             </>

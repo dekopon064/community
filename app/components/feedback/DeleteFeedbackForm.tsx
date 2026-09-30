@@ -99,7 +99,7 @@ export default function DeleteFeedbackForm({
         <h1
           ref={processedRef}
           tabIndex={-1}
-          className="text-2xl font-bold tracking-[-0.035em] text-ink md:text-3xl"
+          className="text-2xl font-bold tracking-[-0.035em] text-primary-text md:text-3xl"
         >
           {t("processedTitle")}
         </h1>
@@ -131,7 +131,7 @@ export default function DeleteFeedbackForm({
     >
       <h1
         id={ids.title}
-        className="text-2xl font-bold tracking-[-0.035em] text-ink md:text-3xl"
+        className="text-2xl font-bold tracking-[-0.035em] text-primary-text md:text-3xl"
       >
         {t("title")}
       </h1>
@@ -144,7 +144,7 @@ export default function DeleteFeedbackForm({
           aria-labelledby={ids.errorTitle}
           className="rounded-[1.25rem] border border-coral bg-canvas-white px-4 py-4"
         >
-          <h2 id={ids.errorTitle} className="text-base font-bold text-ink">
+          <h2 id={ids.errorTitle} className="text-base font-bold text-primary-text">
             {t("errorTitle")}
           </h2>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-ink">

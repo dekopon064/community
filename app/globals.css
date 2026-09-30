@@ -4,6 +4,7 @@
   --color-canvas: #eef6fb;
   --color-canvas-white: #ffffff;
   --color-ink: #102f5c;
+  --color-primary-text: #102f5c;
   --color-ink-sub: #52677c;
   --color-stone: #c7d9e8;
   --color-info-surface: #f9fcff;
@@ -25,6 +26,7 @@ html[data-theme="dark"] {
   --color-canvas: #171717;
   --color-canvas-white: #242424;
   --color-ink: #f3f3f1;
+  --color-primary-text: #d8d8d4;
   --color-ink-sub: #bdbdb8;
   --color-stone: #555555;
   --color-info-surface: #242424;

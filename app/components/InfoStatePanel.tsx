@@ -26,7 +26,7 @@ export default function InfoStatePanel({
       <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-mineral text-ink">
         <SignalGlyph kind="document" accent className="h-9 w-9" />
       </div>
-      <Heading className="mx-auto mt-5 max-w-xl text-2xl font-bold leading-tight tracking-[-0.035em] text-ink md:text-3xl">
+      <Heading className="mx-auto mt-5 max-w-xl text-2xl font-bold leading-tight tracking-[-0.035em] text-primary-text md:text-3xl">
         {title}
       </Heading>
       <p className="mx-auto mt-3 max-w-lg text-sm leading-7 text-ink-sub md:text-base">

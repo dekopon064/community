@@ -189,6 +189,7 @@
 
 .title {
   padding-right: 0.75rem;
+  color: var(--color-primary-text);
   font-size: 0.9375rem;
   font-weight: 750;
   letter-spacing: -0.03em;

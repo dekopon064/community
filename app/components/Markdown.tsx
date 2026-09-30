@@ -5,19 +5,19 @@ import remarkGfm from "remark-gfm";
 const components: Components = {
   h1: (props) => (
     <h1
-      className="mt-10 mb-4 break-words text-2xl font-bold leading-tight tracking-[-0.035em] text-ink"
+      className="mt-10 mb-4 break-words text-2xl font-bold leading-tight tracking-[-0.035em] text-primary-text"
       {...props}
     />
   ),
   h2: (props) => (
     <h2
-      className="mt-10 mb-4 break-words text-xl font-bold leading-snug tracking-[-0.03em] text-ink md:text-2xl"
+      className="mt-10 mb-4 break-words text-xl font-bold leading-snug tracking-[-0.03em] text-primary-text md:text-2xl"
       {...props}
     />
   ),
   h3: (props) => (
     <h3
-      className="mt-7 mb-3 break-words text-lg font-bold leading-snug text-ink"
+      className="mt-7 mb-3 break-words text-lg font-bold leading-snug text-primary-text"
       {...props}
     />
   ),
