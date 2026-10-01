@@ -57,17 +57,14 @@ export default async function InfoDetailPage({
           locale={locale}
           detail
         />
-        <p className="mt-6 max-w-3xl text-lg leading-8 text-info-body md:mt-7 md:text-xl md:leading-9">
-          {item.summary}
-        </p>
       </header>
 
       <div className="mt-10 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
-        <article className="order-2 min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10 lg:order-1">
+        <article className="min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">
           <CurationBody content={item.content} locale={locale} />
         </article>
 
-        <div className="order-1 lg:order-2">
+        <div>
           <CurationTrustPanel
             locale={locale}
             sourceUrl={item.source_url}

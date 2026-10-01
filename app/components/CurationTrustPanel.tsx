@@ -93,12 +93,12 @@ export default async function CurationTrustPanel({
                 />
                 <span>{t("reviewedTitle")}</span>
               </span>
-              <span className="mt-0.5 block truncate text-xs font-medium">
+              <span className="mt-0.5 block truncate text-xs font-medium text-source-domain">
                 {source.hostname}
               </span>
             </span>
             <ExternalLink
-              className="h-4 w-4 shrink-0"
+              className="h-4 w-4 shrink-0 text-source-icon"
               strokeWidth={1.8}
               aria-hidden="true"
             />

@@ -15,10 +15,12 @@
   --color-mineral: #dceef9;
   --color-sky: #82b8de;
   --color-coral: #a8564a;
-  --color-source-surface: #f3f3f1;
-  --color-source-text: #242424;
-  --color-source-border: #d4d4cf;
-  --color-source-hover: #e9e9e6;
+  --color-source-surface: #f9fcff;
+  --color-source-text: #102f5c;
+  --color-source-border: #c7d9e8;
+  --color-source-hover: #eef6fb;
+  --color-source-domain: #52677c;
+  --color-source-icon: #3d5871;
   --color-source-shield: #52751f;
   --color-focus: #1e5e9d;
   --color-info-hover: #ffffff;
@@ -42,6 +44,10 @@ html[data-theme="dark"] {
   --color-mineral: #242424;
   --color-sky: #bdbdb8;
   --color-coral: #c5f467;
+  --color-source-surface: #f3f3f1;
+  --color-source-text: #242424;
+  --color-source-domain: #242424;
+  --color-source-icon: #242424;
   --color-source-border: transparent;
   --color-source-hover: #bdbdb8;
   --color-focus: #c5f467;
