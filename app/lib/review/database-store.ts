@@ -3,7 +3,8 @@ import type { ReviewStore, ReviewKind, ReviewItem, ReviewCommand, ListItem } fro
 import { databaseItem, databaseList } from "./database-dto";
 
 export type RpcClient = { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }> };
-const errors: Record<string, "conflict" | "already_processed" | "invalid_input" | "not_found" | "publish_failed"> = {
+const errors: Record<string, "conflict" | "already_processed" | "invalid_input" | "not_found" | "publish_failed" | "program_input_changed" | "program_unavailable"> = {
+  program_candidate_input_changed: "program_input_changed", program_candidate_unavailable: "program_unavailable",
   review_conflict: "conflict", review_already_processed: "already_processed", review_invalid_input: "invalid_input", review_not_found: "not_found", review_publish_failed: "publish_failed",
 };
 export class DatabaseReviewStore implements ReviewStore {

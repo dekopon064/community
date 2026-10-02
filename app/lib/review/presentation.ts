@@ -26,6 +26,8 @@ export const aiStatusText: Record<string, string> = {
 };
 export const actionText: Record<string, string> = { save_facts: "사실 저장·재평가", exclude: "부적격 제외", save_candidate: "비공개 수정 저장", publish: "승인하고 게시", reject: "반려" };
 export const failureText: Record<string, string> = {
+  program_input_changed: "후보 생성 이후 프로그램 사실이 변경되어 게시할 수 없습니다. 자동 요약·재번역은 실행하지 않았습니다. 현재 사실과 후보의 대조가 필요합니다.",
+  program_unavailable: "현재 프로그램의 접수 상태·검토 결과 또는 수집원 권한 때문에 게시할 수 없습니다. 후보는 비공개로 유지됩니다.",
   not_connected: "관리 데이터 연결 설정을 확인할 수 없습니다. 서버의 DB 모드와 키 설정이 준비되어야 항목을 조회하거나 처리할 수 있습니다.",
   not_found: "항목을 찾을 수 없습니다. 목록을 다시 확인해 주세요.",
   conflict: "다른 변경이 먼저 저장되었거나 원문이 갱신되었습니다. 입력을 복사해 두고 최신 내용을 다시 불러와 확인해 주세요.",

@@ -1,0 +1,84 @@
+"use client";
+import {useEffect,useRef,useState} from "react";
+import Link from "next/link";
+import type {ProgramFacts,ProgramField,Period,ProgramCommand} from "@/app/lib/review/program-contract";
+import type {programItem} from "@/app/lib/review/program-store";
+import {programReasonText} from "@/app/lib/review/program-contract";
+import {buildProgramSave,displayProgramValue,periodLabels,programChoices,programLabels,programOutcome,programPatch,reasonPatchFields} from "@/app/lib/review/program-ui";
+import {ReviewFailure} from "@/app/lib/review/contracts";
+import {failureText,sourceLink,statusText,actionText} from "@/app/lib/review/presentation";
+import {fieldClass,primaryButton,secondaryButton} from "./ReviewEditors";
+type Item=ReturnType<typeof programItem>;
+class Failure extends Error { constructor(code:string){super(code);} }
+async function request(id:string,command?:ProgramCommand,signal?:AbortSignal):Promise<Item>{
+ const response=await fetch(`/api/admin/program-review/${id}`,{credentials:"same-origin",cache:"no-store",signal,...(command?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(command)}:{})});
+ const data=await response.json().catch(()=>null);
+ if(!response.ok)throw new Failure(data?.code??"unavailable");
+ if(data?.mode!=="database"||data?.item?.schema!=="program-scope-v1-local"||data.item.id!==id)throw new Failure("unavailable");
+ return data.item;
+}
+function focus(node:HTMLElement|null){node?.focus({preventScroll:true});node?.scrollIntoView({block:"start"});}
+function PeriodRead({periods}:{periods:Record<string,Period>}){return <dl className="grid gap-3 sm:grid-cols-2">{Object.entries(periodLabels).map(([key,label])=><div key={key}><dt className="font-semibold">{label}</dt><dd className="mt-1 break-words text-info-body">{periods[key]?.value?.replace("T"," ").replace("+09:00"," (한국 시간)")||"확인 필요"}{periods[key]?.precision==="day"?(key.endsWith("ENDDT")?" · 날짜만 명시 (종료일 당일 포함)":" · 날짜만 명시"):""}</dd>{periods[key]?.raw&&periods[key]?.raw!==periods[key]?.value&&<dd className="mt-1 whitespace-pre-wrap break-words text-info-muted">원문 표기: {periods[key].raw}</dd>}</div>)}</dl>;}
+function FactFields({facts,editable,disabled,onChange}:{facts:ProgramFacts;editable:string[];disabled:boolean;onChange:(next:ProgramFacts)=>void}){
+ const set=(key:ProgramField,value:ProgramFacts[ProgramField])=>onChange({...facts,[key]:value});
+ return <div className="space-y-6">{Object.entries(programLabels).filter(([key])=>editable.includes(key)).map(([key,label])=>{
+ const name=key as ProgramField,value=facts[name],id=`program-${key}`;
+ return <div key={key}><label className="block font-semibold" htmlFor={id}>{label}</label>
+ {key==="activity_evidence"&&<p className="mt-1 text-sm leading-6 text-info-muted">기관 소재지가 아닌 실제 개최 장소를 확인해 주세요. 근거는 한 줄에 하나씩 입력합니다.</p>}
+ {key==="residence_evidence"&&<p className="mt-1 text-sm leading-6 text-info-muted">온라인 참여 대상이 전국 또는 수도권을 포함하는지 확인해 주세요.</p>}
+ {programChoices[key]?<select id={id} className={fieldClass} disabled={disabled} value={String(value)} onChange={e=>set(name,e.target.value)}>{Object.entries(programChoices[key]).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>:
+ key==="application_methods"?<fieldset id={id} className="mt-2" disabled={disabled}><legend className="sr-only">신청 방법 선택</legend>{Object.entries({internet:"인터넷 예약",onsite:"현장 접수",phone:"전화 접수"}).map(([v,l])=><label key={v} className="mr-4 inline-flex min-h-11 items-center gap-2"><input type="checkbox" checked={(value as string[]).includes(v)} onChange={e=>set(name,e.target.checked?[...(value as string[]),v]:(value as string[]).filter(x=>x!==v))}/>{l}</label>)}</fieldset>:
+ <><textarea id={id} className={fieldClass} disabled={disabled} rows={key==="description"?6:3} maxLength={key==="description"?60000:4000} value={Array.isArray(value)?value.join("\n"):String(value)} onChange={e=>set(name,Array.isArray(value)?e.target.value.split("\n"):e.target.value)} />{Array.isArray(value)&&<p className="mt-1 text-sm text-info-muted">한 줄에 하나씩 입력해 주세요.</p>}</>}
+ </div>;})}
+ {editable.includes("periods")&&<fieldset disabled={disabled} className="space-y-6"><legend className="mb-2 font-semibold">신청 기간과 운영 기간</legend><p className="text-sm leading-6 text-info-muted">한국 시간 기준입니다. 날짜만 명시됐다면 시간을 만들지 마세요. 종료 날짜는 해당일을 포함합니다.</p>
+ {Object.entries(periodLabels).map(([key,label])=>{const periods=facts.periods as Record<string,Period>,p=periods[key];const precision=p.precision??"day";
+ const update=(value:string,unit:string)=>set("periods",{...periods,[key]:{raw:value||null,value:value?(unit==="day"?value:`${value.length===16?value+":00":value}+09:00`):null,status:value?"ok":"missing",precision:value?unit:null}});
+ return <div key={key} className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]"><div><label className="block font-semibold" htmlFor={`program-date-${key}`}>{label}</label><label className="sr-only" htmlFor={`program-precision-${key}`}>{label} 정밀도</label><select id={`program-precision-${key}`} className={fieldClass} value={precision} onChange={e=>{const v=p.value??"";update(e.target.value==="day"?v.slice(0,10):v.includes("T")?v.replace("+09:00",""):"",e.target.value);}}><option value="day">날짜만 명시</option><option value="second">시간까지 명시</option></select></div>
+ <input id={`program-date-${key}`} className={fieldClass} type={precision==="day"?"date":"datetime-local"} step={precision==="second"?1:undefined} value={(p.value??"").replace("+09:00","")} onChange={e=>update(e.target.value,precision)}/></div>;})}</fieldset>}
+ </div>;
+}
+export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;onBlocked:(blocked:boolean)=>void;onResult:(item:{id:string;status:string;source:{title:string};result:{reasons:string[]}})=>void}){
+ const [item,setItem]=useState<Item|null>(null),[draft,setDraft]=useState<ProgramFacts|null>(null);
+ const [busy,setBusy]=useState(true),[error,setError]=useState(""),[notice,setNotice]=useState(""),[note,setNote]=useState(""),[excludeNote,setExcludeNote]=useState("");
+ const [resolve,setResolve]=useState<string[]>([]),[confirm,setConfirm]=useState(false);
+ const heading=useRef<HTMLHeadingElement>(null),message=useRef<HTMLDivElement>(null),sending=useRef(false);
+ const dirty=Boolean(item&&draft&&Object.keys(programPatch(item.facts,draft,item.editableFields)).length);
+ const unsaved=dirty||Boolean(note||excludeNote||resolve.length);
+ const processed=item?.status!=="open";
+ useEffect(()=>{onBlocked(busy||unsaved||confirm);return()=>onBlocked(false);},[busy,unsaved,confirm,onBlocked]);
+ useEffect(()=>{if(!unsaved)return;const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue="";};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn);},[unsaved]);
+ function accept(next:Item){setItem(next);setDraft(structuredClone(next.facts));setNote("");setExcludeNote("");setResolve([]);setConfirm(false);}
+ useEffect(()=>{const controller=new AbortController();request(id,undefined,controller.signal).then(next=>{accept(next);setError("");}).catch(e=>{if(!controller.signal.aborted)setError(e instanceof Failure?e.message:"unavailable");}).finally(()=>{if(!controller.signal.aborted)setBusy(false);});return()=>controller.abort();},[id]);
+ const loadedId=item?.id;
+ useEffect(()=>{if(loadedId)focus(heading.current);},[loadedId]);
+ useEffect(()=>{if(error||notice)focus(message.current);},[error,notice]);
+ async function submit(command:ProgramCommand){if(sending.current)return;sending.current=true;setBusy(true);setError("");setNotice("");
+ try{const next=await request(id,command);accept(next);onResult(next);setNotice(command.action==="exclude"?"제외 사유를 기록했습니다.":"사실을 저장하고 다시 평가했습니다.");}
+ catch(e){setError(e instanceof Failure?e.message:"unavailable");setConfirm(false);}finally{sending.current=false;setBusy(false);}}
+ async function reload(){if(sending.current)return;setBusy(true);setError("");try{accept(await request(id));setNotice("");}catch(e){setError(e instanceof Failure?e.message:"unavailable");}finally{setBusy(false);}}
+ const link=item?.source.url?sourceLink(item.source.url):null;
+ const confirmedLink=item&&typeof item.facts.official_url==="string"?sourceLink(item.facts.official_url):null;
+ const flagReasons=item?[...new Set([...item.facts.missing as string[],...item.facts.conflicts as string[]])].filter(code=>reasonPatchFields[code]?.some(k=>item.editableFields.includes(k))):[];
+ return <section aria-label="서울 예약 사실 검토" aria-busy={busy}>
+ {(error||notice)&&<div ref={message} role={error?"alert":"status"} tabIndex={-1} className="mb-6 scroll-mt-36 border-y border-info-rule py-4 leading-7"><p className={error?"text-info-status":"text-info-body"}>{error?failureText[error]??error:notice}</p>
+ {error&&<div className="mt-3 flex flex-wrap gap-3"><button type="button" className={secondaryButton} disabled={busy} onClick={()=>void reload()}>{unsaved?"입력을 버리고 최신 내용 불러오기":"최신 내용 다시 확인"}</button>{["signed_out","forbidden"].includes(error)&&<Link prefetch={false} href="/ko/login?next=%2Fko%2Fadmin" className={secondaryButton}>로그인 상태 확인</Link>}</div>}</div>}
+ {!item?<p role="status" className="py-6 text-info-muted">{busy?"서울 예약 항목을 불러오는 중입니다.":"항목을 불러오지 못했습니다."}</p>:<>
+ <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">서울 공공서비스예약 · {statusText[item.status]}</p></header>
+ <details className="my-6 border-b border-info-rule pb-5"><summary className="cursor-pointer py-3 font-semibold">원문 확인 · 읽기 전용</summary>{link&&<a className="inline-flex min-h-11 items-center underline underline-offset-4" href={link} target="_blank" rel="noopener noreferrer">수집된 원문 열기 (새 창)</a>}{confirmedLink&&confirmedLink!==link&&<a className="ml-4 inline-flex min-h-11 items-center underline underline-offset-4" href={confirmedLink} target="_blank" rel="noopener noreferrer">확인한 공식 상세 링크 (새 창)</a>}<p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body||"저장된 본문이 없습니다. 공식 원문을 확인해 주세요."}</p></details>
+ <section className="mb-8 border-b border-info-rule pb-6" aria-label="저장된 판정 결과"><h3 className="font-bold">저장된 판정 결과</h3><p className="mt-2 text-info-status">{programOutcome(item.result.decision)}</p><p className="mt-3 text-info-body">저장된 접수 상태: {displayProgramValue("source_status",item.facts.source_status)}{["reservation_closed","application_closed"].includes(String(item.facts.source_status))?" · 현재 신청 불가":""}</p><div className="mt-4 text-sm leading-6"><PeriodRead periods={item.facts.periods as Record<string,Period>}/></div><p className="mt-2 text-info-body">남은 확인 사유 {item.status==="open"?item.result.reasons.length:0}개 · {item.aiStatus==="queued"?"AI 대기 기록 생성됨":"AI 상태: "+({blocked:"대기 기록 없음",claimed:"처리 중",completed:"완료",failed:"실패",cancelled:"취소됨"}[item.aiStatus]??"확인 필요")}</p><p className="mt-2 text-sm leading-6 text-info-muted">사실 저장은 AI를 실행하지 않습니다. 대기 기록이 있어도 후보 생성·공개가 완료된 것은 아닙니다.</p>
+ {item.status==="open"&&<ul className="mt-5 space-y-3">{item.reasonGuidance.map(({code,text})=><li key={code}><p className="leading-7 text-info-body">{text}</p></li>)}</ul>}</section>
+ <details className="mb-7 border-b border-info-rule pb-5"><summary className="cursor-pointer py-3 font-semibold">최초 추출값과 현재 저장값 비교</summary><dl className="mt-3 space-y-5">{Object.entries(programLabels).map(([key,label])=><div key={key}><dt className="font-semibold">{label}</dt><dd className="mt-2 grid gap-2 sm:grid-cols-2"><div className="whitespace-pre-wrap break-words text-info-muted">최초 추출: {displayProgramValue(key,item.observedFacts[key as ProgramField])}</div><div className="whitespace-pre-wrap break-words text-info-body">현재 저장: {displayProgramValue(key,item.facts[key as ProgramField])}</div></dd></div>)}</dl><h4 className="mb-3 mt-6 font-semibold">최초 추출 기간</h4><PeriodRead periods={item.observedFacts.periods as Record<string,Period>}/><h4 className="mb-3 mt-6 font-semibold">현재 저장 기간</h4><PeriodRead periods={item.facts.periods as Record<string,Period>}/></details>
+ {!processed&&draft&&<form onSubmit={e=>{e.preventDefault();if(busy||confirm)return;try{void submit(buildProgramSave(item,draft,note,resolve));}catch(error){setError(error instanceof ReviewFailure?Object.values(error.fields)[0]??"invalid_input":"invalid_input");}}}>
+ <h3 className="mb-2 text-lg font-bold">확인한 사실 입력</h3><p className="mb-6 text-sm leading-6 text-info-muted">열린 사유에 필요한 값만 수정할 수 있습니다. 그 밖의 값은 위의 현재 저장값에서 확인해 주세요.</p>
+ <FactFields facts={draft} editable={item.editableFields} disabled={busy||confirm} onChange={setDraft}/>
+ {flagReasons.length>0&&<fieldset disabled={busy||confirm} className="mt-7"><legend className="font-semibold">확인 근거로 해소한 부족·충돌 사유</legend><p className="mt-1 text-sm leading-6 text-info-muted">사실을 보충하고 해당 충돌을 확인한 경우만 선택하세요. 저장 후 서버가 다시 판정합니다.</p>{flagReasons.map(code=><label key={code} className="mt-2 flex min-h-11 items-start gap-3 leading-7"><input className="mt-2 size-5 shrink-0" type="checkbox" checked={resolve.includes(code)} onChange={e=>setResolve(e.target.checked?[...resolve,code]:resolve.filter(c=>c!==code))}/><span>{programReasonText[code]}</span></label>)}</fieldset>}
+ <label htmlFor="program-note" className="mt-7 block font-semibold">사실 수정·판단 근거 (필수)</label><textarea id="program-note" className={fieldClass} disabled={busy||confirm} required maxLength={4000} rows={3} value={note} onChange={e=>setNote(e.target.value)}/>
+ {unsaved&&<p className="mt-4 text-info-status">아직 저장하지 않은 입력이 있습니다. 저장하거나 수정을 취소한 뒤 다른 항목으로 이동해 주세요.</p>}
+ <div className="my-6 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={busy||confirm||!dirty||!note.trim()}>{busy?"저장 중…":"사실 저장·재평가"}</button>{unsaved&&<button type="button" className={secondaryButton} disabled={busy} onClick={()=>{accept(item);setError("");}}>수정 취소</button>}</div>
+ </form>}
+ {!processed&&<section className="mt-8 border-t border-info-rule pt-5"><h3 className="font-bold">서비스 범위에서 제외</h3><p className="mt-2 text-info-muted">외국인 자격 불가 사실로 바꾸지 않고 제외 사유를 기록합니다.</p><label htmlFor="program-exclude" className="mt-4 block font-semibold">제외 사유</label><textarea id="program-exclude" className={fieldClass} rows={3} maxLength={4000} disabled={busy||confirm} value={excludeNote} onChange={e=>setExcludeNote(e.target.value)}/><button type="button" className={`${secondaryButton} mt-4`} disabled={busy||dirty||Boolean(note)||Boolean(resolve.length)||!excludeNote.trim()||confirm} onClick={()=>setConfirm(true)}>사유를 남기고 제외</button>
+ {confirm&&<div role="group" aria-label="제외 최종 확인" className="mt-5 border-y border-info-rule py-5"><p className="whitespace-pre-wrap break-words">이 항목을 제외할까요? 기록할 사유: {excludeNote}</p><div className="mt-4 flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={busy} onClick={()=>void submit({action:"exclude",revision:item.revision,version:item.version,note:excludeNote})}>확인하고 제외</button><button type="button" className={secondaryButton} disabled={busy} onClick={()=>setConfirm(false)}>돌아가기</button></div></div>}</section>}
+ <details className="mt-8 border-t border-info-rule pt-4" open={item.history.length>0}><summary className="cursor-pointer py-3 font-semibold">최근 처리 이력</summary>{!item.history.length?<p className="text-info-muted">아직 처리 이력이 없습니다.</p>:<ul className="divide-y divide-info-rule">{item.history.map((h,i)=><li key={i} className="py-3"><p className="font-semibold">{actionText[h.action]??"사실 검토 처리"} · {new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"short"}).format(new Date(h.at))}</p><p className="mt-1 whitespace-pre-wrap break-words text-info-body">{h.note}</p><p className="mt-1 break-all text-sm text-info-muted">처리자: {h.actor}</p></li>)}</ul>}</details>
+ </>}
+ </section>;
+}

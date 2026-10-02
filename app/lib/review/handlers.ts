@@ -6,13 +6,13 @@ import type { ReviewKind, ReviewStore } from "./contracts";
 import { validateCommand } from "./validation";
 
 type Dependencies = { authorize: () => Promise<{ userId: string }>; store: () => ReviewStore };
-function failure(error: unknown) {
+export function failure(error: unknown) {
   if (error instanceof AdminAccessError) {
     const status = error.status === "signed_out" ? 401 : error.status === "forbidden" ? 403 : 503;
     return privateResponse(Response.json({ code: error.status }, { status }));
   }
   const e = error instanceof ReviewFailure ? error : new ReviewFailure("unavailable");
-  const status = e.code === "invalid_input" ? 422 : e.code === "not_found" ? 404 : ["conflict", "already_processed"].includes(e.code) ? 409 : 503;
+  const status = e.code === "invalid_input" ? 422 : e.code === "not_found" ? 404 : ["conflict", "already_processed", "program_input_changed", "program_unavailable"].includes(e.code) ? 409 : 503;
   return privateResponse(Response.json({ code: e.code, fields: e.fields }, { status }));
 }
 export function reviewKind(value: string | null): ReviewKind {

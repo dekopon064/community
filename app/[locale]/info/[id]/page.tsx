@@ -6,6 +6,8 @@ import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
 import CurationTrustPanel from "@/app/components/CurationTrustPanel";
 import CurationBody from "@/app/components/CurationBody";
+import SaveControl from "@/app/components/auth/SaveControl";
+import styles from "@/app/components/auth/AuthSurfaces.module.css";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 
@@ -37,7 +39,8 @@ export default async function InfoDetailPage({
         {t("back")}
       </Link>
 
-      <header className="max-w-4xl">
+      <div className={styles.detailHeading}>
+      <header className="min-w-0 max-w-4xl flex-1">
         {item.userCategory && (
           <div className="flex items-center gap-2.5 text-sm font-semibold text-primary-text">
             <CategoryIcon category={item.userCategory} size={20} className="h-5 w-5 shrink-0" />
@@ -58,6 +61,8 @@ export default async function InfoDetailPage({
           detail
         />
       </header>
+      {(item.userCategory === "policy" || item.userCategory === "program") && <SaveControl id={item.id} slug={id} locale={locale} />}
+      </div>
 
       <div className="mt-10 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
         <article className="min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">

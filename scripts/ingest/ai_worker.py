@@ -81,7 +81,15 @@ def process_ai_jobs(
     require_jobs: bool = False,
     target_source_item_id: str | None = None,
     target_revision_hash: str | None = None,
+    program_adapter: Any | None = None,
 ) -> AiWorkerResult:
+    if program_adapter is not None:
+        # Explicit, single-target program path; scheduled legacy callers do not opt in.
+        if limit != 1 or not target_source_item_id or not target_revision_hash or summarize_ko is None or translate_ja is None:
+            return AiWorkerResult(status=AI_STATE_UNKNOWN, state_unknown=1)
+        from ingest.program_ai import process_seoul_program_job
+        return process_seoul_program_job(program_adapter, source_item_id=target_source_item_id,
+            revision=target_revision_hash, summarize_ko=summarize_ko, translate_ja=translate_ja)
     if not ai_dependencies_ready(
         supabase=supabase, summarize_ko=summarize_ko, enqueue=enqueue
     ):
@@ -185,6 +193,9 @@ def _process_one(
 ) -> None:
     if job.processing_stage != "ai_enrichment":
         raise ValueError("human_job_claimed")
+    if job.source_id == "seoul_reservation":
+        # Source identity alone is not permission to consume program facts through v1.
+        raise AiJobError("ai_schema_error")
     payload = job.normalized_payload or {}
     curation_source = job.curation_source or curation_source_for_enqueue(job.source_id)
     if revision_precheck is not None:

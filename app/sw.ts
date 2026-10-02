@@ -3,6 +3,7 @@ import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 import { CacheFirst, NetworkFirst, NetworkOnly, Serwist, StaleWhileRevalidate } from "serwist";
 import {
   isSameOriginPageRequest,
+  isPrivateApiRequest,
   noPageResponseCacheFirstPlugin,
   noPageResponseCachePlugin,
 } from "./lib/serviceWorkerCachePolicy";
@@ -32,11 +33,11 @@ const supabaseOrigin = readSupabaseOrigin();
 
 const authNetworkOnly = {
   matcher: ({ url, sameOrigin }: { url: URL; sameOrigin: boolean }) =>
-    (sameOrigin && /^\/api\/(auth|admin)\//.test(url.pathname)) ||
-    (url.origin === supabaseOrigin && url.pathname.startsWith("/auth/")),
+    isPrivateApiRequest(url, sameOrigin, supabaseOrigin),
   handler: new NetworkOnly(),
   method: "GET" as const,
 };
+const privatePostOnly = { ...authNetworkOnly, method: "POST" as const };
 
 const feedbackPostOnly = {
   matcher: ({ url }: { url: URL }) =>
@@ -84,7 +85,7 @@ const serwist = new Serwist({
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: true,
-  runtimeCaching: [authNetworkOnly, feedbackPostOnly, pagesNetworkOnly, ...defaultCache],
+  runtimeCaching: [authNetworkOnly, privatePostOnly, feedbackPostOnly, pagesNetworkOnly, ...defaultCache],
 });
 
 serwist.addEventListeners();

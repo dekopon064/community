@@ -11,18 +11,21 @@ import { createClient } from "@supabase/supabase-js";
 const fixtureState = globalThis as typeof globalThis & { machimoaLocalReviewStore?: LocalReviewStore };
 export function getReviewStore(): ReviewStore {
   if (process.env.MACHIMOA_REVIEW_MODE === "database") {
-    const config = databaseReviewConfig(process.env);
-    if (!config) throw new ReviewFailure("not_connected");
-    // Separate, request-scoped service client. No cookies, user sessions or SSR client.
-    const client = createClient(config.url, config.key, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-      global: { fetch: (url, options) => fetch(url, { ...options, cache: "no-store", signal: AbortSignal.timeout(15000) }) },
-    });
-    return new DatabaseReviewStore(client);
+    return new DatabaseReviewStore(getReviewRpcClient());
   }
   if (localFixtureEnabled(process.env)) {
     fixtureState.machimoaLocalReviewStore ??= new LocalReviewStore();
     return fixtureState.machimoaLocalReviewStore;
   }
   throw new ReviewFailure("not_connected");
+}
+
+// Called only after request-level requireAdmin(); never shares a cookie session.
+export function getReviewRpcClient() {
+  const config = databaseReviewConfig(process.env);
+  if (!config) throw new ReviewFailure("not_connected");
+  return createClient(config.url, config.key, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { fetch: (url, options) => fetch(url, { ...options, cache: "no-store", signal: AbortSignal.timeout(15000) }) },
+  });
 }

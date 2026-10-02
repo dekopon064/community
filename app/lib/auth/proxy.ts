@@ -36,7 +36,7 @@ export async function refreshLogin(request: NextRequest) {
   }
   return (response: NextResponse) => {
     changes.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
-    if (hadSession || changes.size || /^\/(ko|ja)\/(login|admin)(?:\/|$)/.test(request.nextUrl.pathname)) {
+    if (hadSession || changes.size || request.cookies.has("machimoa-save-intent") || /^\/(ko|ja)\/(login|admin|saved)(?:\/|$)/.test(request.nextUrl.pathname)) {
       preventAuthCaching(response.headers);
     }
     return response;

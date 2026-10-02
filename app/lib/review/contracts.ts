@@ -35,6 +35,7 @@ export type CandidateItem = BaseItem & {
   status: "pending" | "published" | "rejected" | "superseded";
   category: Category; period: string;
   publishedAt: string | null; publishedId: string | null;
+  programInfo?: { inputFactsVersion: number; currentFactsVersion: number; inputChanged: boolean; canPublish: boolean; applicationPeriod: string; operatingPeriod: string };
 };
 export type ReviewItem = FactsItem | CandidateItem;
 export type ListItem = { id: string; title: string; sourceName: string; status: string; reasons: string[] };
@@ -54,7 +55,7 @@ export interface ReviewStore {
   get(kind: ReviewKind, id: string): Promise<ReviewItem>;
   execute(kind: ReviewKind, id: string, command: ReviewCommand, actor: string): Promise<ReviewItem>;
 }
-export type ReviewFailureCode = "not_connected" | "not_found" | "conflict" | "already_processed" | "publish_failed" | "invalid_input" | "unavailable";
+export type ReviewFailureCode = "not_connected" | "not_found" | "conflict" | "already_processed" | "publish_failed" | "invalid_input" | "unavailable" | "program_input_changed" | "program_unavailable";
 export class ReviewFailure extends Error {
   readonly code: ReviewFailureCode;
   readonly fields: Record<string, string>;

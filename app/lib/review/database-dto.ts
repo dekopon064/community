@@ -36,5 +36,13 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
   const c = object(v.content); const content = Object.fromEntries(["titleKo", "titleJa", "summaryKo", "summaryJa", "contentKo", "contentJa"].map((key) => [key, string(c[key])])) as CandidateContent;
   const publishedAt = nullable(v.publishedAt);
   if (publishedAt !== null && Number.isNaN(Date.parse(publishedAt))) throw new ReviewFailure("unavailable");
-  return { ...base, kind, content, status: choice(v.status, ["pending", "published", "rejected", "superseded"]), category: choice(v.category, ["", "policy", "program", "event", "youth_space", "living"]), period: string(v.period), publishedAt, publishedId: nullable(v.publishedId) };
+  let programInfo;
+  if (base.source.name === "seoul_reservation") {
+    const p = object(v.programInfo);
+    if (!Number.isSafeInteger(p.inputFactsVersion) || Number(p.inputFactsVersion) < 1 || !Number.isSafeInteger(p.currentFactsVersion) || Number(p.currentFactsVersion) < 1 ||
+        typeof p.inputChanged !== "boolean" || typeof p.canPublish !== "boolean" || p.inputChanged !== (p.inputFactsVersion !== p.currentFactsVersion) || (p.inputChanged && p.canPublish)) throw new ReviewFailure("unavailable");
+    programInfo = { inputFactsVersion: Number(p.inputFactsVersion), currentFactsVersion: Number(p.currentFactsVersion), inputChanged: p.inputChanged, canPublish: p.canPublish,
+      applicationPeriod: string(p.applicationPeriod), operatingPeriod: string(p.operatingPeriod) };
+  }
+  return { ...base, kind, content, status: choice(v.status, ["pending", "published", "rejected", "superseded"]), category: choice(v.category, ["", "policy", "program", "event", "youth_space", "living"]), period: string(v.period), publishedAt, publishedId: nullable(v.publishedId), ...(programInfo ? { programInfo } : {}) };
 }

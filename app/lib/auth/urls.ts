@@ -29,6 +29,12 @@ export function safeReturnTo(value: unknown, locale: AuthLocale): string {
   }
 }
 
+// Guest exploration must not send a visitor back to an authentication gate.
+export function publicBrowseReturnTo(value: unknown, locale: AuthLocale): string {
+  const next = safeReturnTo(value, locale);
+  return /^\/(ko|ja)\/(admin|saved)(?:[/?#]|$)/.test(next) ? `/${locale}` : next;
+}
+
 export function loginUrl(locale: AuthLocale, next: string, notice?: string): string {
   const query = new URLSearchParams({ next: safeReturnTo(next, locale) });
   if (notice) query.set("notice", notice);

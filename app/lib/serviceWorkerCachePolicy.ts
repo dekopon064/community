@@ -1,6 +1,10 @@
 import type { SerwistPlugin } from "serwist";
 
 type PageRequest = Pick<Request, "mode" | "destination" | "headers">;
+export function isPrivateApiRequest(url: URL, sameOrigin: boolean, supabaseOrigin: string) {
+  return (sameOrigin && /^\/api\/(auth|admin|saved)\//.test(url.pathname)) ||
+    (url.origin === supabaseOrigin && (url.pathname.startsWith("/auth/") || /^\/rest\/v1\/rpc\/(save_information|remove_saved_information|saved_information_state|list_saved_information|resume_saved_information|cancel_saved_information_resume|prepare_saved_information_intent|cancel_saved_information_intent)$/.test(url.pathname)));
+}
 
 // Do not cache documents or Next.js RSC payloads, regardless of URL spelling.
 // This includes percent-encoded paths and locale-less aliases.

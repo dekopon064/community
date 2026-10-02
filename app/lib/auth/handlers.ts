@@ -5,7 +5,7 @@ import { authRedirect, privateResponse } from "./http";
 type AuthClient = { auth: Pick<SupabaseClient["auth"], "signInWithOAuth" | "exchangeCodeForSession" | "getClaims" | "signOut"> };
 type ClientFactory = () => Promise<AuthClient | null>;
 
-export async function startSocialLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string, kakaoEnabled = false) {
+export async function startSocialLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string, kakaoEnabled = false, saveIntent?: string) {
   if (!isSameOriginPost(request)) return privateResponse(new Response(null, { status: 403 }));
   const form = await request.formData().catch(() => null);
   if (!form) return privateResponse(new Response(null, { status: 400 }));
@@ -26,6 +26,7 @@ export async function startSocialLogin(request: Request, createClient: ClientFac
     const callback = new URL("/api/auth/callback", origin);
     callback.searchParams.set("locale", locale);
     callback.searchParams.set("next", next);
+    if (saveIntent) callback.searchParams.set("saveIntent", saveIntent);
     const { data, error } = await client.auth.signInWithOAuth({
       provider, options: {
         redirectTo: callback.href, skipBrowserRedirect: true,

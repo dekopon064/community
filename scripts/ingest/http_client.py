@@ -69,11 +69,12 @@ def _safe_header(headers: Any, name: str, *, request_id: bool = False) -> str:
 def _log_http_status(
     response: Any, *, source_id: str | None, page_num: int | None,
     attempt: int, status: int, params: Mapping[str, Any] | None,
+    sensitive_values: tuple[str, ...] = (),
 ) -> None:
     headers = getattr(response, "headers", None)
     source = source_id if source_id in {"youthcenter_policy", "youthcenter_content"} else "-"
     page = page_num if isinstance(page_num, int) and 1 <= page_num <= 100000 else "-"
-    secret_values = tuple(
+    secret_values = sensitive_values + tuple(
         str(value) for key, value in (params or {}).items()
         if ("key" in key.lower() or "token" in key.lower())
         and value is not None and str(value)
@@ -144,6 +145,7 @@ class HttpClient:
         headers: Mapping[str, str] | None = None,
         source_id: str | None = None,
         page_num: int | None = None,
+        sensitive_values: tuple[str, ...] = (),
     ) -> tuple[Any, int, int]:
         """JSON을 반환한다. query·본문·키는 예외에 넣지 않는다.
 
@@ -181,6 +183,7 @@ class HttpClient:
                     _log_http_status(
                         response, source_id=source_id, page_num=page_num,
                         attempt=attempt, status=status, params=params,
+                        sensitive_values=sensitive_values,
                     )
                 if status in RETRYABLE_STATUSES:
                     if attempt >= self.max_attempts:
