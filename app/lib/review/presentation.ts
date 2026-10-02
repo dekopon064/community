@@ -1,5 +1,6 @@
 export const categories = { policy: "정책", program: "프로그램", event: "행사", youth_space: "청년공간", living: "생활" };
 const reasons: Record<string, { title: string; help: string }> = {
+  restored_review_pending: { title: "복구한 사실을 다시 확인해 주세요", help: "기존 사실과 근거를 확인한 뒤 사실 저장·재평가를 눌러 주세요. 수정할 내용이 없어도 검토를 완료할 수 있습니다." },
   product_type_unknown: { title: "정보 성격을 확인해 주세요", help: "원문을 읽고 행사·프로그램, 정책 참고자료, 생활 안내 중 하나를 선택해 주세요." },
   product_type_unconfirmed: { title: "정보 성격을 확인해 주세요", help: "원문을 읽고 정보 성격을 선택해 주세요. 공개 카테고리와는 별도 판단입니다." },
   policy_lifecycle_uncertain: { title: "이 정책의 정보 성격을 확인해 주세요", help: "모집 중인 행사·프로그램인지, 계속 참고하는 정책 자료인지, 생활 안내인지 원문을 읽고 선택해 주세요. 저장 후 추가로 확인할 지역·신청 자격·카테고리를 확인합니다." },
@@ -45,3 +46,6 @@ export function sourceLink(value: string): string | null {
   try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
   catch { return null; }
 }
+
+Object.assign(actionText, {restore: "휴지통에서 복구", confirm_restored: "복구 후 사실 재확인"});
+Object.assign(failureText, {trash_expired: "복구 기한 72시간이 지났습니다. 휴지통을 새로고침해 주세요.", trash_source_changed: "원문이 변경되어 이전 항목을 복구할 수 없습니다. 최신 review 항목을 확인해 주세요.", trash_processing_active: "작업이 처리 중이라 지금 처리할 수 없습니다. 완료 후 최신 상태를 확인해 주세요.", trash_already_published: "이미 게시된 항목입니다. 최신 상태를 확인해 주세요."});

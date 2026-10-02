@@ -7,6 +7,9 @@ import { actionText, aiStatusText, categories, failureText, reasonText, sourceLi
 import { CandidateEditor, FactsEditor, fieldClass, primaryButton, secondaryButton } from "./ReviewEditors";
 import ProgramReviewPanel from "./ProgramReviewPanel";
 import AiQueuePanel from "./AiQueuePanel";
+import TrashPanel from "./TrashPanel";
+import { quickReasons } from "@/app/lib/review/trash";
+import type { QuickReason } from "@/app/lib/review/trash";
 import FactsGuidance from "./FactsGuidance";
 import { programReasonText } from "@/app/lib/review/program-contract";
 import { reviewDetailPath } from "@/app/lib/review/program-ui";
@@ -15,7 +18,7 @@ class RequestFailure extends Error {
   code: string; fields: Record<string, string>;
   constructor(code: string, fields: Record<string, string> = {}) { super(code); this.code = code; this.fields = fields; }
 }
-async function call(path: string, body?: ReviewCommand, signal?: AbortSignal) {
+async function call(path: string, body?: unknown, signal?: AbortSignal) {
   const response = await fetch(path, { cache: "no-store", credentials: "same-origin", signal, ...(body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}) });
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new RequestFailure(data?.code ?? "unavailable", data?.fields);
@@ -29,14 +32,11 @@ function focusTask(element: HTMLElement | null) {
 }
 
 export default function ReviewWorkspace() {
-  const [kind, setKind] = useState<ReviewKind | "ai">("facts");
+  const [kind, setKind] = useState<ReviewKind | "ai" | "trash">("facts");
   const [list, setList] = useState<ListItem[]>([]);
   const [item, setItem] = useState<ReviewItem | null>(null);
   const [programId, setProgramId] = useState<string | null>(null);
   const [programBlocked, setProgramBlocked] = useState(false);
-  const programResult = useCallback((next: { id: string; status: string; source: { title: string }; result: { reasons: string[] } }) => {
-    setList(old => old.flatMap(entry => entry.id === next.id && next.status === "resolved" ? [] : [entry.id === next.id ? { ...entry, title: next.source.title, status: next.status, reasons: next.status === "open" ? next.result.reasons : [] } : entry]));
-  }, []);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [content, setContent] = useState<CandidateContent | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,22 +44,31 @@ export default function ReviewWorkspace() {
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
+  const programResult = useCallback((next: { id: string; status: string; source: { title: string }; result: { reasons: string[] } }) => {
+    setList(old => old.flatMap(entry => entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, title: next.source.title, status: next.status, reasons: next.status === "open" ? next.result.reasons : [] } : entry]));
+    if (next.status === "excluded") { setProgramId(null); setNotice("제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다."); }
+  }, []);
   const [note, setNote] = useState("");
   const [confirmation, setConfirmation] = useState<"publish" | "reject" | "exclude" | null>(null);
   const [reload, setReload] = useState(0);
   const [mode, setMode] = useState<"database" | "local-fixture" | null>(null);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const pendingRequest = useRef<{ key: string; id: string } | null>(null);
+  const sending = useRef(false);
+  const trashBusy = useCallback((value: boolean) => setBusy(value), []);
+  const restored = useCallback(() => setReload(n => n + 1), []);
   const detailHeading = useRef<HTMLHeadingElement>(null);
   const resultMessage = useRef<HTMLParagraphElement>(null);
   const errorMessageBox = useRef<HTMLDivElement>(null);
   const confirmationBox = useRef<HTMLElement>(null);
-  const dirty = programBlocked || Boolean(item && (item.kind === "facts" ? JSON.stringify(item.facts) !== JSON.stringify(facts) : JSON.stringify(item.content) !== JSON.stringify(content)));
+  const fieldsDirty = Boolean(item && (item.kind === "facts" ? JSON.stringify(item.facts) !== JSON.stringify(facts) : JSON.stringify(item.content) !== JSON.stringify(content)));
+  const dirty = programBlocked || fieldsDirty || Boolean(note);
   const processed = item && (item.kind === "facts" ? item.status !== "open" : item.status !== "pending");
   const locked = busy || Boolean(processed) || Boolean(confirmation);
 
   useEffect(() => {
-    if (kind === "ai") return;
+    if (kind === "ai" || kind === "trash") return;
     const controller = new AbortController();
     call(`/api/admin/review?kind=${kind}&offset=${offset}`, undefined, controller.signal).then((data) => {
       if (controller.signal.aborted) return;
@@ -78,7 +87,7 @@ export default function ReviewWorkspace() {
     setNote(""); setConfirmation(null); setErrors({});
   }
   async function select(id: string) {
-    if (busy || dirty || confirmation || kind === "ai") return;
+    if (busy || dirty || confirmation || kind === "ai" || kind === "trash") return;
     const entry = list.find(row => row.id === id);
     setError(""); setNotice(""); setItem(null);
     if (kind === "facts" && entry?.sourceName === "seoul_reservation") { setProgramId(id); return; }
@@ -87,25 +96,30 @@ export default function ReviewWorkspace() {
     catch (e) { setError(e instanceof RequestFailure ? e.code : "unavailable"); }
     finally { setBusy(false); }
   }
-  function switchKind(next: ReviewKind | "ai") {
+  function switchKind(next: ReviewKind | "ai" | "trash") {
     if (busy || dirty || confirmation || next === kind) return;
-    setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(next !== "ai");
+    setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(next !== "ai" && next !== "trash");
   }
-  async function submit(command: ReviewCommand) {
-    if (!item || busy) return;
+  async function submit(command: ReviewCommand & { reasonCode?: QuickReason }) {
+    if (!item || busy || sending.current) return;
+    sending.current = true;
     setBusy(true); setError(""); setErrors({}); setNotice("");
     try {
-      const data = await call(`/api/admin/review/${kind}/${item.id}`, command);
+      const payload = command.action === "exclude" ? { action: "exclude", id: item.id, revision: command.revision, version: command.version, reasonCode: command.reasonCode ?? "custom", note: command.note } : null;
+      const key = JSON.stringify(payload);
+      if (payload && pendingRequest.current?.key !== key) pendingRequest.current = { key, id: crypto.randomUUID() };
+      const data = await call(payload ? "/api/admin/review-trash" : `/api/admin/review/${kind}/${item.id}`, payload ? { ...payload, requestId: pendingRequest.current!.id } : command);
       const next: ReviewItem = data.item; accept(next);
-      setList((old) => old.flatMap((entry) => command.action === "save_facts" && entry.id === next.id && next.status === "resolved" ? [] : [entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry]));
+      setList((old) => old.flatMap((entry) => next.kind === "facts" && entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry]));
       const result = command.action === "save_facts" && next.kind === "facts" ?
         next.status === "excluded" ? "사실 저장 후 대상 부적격으로 판정되었습니다. AI는 진행하지 않습니다." : `사실을 저장했습니다. 남은 확인 사유 ${next.reasons.length}개. ${aiStatusText[next.aiStatus]} 저장 요청에서 AI를 실행하지 않았습니다.` :
         command.action === "save_candidate" ? "수정 내용을 비공개로 저장했습니다. AI 실행·재번역은 하지 않았습니다." :
-        command.action === "publish" ? "저장된 내용의 승인·게시와 이력을 기록했습니다." : command.action === "exclude" ? "사유를 기록하고 대상에서 제외했습니다." : "사유를 기록하고 후보를 반려했습니다.";
+        command.action === "publish" ? "저장된 내용의 승인·게시와 이력을 기록했습니다." : command.action === "exclude" ? `제외했습니다. ${time(data.expiresAt)} (한국 시간)까지 휴지통에서 복구할 수 있습니다.` : "사유를 기록하고 후보를 반려했습니다.";
+      if (command.action === "exclude") { setItem(null); setFacts(null); pendingRequest.current = null; }
       setNotice(data.mode === "local-fixture" ? `${result} 실제 DB 저장·게시는 아닌 로컬 시험 결과입니다.` : result);
     } catch (e) {
       setError(e instanceof RequestFailure ? e.code : "unavailable"); setErrors(e instanceof RequestFailure ? e.fields : {}); setConfirmation(null);
-    } finally { setBusy(false); }
+    } finally { sending.current = false; setBusy(false); }
   }
   function preconditions() { return { revision: item!.revision, version: item!.version }; }
   const errorMessage = error ? failureText[error] ?? failureText.unavailable : "";
@@ -116,9 +130,11 @@ export default function ReviewWorkspace() {
       <button type="button" aria-current={kind === "facts" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("facts")} className={kind === "facts" ? primaryButton : secondaryButton}>사람 사실 review</button>
       <button type="button" aria-current={kind === "ai" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("ai")} className={kind === "ai" ? primaryButton : secondaryButton}>AI 작업 대기</button>
       <button type="button" aria-current={kind === "candidates" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("candidates")} className={kind === "candidates" ? primaryButton : secondaryButton}>AI 결과 후보 검토</button>
+      <button type="button" aria-current={kind === "trash" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("trash")} className={kind === "trash" ? primaryButton : secondaryButton}>휴지통</button>
     </nav>
+    <TrashPanel active={kind === "trash"} onBusy={trashBusy} onRestored={restored} />
     <AiQueuePanel active={kind === "ai"} />
-    <div hidden={kind === "ai"}>
+    <div hidden={kind === "ai" || kind === "trash"}>
     <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
     {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}
     {error && <div ref={errorMessageBox} tabIndex={-1} role="alert" className="my-5 scroll-mt-36 border-y border-info-rule py-5">
@@ -166,22 +182,24 @@ export default function ReviewWorkspace() {
             <p>신청 기간: {item.programInfo.applicationPeriod}</p><p>운영 기간: {item.programInfo.operatingPeriod} (한국 시간)</p>
             {item.programInfo.inputChanged ? <p role="status" className="mt-2 text-info-status">후보 생성 후 사실이 변경되었습니다. 수정 저장·반려는 가능하지만 게시는 차단됩니다. 자동 요약·재번역은 하지 않았으며 사실과 후보의 재대조 기능은 아직 없습니다.</p> : !item.programInfo.canPublish && <p role="status" className="mt-2 text-info-status">현재 접수 상태·판정 또는 수집원 권한으로 게시할 수 없습니다. 수정 저장·반려는 계속할 수 있습니다.</p>}
           </div>}
-          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts }); else if (content) void submit({ ...preconditions(), action: "save_candidate", content }); }}>
+          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content) void submit({ ...preconditions(), action: "save_candidate", content }); }}>
             {item.kind === "facts" && facts ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor value={content} onChange={setContent} errors={errors} disabled={locked} />}
-            {dirty && <p className="mt-6 leading-7 text-info-status">아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요.</p>}
+            {fieldsDirty && <p className="mt-6 leading-7 text-info-status">아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요.</p>}
             {!processed && <div className="my-7 flex flex-wrap gap-3">
-              <button type="submit" disabled={busy || Boolean(confirmation) || !dirty} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
+              <button type="submit" disabled={busy || Boolean(confirmation) || (!fieldsDirty && !(item.kind === "facts" && item.restoredReviewPending))} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
               {dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(""); setNotice(""); }}>수정 취소</button>}
               {item.kind === "candidates" && <button type="button" className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || (item.kind === "candidates" && Boolean(item.programInfo && !item.programInfo.canPublish))} onClick={() => setConfirmation("publish")}>승인하고 게시</button>}
             </div>}
           </form>
           {!processed && (item.kind === "candidates" || item.excludeAllowed !== false) && <section className="border-t border-info-rule pt-6">
+              {item.kind === "facts" && <><h3 className="font-bold">빠른 제외</h3><p className="mt-2 text-sm leading-6 text-info-muted">사유를 자동 기록하고 휴지통으로 이동합니다. 72시간 이내에 복구할 수 있습니다.</p>
+              <div className="my-4 flex flex-wrap gap-3">{Object.entries(quickReasons).map(([code, label]) => <button key={code} type="button" className={secondaryButton} disabled={locked || fieldsDirty || Boolean(note)} onClick={() => void submit({ ...preconditions(), action: "exclude", reasonCode: code as QuickReason, note: "" })}>{label} · 제외</button>)}</div></>}
             <h3 className="text-lg font-bold">{item.kind === "facts" ? "부적격으로 제외" : "후보 반려"}</h3>
             <p className="mt-2 leading-7 text-info-muted">{item.kind === "facts" ? "대상이 아니거나 사실을 끝내 확인할 수 없다면 제외 사유를 남겨 주세요." : "공개하기 어려운 후보라면 반려 사유를 남겨 주세요."}</p>
             <label htmlFor="review-note" className="mt-4 block font-semibold">{item.kind === "facts" ? "제외 사유" : "반려 사유"}</label>
             <textarea id="review-note" className={fieldClass} rows={3} value={note} maxLength={item.kind === "facts" ? 500 : 4000} disabled={busy || Boolean(confirmation)} aria-invalid={Boolean(errors.note)} aria-describedby={errors.note ? "note-error" : undefined} onChange={(e) => setNote(e.target.value)} />
             {errors.note && <p id="note-error" className="mt-2 text-sm text-info-status">{errors.note}</p>}
-            <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || dirty || !note.trim() || Boolean(confirmation)} onClick={() => setConfirmation(item.kind === "facts" ? "exclude" : "reject")}>{item.kind === "facts" ? "사유를 남기고 제외" : "사유를 남기고 반려"}</button>
+            <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || fieldsDirty || !note.trim() || Boolean(confirmation)} onClick={() => setConfirmation(item.kind === "facts" ? "exclude" : "reject")}>{item.kind === "facts" ? "사유를 남기고 제외" : "사유를 남기고 반려"}</button>
           </section>}
           {confirmation && <section ref={confirmationBox} tabIndex={-1} aria-label="최종 처리 확인" className="mt-8 scroll-mt-36 border-y border-info-rule bg-info-surface px-5 py-6">
             <h3 className="text-xl font-bold">{confirmation === "publish" ? "저장된 최종 내용으로 게시할까요?" : confirmation === "exclude" ? "이 항목을 제외할까요?" : "이 후보를 반려할까요?"}</h3>

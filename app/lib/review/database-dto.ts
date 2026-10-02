@@ -31,6 +31,7 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
     const editableFields = strings(v.editableFields);
     if (editableFields.some((key) => !Object.hasOwn(facts, key)) || typeof v.excludeAllowed !== "boolean") throw new ReviewFailure("unavailable");
     return { ...base, kind, facts, editableFields: editableFields as (keyof Facts)[], excludeAllowed: v.excludeAllowed,
+      restoredReviewPending: v.restoredReviewPending === true,
       status: choice(v.status, ["open", "resolved", "excluded"]), reasons: strings(v.reasons), aiStatus: choice(v.aiStatus, ["blocked", "queued", "claimed", "completed", "failed", "cancelled"]) };
   }
   const c = object(v.content); const content = Object.fromEntries(["titleKo", "titleJa", "summaryKo", "summaryJa", "contentKo", "contentJa"].map((key) => [key, string(c[key])])) as CandidateContent;

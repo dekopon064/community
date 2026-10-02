@@ -27,6 +27,7 @@ export type FactsItem = BaseItem & {
   kind: "facts"; facts: Facts; reasons: string[];
   editableFields?: (keyof Facts)[];
   excludeAllowed?: boolean;
+  restoredReviewPending?: boolean;
   status: "open" | "resolved" | "excluded";
   aiStatus: "blocked" | "queued" | "claimed" | "completed" | "failed" | "cancelled";
 };
@@ -41,7 +42,7 @@ export type ReviewItem = FactsItem | CandidateItem;
 export type ListItem = { id: string; title: string; sourceName: string; status: string; reasons: string[] };
 export type Preconditions = { revision: string; version: string };
 export type ReviewCommand =
-  | (Preconditions & { action: "save_facts"; facts: Facts })
+  | (Preconditions & { action: "save_facts"; facts: Facts; confirmRestored?: true })
   | (Preconditions & { action: "exclude"; note: string })
   | (Preconditions & { action: "save_candidate"; content: CandidateContent })
   | (Preconditions & { action: "publish" })
@@ -55,7 +56,7 @@ export interface ReviewStore {
   get(kind: ReviewKind, id: string): Promise<ReviewItem>;
   execute(kind: ReviewKind, id: string, command: ReviewCommand, actor: string): Promise<ReviewItem>;
 }
-export type ReviewFailureCode = "not_connected" | "not_found" | "conflict" | "already_processed" | "publish_failed" | "invalid_input" | "unavailable" | "program_input_changed" | "program_unavailable";
+export type ReviewFailureCode = "not_connected" | "not_found" | "conflict" | "already_processed" | "publish_failed" | "invalid_input" | "unavailable" | "program_input_changed" | "program_unavailable" | "trash_expired" | "trash_source_changed" | "trash_processing_active" | "trash_already_published";
 export class ReviewFailure extends Error {
   readonly code: ReviewFailureCode;
   readonly fields: Record<string, string>;

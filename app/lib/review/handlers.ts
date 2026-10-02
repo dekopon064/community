@@ -12,7 +12,7 @@ export function failure(error: unknown) {
     return privateResponse(Response.json({ code: error.status }, { status }));
   }
   const e = error instanceof ReviewFailure ? error : new ReviewFailure("unavailable");
-  const status = e.code === "invalid_input" ? 422 : e.code === "not_found" ? 404 : ["conflict", "already_processed", "program_input_changed", "program_unavailable"].includes(e.code) ? 409 : 503;
+  const status = e.code === "invalid_input" ? 422 : e.code === "not_found" ? 404 : ["conflict", "already_processed", "program_input_changed", "program_unavailable", "trash_expired", "trash_source_changed", "trash_processing_active", "trash_already_published"].includes(e.code) ? 409 : 503;
   return privateResponse(Response.json({ code: e.code, fields: e.fields }, { status }));
 }
 export function reviewKind(value: string | null): ReviewKind {

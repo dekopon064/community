@@ -5,8 +5,9 @@ export const patchFields = ["content_kind", "application_actor", "delivery_mode"
 export type ProgramField = typeof programFields[number];
 export type ProgramFacts = Record<ProgramField, string | string[] | Record<string, Period>>;
 export type Period = { raw: string | null; value: string | null; status: string; precision: string | null };
-export type ProgramCommand = { action: "save_facts" | "exclude"; revision: string; version: string; note: string; patch?: Partial<ProgramFacts>; resolve?: string[] };
+export type ProgramCommand = { action: "save_facts" | "exclude"; revision: string; version: string; note: string; patch?: Partial<ProgramFacts>; resolve?: string[]; confirmRestored?: true };
 export const programReasonText: Record<string, string> = {
+  restored_review_pending: "휴지통에서 복구했습니다. 기존 사실과 근거를 확인한 뒤 사실 저장·재평가를 눌러 주세요. 수정 없이도 검토를 완료할 수 있습니다.",
   activity_location_unknown: "실제 개최지를 확인하고 서울·경기·인천 여부와 원문 근거를 입력해 주세요.",
   delivery_mode_unknown: "온라인 예약과 온라인 진행을 구분해 실제 진행 방식·개최지를 입력해 주세요.",
   residence_scope_unknown: "온라인 프로그램의 거주 지역 조건을 확인해 전국 또는 수도권 포함 여부를 입력해 주세요.",
@@ -73,14 +74,14 @@ export function programFacts(input: unknown): ProgramFacts {
 }
 export function programCommand(input: unknown): ProgramCommand {
   const obj = object(input); const action = obj.action;
-  const keys = action === "save_facts" ? ["action", "revision", "version", "note", "patch", "resolve"] : ["action", "revision", "version", "note"];
+  const keys = action === "save_facts" ? ["action", "revision", "version", "note", "patch", "resolve", ...(obj.confirmRestored === true ? ["confirmRestored"] : [])] : ["action", "revision", "version", "note"];
   if (!["save_facts", "exclude"].includes(String(action)) || Object.keys(obj).some((k) => !keys.includes(k))) throw new ReviewFailure("invalid_input");
   const revision = text(obj.revision, 64), version = text(obj.version, 64), note = text(obj.note, 4000).trim();
   if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version) || !note) throw new ReviewFailure("invalid_input");
-  const command: ProgramCommand = { action: action as ProgramCommand["action"], revision, version, note };
+  const command: ProgramCommand = { action: action as ProgramCommand["action"], revision, version, note, ...(obj.confirmRestored === true ? { confirmRestored: true } : {}) };
   if (action === "save_facts") {
     const patch = object(obj.patch);
-    if (!Object.keys(patch).length || Object.keys(patch).some((k) => !(patchFields as readonly string[]).includes(k))) throw new ReviewFailure("invalid_input");
+    if ((!Object.keys(patch).length && obj.confirmRestored !== true) || Object.keys(patch).some((k) => !(patchFields as readonly string[]).includes(k))) throw new ReviewFailure("invalid_input");
     command.patch = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, value(k, v)]));
     command.resolve = strings(obj.resolve, 30);
   }

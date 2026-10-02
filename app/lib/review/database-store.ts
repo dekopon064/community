@@ -36,6 +36,6 @@ export class DatabaseReviewStore implements ReviewStore {
     if (command.action === "save_facts") args.p_facts = command.facts;
     if (command.action === "save_candidate") args.p_content = command.content;
     if ("note" in command) args.p_note = command.note;
-    return this.item(await this.invoke(names[command.action], args), kind, id);
+    return this.item(await this.invoke(command.action === "save_facts" && command.confirmRestored ? "admin_review_save_restored" : names[command.action], args), kind, id);
   }
 }

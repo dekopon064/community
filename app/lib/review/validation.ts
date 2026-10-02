@@ -56,8 +56,8 @@ export function validateCommand(kind: ReviewKind, value: unknown): ReviewCommand
   if (typeof v.revision !== "string" || !/^[0-9a-f]{64}$/.test(v.revision) || typeof v.version !== "string" || !v.version || v.version.length > 128) throw new ReviewFailure("invalid_input");
   const preconditions = { revision: v.revision, version: v.version };
   if (kind === "facts" && v.action === "save_facts") {
-    exact(v, ["action", "revision", "version", "facts"]);
-    return { ...preconditions, action: "save_facts", facts: validateFacts(v.facts) };
+    exact(v, ["action", "revision", "version", "facts", ...(v.confirmRestored === true ? ["confirmRestored"] : [])]);
+    return { ...preconditions, action: "save_facts", facts: validateFacts(v.facts), ...(v.confirmRestored === true ? { confirmRestored: true as const } : {}) };
   }
   if (kind === "candidates" && v.action === "save_candidate") {
     exact(v, ["action", "revision", "version", "content"]);
