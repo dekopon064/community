@@ -6,6 +6,8 @@ import type { CandidateContent, Facts, ReviewItem, ReviewKind, ListItem, ReviewC
 import { actionText, aiStatusText, categories, failureText, reasonText, sourceLink, statusText } from "@/app/lib/review/presentation";
 import { CandidateEditor, FactsEditor, fieldClass, primaryButton, secondaryButton } from "./ReviewEditors";
 import ProgramReviewPanel from "./ProgramReviewPanel";
+import AiQueuePanel from "./AiQueuePanel";
+import FactsGuidance from "./FactsGuidance";
 import { programReasonText } from "@/app/lib/review/program-contract";
 import { reviewDetailPath } from "@/app/lib/review/program-ui";
 
@@ -27,13 +29,13 @@ function focusTask(element: HTMLElement | null) {
 }
 
 export default function ReviewWorkspace() {
-  const [kind, setKind] = useState<ReviewKind>("facts");
+  const [kind, setKind] = useState<ReviewKind | "ai">("facts");
   const [list, setList] = useState<ListItem[]>([]);
   const [item, setItem] = useState<ReviewItem | null>(null);
   const [programId, setProgramId] = useState<string | null>(null);
   const [programBlocked, setProgramBlocked] = useState(false);
   const programResult = useCallback((next: { id: string; status: string; source: { title: string }; result: { reasons: string[] } }) => {
-    setList(old => old.map(entry => entry.id === next.id ? { ...entry, title: next.source.title, status: next.status, reasons: next.status === "open" ? next.result.reasons : [] } : entry));
+    setList(old => old.flatMap(entry => entry.id === next.id && next.status === "resolved" ? [] : [entry.id === next.id ? { ...entry, title: next.source.title, status: next.status, reasons: next.status === "open" ? next.result.reasons : [] } : entry]));
   }, []);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [content, setContent] = useState<CandidateContent | null>(null);
@@ -57,8 +59,10 @@ export default function ReviewWorkspace() {
   const locked = busy || Boolean(processed) || Boolean(confirmation);
 
   useEffect(() => {
+    if (kind === "ai") return;
     const controller = new AbortController();
     call(`/api/admin/review?kind=${kind}&offset=${offset}`, undefined, controller.signal).then((data) => {
+      if (controller.signal.aborted) return;
       setList(data.items); setMode(data.mode); setHasMore(data.hasMore); setError(""); setLoading(false);
     }).catch((e) => { if (!controller.signal.aborted) { setError(e instanceof RequestFailure ? e.code : "unavailable"); setLoading(false); } });
     return () => controller.abort();
@@ -74,7 +78,7 @@ export default function ReviewWorkspace() {
     setNote(""); setConfirmation(null); setErrors({});
   }
   async function select(id: string) {
-    if (busy || dirty || confirmation) return;
+    if (busy || dirty || confirmation || kind === "ai") return;
     const entry = list.find(row => row.id === id);
     setError(""); setNotice(""); setItem(null);
     if (kind === "facts" && entry?.sourceName === "seoul_reservation") { setProgramId(id); return; }
@@ -83,9 +87,9 @@ export default function ReviewWorkspace() {
     catch (e) { setError(e instanceof RequestFailure ? e.code : "unavailable"); }
     finally { setBusy(false); }
   }
-  function switchKind(next: ReviewKind) {
+  function switchKind(next: ReviewKind | "ai") {
     if (busy || dirty || confirmation || next === kind) return;
-    setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(true);
+    setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(next !== "ai");
   }
   async function submit(command: ReviewCommand) {
     if (!item || busy) return;
@@ -93,7 +97,7 @@ export default function ReviewWorkspace() {
     try {
       const data = await call(`/api/admin/review/${kind}/${item.id}`, command);
       const next: ReviewItem = data.item; accept(next);
-      setList((old) => old.map((entry) => entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry));
+      setList((old) => old.flatMap((entry) => command.action === "save_facts" && entry.id === next.id && next.status === "resolved" ? [] : [entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry]));
       const result = command.action === "save_facts" && next.kind === "facts" ?
         next.status === "excluded" ? "사실 저장 후 대상 부적격으로 판정되었습니다. AI는 진행하지 않습니다." : `사실을 저장했습니다. 남은 확인 사유 ${next.reasons.length}개. ${aiStatusText[next.aiStatus]} 저장 요청에서 AI를 실행하지 않았습니다.` :
         command.action === "save_candidate" ? "수정 내용을 비공개로 저장했습니다. AI 실행·재번역은 하지 않았습니다." :
@@ -110,8 +114,11 @@ export default function ReviewWorkspace() {
   return <div className="mt-8">
     <nav aria-label="검토 단계" className="flex flex-wrap gap-2 border-b border-info-rule pb-4">
       <button type="button" aria-current={kind === "facts" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("facts")} className={kind === "facts" ? primaryButton : secondaryButton}>사람 사실 review</button>
+      <button type="button" aria-current={kind === "ai" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("ai")} className={kind === "ai" ? primaryButton : secondaryButton}>AI 작업 대기</button>
       <button type="button" aria-current={kind === "candidates" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("candidates")} className={kind === "candidates" ? primaryButton : secondaryButton}>AI 결과 후보 검토</button>
     </nav>
+    <AiQueuePanel active={kind === "ai"} />
+    <div hidden={kind === "ai"}>
     <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
     {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}
     {error && <div ref={errorMessageBox} tabIndex={-1} role="alert" className="my-5 scroll-mt-36 border-y border-info-rule py-5">
@@ -148,23 +155,19 @@ export default function ReviewWorkspace() {
             <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>
             <p className="mt-3 text-sm leading-6 text-info-muted">{item.source.name}{item.kind === "candidates" ? ` · ${item.category ? categories[item.category] : "분류 확인 필요"} · ${item.period}` : ""}</p>
           </header>
-          <details open={item.kind === "facts"} className="my-6 border-b border-info-rule pb-6">
+          {item.kind === "facts" && <FactsGuidance item={item} />}
+          <details className="my-6 border-b border-info-rule pb-6">
             <summary className="min-h-11 cursor-pointer py-2 font-semibold">원문 확인</summary>
             {source ? <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a> : <p className="mt-3 text-info-muted">원문 링크를 제공할 수 없습니다.</p>}
             <p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || "저장된 원문 본문이 없습니다. 원문 링크에서 확인해 주세요."}</p>
           </details>
-          {item.kind === "facts" && <section className="mb-8" aria-label="남은 확인 사유">
-            <h3 className="text-lg font-bold">{item.reasons.length ? "확인할 사실과 판단" : "남은 확인 사유가 없습니다"}</h3>
-            <ul className="mt-3 space-y-4">{item.reasons.map((reason) => { const text = reasonText(reason); const help = reason === "event_period_unknown" && item.editableFields && !item.editableFields.includes("eventStart") ? "이미 확정된 카테고리의 기간만 수정하는 계약은 아직 없습니다. 원문의 개최 기간을 별도로 확인하고 기간 보완 계약을 검토해야 합니다." : text.help; return <li key={reason}><p className="font-semibold">{text.title}</p><p className="mt-1 leading-7 text-info-body">{help}</p><details className="mt-1 text-sm text-info-muted"><summary className="cursor-pointer py-1">사유 식별자</summary><code>{reason}</code></details></li>; })}</ul>
-            <p className="mt-4 text-sm leading-6 text-info-status">{aiStatusText[item.aiStatus]}</p>
-          </section>}
           {item.kind === "candidates" && item.programInfo && <div className="my-5 border-y border-info-rule py-4 text-sm leading-6 text-info-body">
             <p>후보 입력 사실 버전 {item.programInfo.inputFactsVersion} · 현재 사실 버전 {item.programInfo.currentFactsVersion}</p>
             <p>신청 기간: {item.programInfo.applicationPeriod}</p><p>운영 기간: {item.programInfo.operatingPeriod} (한국 시간)</p>
             {item.programInfo.inputChanged ? <p role="status" className="mt-2 text-info-status">후보 생성 후 사실이 변경되었습니다. 수정 저장·반려는 가능하지만 게시는 차단됩니다. 자동 요약·재번역은 하지 않았으며 사실과 후보의 재대조 기능은 아직 없습니다.</p> : !item.programInfo.canPublish && <p role="status" className="mt-2 text-info-status">현재 접수 상태·판정 또는 수집원 권한으로 게시할 수 없습니다. 수정 저장·반려는 계속할 수 있습니다.</p>}
           </div>}
           <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts }); else if (content) void submit({ ...preconditions(), action: "save_candidate", content }); }}>
-            {item.kind === "facts" && facts ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} /> : content && <CandidateEditor value={content} onChange={setContent} errors={errors} disabled={locked} />}
+            {item.kind === "facts" && facts ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor value={content} onChange={setContent} errors={errors} disabled={locked} />}
             {dirty && <p className="mt-6 leading-7 text-info-status">아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요.</p>}
             {!processed && <div className="my-7 flex flex-wrap gap-3">
               <button type="submit" disabled={busy || Boolean(confirmation) || !dirty} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
@@ -193,5 +196,6 @@ export default function ReviewWorkspace() {
         </>}
       </section>
     </div>}
+    </div>
   </div>;
 }
