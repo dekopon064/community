@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from ingest.connectors.base import BatchConnector
 from ingest.http_client import HttpClient
 from ingest.models import BatchMeta, BatchResult, Checkpoint, ObservationRecord
+from ingest.source_images import source_image_url
 
 SEOUL_SOURCE_ID = "seoul_reservation"
 SEOUL_API_KEY_ENV = "SEOUL_OPEN_DATA_API_KEY"
@@ -168,6 +169,7 @@ def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
         "source_id": SEOUL_SOURCE_ID, "title": raw["SVCNM"], "source_url": source_url,
         "source_body_html": raw["DTLCONT"],  # inert internal source data; never render as HTML
         "provider_fields": {k: v for k, v in raw.items() if k != "DTLCONT"},
+        "source_image_url": source_image_url(raw["IMGURL"]),
         **body, "dates": {name: parse_seoul_date(raw[name]) for name in DATE_FIELDS},
         "timezone": "Asia/Seoul", "source_status": STATUSES.get(raw["SVCSTATNM"], "unknown"),
         "source_updated_at_available": False,

@@ -1,5 +1,6 @@
 import { supabase } from "@/app/lib/supabase";
 import { isUserCategory } from "@/app/lib/userCategories";
+import { sourceImageUrl } from "@/app/lib/sourceImages";
 import type { Curation, LocalizedCuration } from "@/app/lib/types";
 import { routing } from "@/i18n/routing";
 
@@ -59,6 +60,7 @@ export function localizeCuration(
     source: row.source,
     source_item_id: row.source_item_id,
     source_url: row.source_url,
+    source_image_url: sourceImageUrl(row.source_image_url),
     application_deadline_kind: row.application_deadline_kind ?? null,
     application_deadline_on: row.application_deadline_on ?? null,
     event_start_on: row.event_start_on ?? null,

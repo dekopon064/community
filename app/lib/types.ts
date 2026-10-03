@@ -18,6 +18,7 @@ export interface Curation {
   source: string | null;
   source_item_id: string | null;
   source_url: string | null;
+  source_image_url?: string | null;
   application_deadline_kind: "fixed" | "none" | "closed" | null;
   application_deadline_on: string | null;
   user_category: UserCategory | null;
@@ -38,6 +39,7 @@ export interface LocalizedCuration {
   source: string | null;
   source_item_id: string | null;
   source_url: string | null;
+  source_image_url?: string | null;
   application_deadline_kind: "fixed" | "none" | "closed" | null;
   application_deadline_on: string | null;
   event_start_on: string | null;

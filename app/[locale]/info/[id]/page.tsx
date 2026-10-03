@@ -6,6 +6,8 @@ import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
 import CurationTrustPanel from "@/app/components/CurationTrustPanel";
 import CurationBody from "@/app/components/CurationBody";
+import SourceImage from "@/app/components/SourceImage";
+import ProgramDetailHeading from "@/app/components/ProgramDetailHeading";
 import SaveControl from "@/app/components/auth/SaveControl";
 import styles from "@/app/components/auth/AuthSurfaces.module.css";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
@@ -39,6 +41,28 @@ export default async function InfoDetailPage({
         {t("back")}
       </Link>
 
+      {item.userCategory === "program" ? (
+        <ProgramDetailHeading
+          url={item.source_image_url}
+          title={item.title}
+          locale={locale}
+          category={<div className="flex items-center gap-2.5 text-sm font-semibold text-primary-text">
+            <CategoryIcon category="program" size={20} className="h-5 w-5 shrink-0" />
+            <span>{categoriesT("program")}</span>
+          </div>}
+          period={<CurationPeriodText
+            category={item.userCategory}
+            deadlineKind={item.application_deadline_kind}
+            deadlineOn={item.application_deadline_on}
+            eventStartOn={item.event_start_on}
+            eventEndOn={item.event_end_on}
+            todayKst={todayKst()}
+            locale={locale}
+            detail
+          />}
+          save={<SaveControl id={item.id} slug={id} locale={locale} />}
+        />
+      ) : (
       <div className={styles.detailHeading}>
       <header className="min-w-0 max-w-4xl flex-1">
         {item.userCategory && (
@@ -61,11 +85,13 @@ export default async function InfoDetailPage({
           detail
         />
       </header>
-      {(item.userCategory === "policy" || item.userCategory === "program") && <SaveControl id={item.id} slug={id} locale={locale} />}
+      {item.userCategory === "policy" && <SaveControl id={item.id} slug={id} locale={locale} />}
       </div>
+      )}
 
       <div className="mt-10 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
         <article className="min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">
+          {item.userCategory !== "program" && <SourceImage url={item.source_image_url} title={item.title} locale={locale} variant="detail" />}
           <CurationBody content={item.content} locale={locale} />
         </article>
 

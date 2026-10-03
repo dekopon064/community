@@ -81,6 +81,7 @@ export default function CurationExplorer({
                 categoryLabel={item.userCategory ? categoriesT(item.userCategory) : null}
                 title={item.title}
                 summary={item.summary}
+                imageUrl={item.source_image_url}
                 summaryLabel={t("atAGlance")}
                 locale={locale}
                 deadlineKind={item.application_deadline_kind}

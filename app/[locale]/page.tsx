@@ -80,6 +80,7 @@ export default async function Home({
               categoryLabel={primary.userCategory ? categoriesT(primary.userCategory) : null}
               title={primary.title}
               summary={primary.summary}
+              imageUrl={primary.source_image_url}
               locale={locale}
               deadlineKind={primary.application_deadline_kind}
               deadlineOn={primary.application_deadline_on}
@@ -99,6 +100,7 @@ export default async function Home({
               categoryLabel={secondary.userCategory ? categoriesT(secondary.userCategory) : null}
               title={secondary.title}
               summary={secondary.summary}
+              imageUrl={secondary.source_image_url}
               locale={locale}
               deadlineKind={secondary.application_deadline_kind}
               deadlineOn={secondary.application_deadline_on}

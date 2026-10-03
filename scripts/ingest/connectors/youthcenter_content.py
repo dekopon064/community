@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from ingest.source_images import first_content_image
 from typing import Any, Callable
 
 from ingest.application_deadline import parse_content_application_deadline
@@ -83,7 +84,7 @@ def select_content_source_url(item: dict[str, Any], plain_text: str, hrefs: tupl
     return None
 
 
-def content_revision_hash(item: dict[str, Any], *, plain_text: str, source_url: str | None) -> str:
+def content_revision_hash(item: dict[str, Any], *, plain_text: str, source_url: str | None, image_url: str | None = None) -> str:
     payload = {
         "pstTtl": html_to_plain_text(item.get("pstTtl")),
         "plain_text": plain_text,
@@ -92,6 +93,8 @@ def content_revision_hash(item: dict[str, Any], *, plain_text: str, source_url: 
         "pstSn": str(item.get("pstSn") or "").strip(),
         "source_url": source_url or "",
     }
+    if image_url:
+        payload["source_image_url"] = image_url
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
@@ -251,6 +254,7 @@ class YouthcenterContentConnector(BatchConnector):
         plain = html_to_plain_text(html_body)
         title = html_to_plain_text(cleaned.get("pstTtl"))
         source_url = select_content_source_url(cleaned, plain, hrefs)
+        image_url = first_content_image(html_body, "https://www.youthcenter.go.kr/")
         usable = body_is_usable(plain)
         del permission_status, enabled
         deadline = parse_content_application_deadline(plain)
@@ -278,6 +282,7 @@ class YouthcenterContentConnector(BatchConnector):
             "pstTtl": title,
             "plain_text": plain,
             "source_url": source_url,
+            "source_image_url": image_url,
             "activity_location_text": html_to_plain_text(
                 cleaned.get("activity_location_text") or ""
             )
@@ -286,7 +291,7 @@ class YouthcenterContentConnector(BatchConnector):
         return ObservationRecord(
             external_key=content_external_key(cleaned),
             revision_hash=content_revision_hash(
-                cleaned, plain_text=plain, source_url=source_url
+                cleaned, plain_text=plain, source_url=source_url, image_url=image_url
             ),
             disposition="observe_only",
             min_fields={

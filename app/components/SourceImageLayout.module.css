@@ -1,0 +1,58 @@
+.image {object-fit:contain;}
+.card {position:relative;border-bottom:1px solid var(--color-info-rule);background:var(--color-info-surface);padding:20px 16px;}
+.card:hover {background:var(--color-info-hover);}
+.cardGrid {display:grid;min-width:0;grid-template-columns:60px minmax(0,1fr);gap:12px;}
+.thumbnail {position:relative;display:block;width:60px;height:80px;}
+.textLink {display:block;min-width:0;text-decoration:none;color:var(--color-primary-text);}
+.noCardImage {grid-template-columns:24px minmax(0,1fr);gap:12px;}
+.plainCard {grid-template-columns:minmax(0,1fr);}
+.cardIcon {grid-column:1;grid-row:2;margin-top:12px;}
+.fallbackText {grid-column:2;grid-row:2;padding-top:8px;}
+.fallbackMeta {grid-column:2;grid-row:1;}
+.preview {position:fixed;z-index:80;width:280px;border:1px solid var(--color-info-rule);border-radius:12px;background:var(--color-canvas-white);padding:12px;}
+.preview a {display:block;}
+.previewImage {display:block;width:100%;height:auto;max-height:min(380px,calc(100dvh - 140px));object-fit:contain;}
+.preview p {font-size:12px;line-height:1.5;color:var(--color-info-muted);margin-top:8px;}
+/* One text-width budget prevents wrapped-title measurement from toggling its own layout. */
+.heading {display:grid;width:min(100%,860px);grid-template-columns:fit-content(calc(100% - 164px)) 132px;column-gap:32px;align-items:start;justify-content:start;}
+.headingText,.lower {display:contents;}
+.category {grid-column:1;grid-row:1;}
+.heading h1 {grid-column:1;grid-row:2;min-width:0;margin-top:16px;font-size:44px;font-weight:700;line-height:1.17;letter-spacing:-.025em;overflow-wrap:anywhere;color:var(--color-primary-text);}
+.meta {grid-column:1;grid-row:3;display:flex;gap:24px;align-items:flex-start;margin-top:20px;min-width:0;}
+.period {min-width:0;}.period>div {margin:0;border:0;padding:0;}
+.saveSlot {min-width:0;max-width:100%;}.saveSlot>div {margin-top:0;align-items:flex-start;}
+.headerPoster {grid-column:2;grid-row:2/4;position:relative;display:block;align-self:start;width:132px;height:176px;margin-top:16px;padding:0;border:0;background:transparent;}
+.multiline {grid-template-columns:fit-content(calc(100% - 168px)) 144px;column-gap:24px;}
+.multiline .headerPoster {width:144px;height:192px;}
+.noImage,.noImage.multiline {width:100%;grid-template-columns:minmax(0,1fr);}
+.zoomCue {position:absolute;right:-6px;bottom:-4px;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--color-info-rule);border-radius:6px;background:var(--color-canvas-white);color:var(--color-primary-text);}
+.headerPoster .image {object-position:center top;}
+.headerPoster:hover .zoomCue {background:var(--color-info-hover);}
+.headerPoster:active {opacity:.85;}
+.thumbnail:focus-visible,.headerPoster:focus-visible,.preview a:focus-visible {outline:3px solid var(--color-focus);outline-offset:4px;}
+/* Compact image viewer: no header/footer tracks or reserved button space. */
+.dialog {
+  font:inherit;color:var(--color-primary-text);background:var(--color-canvas-white);
+  border:1px solid var(--color-info-rule);border-radius:12px;padding:0;
+  width:fit-content;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);
+  margin:auto;overflow:hidden;
+}
+.dialog[open] {display:block;}
+.dialog::backdrop {background:rgba(16,47,92,.48);}
+.close {
+  position:absolute;z-index:1;top:6px;right:6px;display:flex;align-items:center;justify-content:center;
+  width:44px;height:44px;padding:0;border:1px solid var(--color-info-rule);border-radius:8px;
+  background:var(--color-info-surface);color:var(--color-primary-text);cursor:pointer;
+}
+.close:hover {background:var(--color-info-hover);}
+.close:focus-visible {outline:3px solid var(--color-focus);outline-offset:-3px;}
+.dialogScroll {
+  padding:8px;overflow:auto;max-height:calc(100dvh - 34px);min-height:0;
+  overscroll-behavior:contain;scrollbar-color:var(--color-info-rule) var(--color-info-surface);scrollbar-width:thin;
+}
+.dialogScroll:focus-visible {outline:3px solid var(--color-focus);outline-offset:-3px;}
+.dismissImage {display:block;padding:0;border:0;background:transparent;cursor:zoom-out;touch-action:auto;}
+.dismissImage:focus-visible {outline:3px solid var(--color-focus);outline-offset:-3px;}
+.fullImage {display:block;width:auto;height:auto;max-width:min(600px,calc(100vw - 50px));object-fit:contain;}
+@media(min-width:768px){.card {padding:24px;}.cardGrid {grid-template-columns:80px minmax(0,1fr);gap:18px;}.thumbnail {width:80px;height:107px;}.noCardImage {grid-template-columns:24px minmax(0,1fr);gap:12px;}.plainCard {grid-template-columns:minmax(0,1fr);}}
+@media(max-width:1023px){.heading,.heading.multiline {display:block;width:100%;}.headingText {display:block;}.lower {display:grid;grid-template-columns:fit-content(calc(100% - 90px)) 72px;gap:18px;justify-content:start;align-items:start;margin-top:20px;}.heading h1 {font-size:32px;line-height:1.2;}.meta {display:flex;flex-direction:column;gap:20px;align-items:flex-start;grid-column:1;grid-row:1;margin-top:0;}.headerPoster,.multiline .headerPoster {grid-column:2;grid-row:1;width:72px;height:96px;margin-top:0;}.noImage .lower {grid-template-columns:minmax(0,1fr);}.zoomCue {width:20px;height:20px;right:-5px;bottom:-3px;}}
