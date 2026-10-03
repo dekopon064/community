@@ -118,6 +118,7 @@ const guidance: Record<string, string> = {
   application_method_missing: "신청 방법을 확인해 주세요. 별도 신청 폼은 필수가 아닙니다.", fee_unknown: "수강료와 별도 비용을 확인해 주세요.", fee_components_unresolved: "복합 비용의 항목별 근거를 확인해 주세요. 금액을 임의 분할하지 않습니다.", application_state_unknown: "현재 신청 상태와 기간을 대조해 주세요.",
 };
 export function myseoulGuidance(code: string) {
+  if (code.startsWith("source_change_conflict:")) return "새 원문과 이전 운영자 보완값이 다릅니다. 최신 원문을 대조하고 해당 사실과 판단 근거를 입력해 주세요.";
   if (code.startsWith("source_fact_conflict:")) return `상단과 본문의 ${code.endsWith("application_method") ? "신청 방법" : code.endsWith("operation") ? "운영 기간" : code.endsWith("application") ? "신청 기간" : "해당 사실"}이 다릅니다. 양쪽 근거를 대조하고 변경 이유를 기록해 주세요.`;
   return guidance[code] ?? "지원하지 않는 사유입니다. 원문과 계약을 확인하고 임의로 해소하지 마세요.";
 }
@@ -142,5 +143,7 @@ export function myseoulReasonFields(reason: string): string[] {
     'source_fact_conflict:tuition': ['fees'], 'source_fact_conflict:admission': ['fees'],
     'source_fact_conflict:materials': ['fees'], 'source_fact_conflict:extra_fee': ['fees'],
   };
+  if (["source_change_conflict:application", "source_change_conflict:operation"].includes(reason)) return ["periods"];
+  if (reason.startsWith("source_change_conflict:")) { const field = reason.split(":")[1]; return (myseoulPatchFields as readonly string[]).includes(field) ? [field] : []; }
   return map[reason] ?? [];
 }

@@ -1,3 +1,4 @@
+import { sourceImageUrl } from "../sourceImages";
 import { ReviewFailure } from "./contracts";
 import type { ReviewItem, ReviewKind, ListItem, Facts, CandidateContent } from "./contracts";
 
@@ -20,7 +21,9 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
   const v = object(data); const src = object(v.source);
   if (v.kind !== kind || v.id !== id || !/^[0-9a-f]{64}$/.test(string(v.revision)) || !/^[0-9a-f]{64}$/.test(string(v.version)) || !Array.isArray(v.history)) throw new ReviewFailure("unavailable");
   const base = { id, revision: string(v.revision), version: string(v.version), source: { name: string(src.name), title: string(src.title), url: string(src.url), body: string(src.body) },
-    history: v.history.map((entry) => { const h = object(entry); if (Number.isNaN(Date.parse(string(h.at)))) throw new ReviewFailure("unavailable"); return { action: string(h.action), actor: string(h.actor), at: string(h.at), note: string(h.note) }; }) };
+    history: v.history.map((entry) => { const h = object(entry); if (Number.isNaN(Date.parse(string(h.at)))) throw new ReviewFailure("unavailable"); const markers = src.name === "myseoul_program" && Array.isArray(h.fields) ? h.fields : [];
+      const changeLabel = markers.includes("source_change_review:no_impact") ? "원문 변경 확인·내용 영향 없음" : markers.includes("source_change_review:edited") ? markers.includes("source_change_stage:published") ? "공개 내용 수정·원문 변경 확인" : "후보 내용 수정·원문 변경 확인" : undefined;
+      return { ...(changeLabel ? { changeLabel } : {}), action: string(h.action), actor: string(h.actor), at: string(h.at), note: string(h.note) }; }) };
   if (kind === "facts") {
     const f = object(v.facts);
     const facts: Facts = {
@@ -38,12 +41,21 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
   const publishedAt = nullable(v.publishedAt);
   if (publishedAt !== null && Number.isNaN(Date.parse(publishedAt))) throw new ReviewFailure("unavailable");
   let programInfo;
+  let image;
+  if (base.source.name === "myseoul_program" && v.image !== undefined) {
+    const i = object(v.image);
+    const mode = choice(i.mode, ["source", "override", "none"] as const);
+    const url = nullable(i.url), sourceUrl = nullable(i.sourceUrl);
+    if ((mode === "override" ? !sourceImageUrl(url) || sourceImageUrl(url) !== url : url !== null) ||
+        (sourceUrl !== null && sourceImageUrl(sourceUrl) !== sourceUrl)) throw new ReviewFailure("unavailable");
+    image = { mode, url, sourceUrl };
+  }
   if (["seoul_reservation", "myseoul_program"].includes(base.source.name)) {
     const p = object(v.programInfo);
     if (!Number.isSafeInteger(p.inputFactsVersion) || Number(p.inputFactsVersion) < 1 || !Number.isSafeInteger(p.currentFactsVersion) || Number(p.currentFactsVersion) < 1 ||
-        typeof p.inputChanged !== "boolean" || typeof p.canPublish !== "boolean" || p.inputChanged !== (p.inputFactsVersion !== p.currentFactsVersion) || (p.inputChanged && p.canPublish)) throw new ReviewFailure("unavailable");
+        typeof p.inputChanged !== "boolean" || typeof p.canPublish !== "boolean" || (base.source.name !== "myseoul_program" && (p.inputChanged !== (p.inputFactsVersion !== p.currentFactsVersion) || (p.inputChanged && p.canPublish))) || (base.source.name === "myseoul_program" && p.inputChanged && p.canPublish && p.changeReviewed !== true)) throw new ReviewFailure("unavailable");
     programInfo = { inputFactsVersion: Number(p.inputFactsVersion), currentFactsVersion: Number(p.currentFactsVersion), inputChanged: p.inputChanged, canPublish: p.canPublish,
-      applicationPeriod: string(p.applicationPeriod), operatingPeriod: string(p.operatingPeriod) };
+      applicationPeriod: string(p.applicationPeriod), operatingPeriod: string(p.operatingPeriod), ...(base.source.name === "myseoul_program" ? { changeReviewed: p.changeReviewed === true, changedFields: p.changedFields === undefined ? [] : strings(p.changedFields), comparisonAvailable: p.comparisonAvailable === true } : {}) };
   }
-  return { ...base, kind, content, status: choice(v.status, ["pending", "published", "rejected", "superseded"]), category: choice(v.category, ["", "policy", "program", "event", "youth_space", "living"]), period: string(v.period), publishedAt, publishedId: nullable(v.publishedId), ...(programInfo ? { programInfo } : {}) };
+  return { ...base, kind, content, status: choice(v.status, ["pending", "published", "rejected", "superseded"]), category: choice(v.category, ["", "policy", "program", "event", "youth_space", "living"]), period: string(v.period), publishedAt, publishedId: nullable(v.publishedId), ...(base.source.name === "myseoul_program" ? { publishedSlug: nullable(v.publishedSlug ?? null) } : {}), ...(programInfo ? { programInfo } : {}), ...(image ? { image } : {}) };
 }

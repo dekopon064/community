@@ -35,6 +35,7 @@ def _load_json(relative: str) -> dict[str, Any]:
 
 
 SUMMARY_SYSTEM = _load_text("claude_prompts/summary_system.txt")
+MYSEOUL_SUMMARY_SYSTEM = _load_text("claude_prompts/myseoul_summary_system.txt")
 PROGRAM_SUMMARY_SYSTEM = _load_text("claude_prompts/program_summary_system.txt")
 TRANSLATION_SYSTEM = _load_text("claude_prompts/translation_system.txt")
 SUMMARY_SCHEMA = _load_json("claude_schemas/summary.schema.json")
@@ -110,7 +111,7 @@ def _output_config(schema: dict[str, Any]) -> dict[str, Any]:
     return {"format": {"type": "json_schema", "schema": schema}}
 
 
-def build_summary_create_kwargs(*, title: str, body: str, source_url: str | None, program: bool = False) -> dict[str, Any]:
+def build_summary_create_kwargs(*, title: str, body: str, source_url: str | None, program: bool | str = False) -> dict[str, Any]:
     user = (
         f"title: {title}\n"
         f"source_url: {source_url or ''}\n"
@@ -119,7 +120,7 @@ def build_summary_create_kwargs(*, title: str, body: str, source_url: str | None
     return {
         "model": SONNET_MODEL,
         "max_tokens": SUMMARY_MAX_TOKENS,
-        "system": PROGRAM_SUMMARY_SYSTEM if program else SUMMARY_SYSTEM,
+        "system": MYSEOUL_SUMMARY_SYSTEM if program == "myseoul" else PROGRAM_SUMMARY_SYSTEM if program else SUMMARY_SYSTEM,
         "messages": [{"role": "user", "content": user}],
         "thinking": _thinking_disabled(),
         "output_config": _output_config(SUMMARY_SCHEMA),
@@ -281,7 +282,7 @@ class ClaudeAdapter:
         body: str,
         source_url: str | None,
         title: str | None = None,
-        *, program: bool = False,
+        *, program: bool | str = False,
     ) -> tuple[str, str, str]:
         self._reset_job()
         create_kwargs = build_summary_create_kwargs(
@@ -311,6 +312,9 @@ class ClaudeAdapter:
 
     def summarize_program_ko(self, body: str, source_url: str | None, title: str | None = None) -> tuple[str, str, str]:
         return self.summarize_ko(body, source_url, title, program=True)
+
+    def summarize_myseoul_ko(self, body: str, source_url: str | None, title: str | None = None) -> tuple[str, str, str]:
+        return self.summarize_ko(body, source_url, title, program="myseoul")
 
     def translate_ja(
         self,

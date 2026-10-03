@@ -17,7 +17,9 @@ export type CandidateContent = {
   titleKo: string; summaryKo: string; contentKo: string;
   titleJa: string; summaryJa: string; contentJa: string;
 };
-export type History = { action: string; actor: string; at: string; note: string };
+export type CandidateImageSelection = { mode: "source" | "override" | "none"; url: string | null };
+export type CandidateImage = CandidateImageSelection & { sourceUrl: string | null };
+export type History = { action: string; actor: string; at: string; note: string; changeLabel?: string };
 type BaseItem = {
   id: string; revision: string; version: string;
   source: { name: string; title: string; url: string; body: string };
@@ -35,8 +37,9 @@ export type CandidateItem = BaseItem & {
   kind: "candidates"; content: CandidateContent;
   status: "pending" | "published" | "rejected" | "superseded";
   category: Category; period: string;
-  publishedAt: string | null; publishedId: string | null;
-  programInfo?: { inputFactsVersion: number; currentFactsVersion: number; inputChanged: boolean; canPublish: boolean; applicationPeriod: string; operatingPeriod: string };
+  publishedAt: string | null; publishedId: string | null; publishedSlug?: string | null;
+  image?: CandidateImage;
+  programInfo?: { inputFactsVersion: number; currentFactsVersion: number; inputChanged: boolean; canPublish: boolean; changeReviewed?: boolean; changedFields?: string[]; comparisonAvailable?: boolean; applicationPeriod: string; operatingPeriod: string };
 };
 export type ReviewItem = FactsItem | CandidateItem;
 export type ListItem = { id: string; title: string; sourceName: string; status: string; reasons: string[] };
@@ -44,7 +47,8 @@ export type Preconditions = { revision: string; version: string };
 export type ReviewCommand =
   | (Preconditions & { action: "save_facts"; facts: Facts; confirmRestored?: true })
   | (Preconditions & { action: "exclude"; note: string })
-  | (Preconditions & { action: "save_candidate"; content: CandidateContent })
+  | (Preconditions & { action: "save_candidate"; content: CandidateContent; imageSelection?: CandidateImageSelection })
+  | (Preconditions & { action: "review_change"; disposition: "no_impact" | "edited"; note: string; content?: CandidateContent })
   | (Preconditions & { action: "publish" })
   | (Preconditions & { action: "reject"; note: string });
 

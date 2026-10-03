@@ -1,3 +1,4 @@
+import { sourceImageUrl } from "../sourceImages";
 import { ReviewFailure } from "./contracts";
 import type { CandidateContent, Facts, ReviewCommand, ReviewKind } from "./contracts";
 
@@ -60,8 +61,22 @@ export function validateCommand(kind: ReviewKind, value: unknown): ReviewCommand
     return { ...preconditions, action: "save_facts", facts: validateFacts(v.facts), ...(v.confirmRestored === true ? { confirmRestored: true as const } : {}) };
   }
   if (kind === "candidates" && v.action === "save_candidate") {
-    exact(v, ["action", "revision", "version", "content"]);
-    return { ...preconditions, action: "save_candidate", content: validateContent(v.content) };
+    exact(v, ["action", "revision", "version", "content", ...(Object.hasOwn(v, "imageSelection") ? ["imageSelection"] : [])]);
+    let imageSelection;
+    if (Object.hasOwn(v, "imageSelection")) {
+      const i = object(v.imageSelection); exact(i, ["mode", "url"]);
+      if (!["source", "override", "none"].includes(String(i.mode)) ||
+          (i.mode === "override" ? !sourceImageUrl(i.url) : i.url !== null))
+        throw new ReviewFailure("invalid_input", { imageUrl: "사용 가능한 HTTPS 이미지 URL을 입력해 주세요." });
+      imageSelection = { mode: i.mode as "source" | "override" | "none", url: i.mode === "override" ? sourceImageUrl(i.url) : null };
+    }
+    return { ...preconditions, action: "save_candidate", content: validateContent(v.content), ...(imageSelection ? { imageSelection } : {}) };
+  }
+  if (kind === "candidates" && v.action === "review_change") {
+    const edited = v.disposition === "edited";
+    exact(v, ["action", "revision", "version", "disposition", "note", ...(edited ? ["content"] : [])]);
+    if (!["no_impact", "edited"].includes(String(v.disposition)) || typeof v.note !== "string" || !v.note.trim() || v.note.trim().length > 4000) throw new ReviewFailure("invalid_input");
+    return { ...preconditions, action: "review_change", disposition: edited ? "edited" : "no_impact", note: v.note.trim(), ...(edited ? { content: validateContent(v.content) } : {}) };
   }
   if (kind === "candidates" && v.action === "publish") {
     exact(v, ["action", "revision", "version"]);

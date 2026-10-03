@@ -193,7 +193,7 @@ def _process_one(
 ) -> None:
     if job.processing_stage != "ai_enrichment":
         raise ValueError("human_job_claimed")
-    if job.source_id == "seoul_reservation":
+    if job.source_id in {"seoul_reservation", "myseoul_program"}:
         # Source identity alone is not permission to consume program facts through v1.
         raise AiJobError("ai_schema_error")
     payload = job.normalized_payload or {}

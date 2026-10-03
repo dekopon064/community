@@ -32,10 +32,11 @@ export class DatabaseReviewStore implements ReviewStore {
   async execute(kind: ReviewKind, id: string, command: ReviewCommand, actor: string): Promise<ReviewItem> {
     if ((kind === "facts") !== ["save_facts", "exclude"].includes(command.action)) throw new ReviewFailure("invalid_input");
     const args: Record<string, unknown> = { p_id: id, p_revision: command.revision, p_version: command.version, p_actor: actor };
-    const names = { save_facts: "admin_review_save_facts", exclude: "admin_review_exclude", save_candidate: "admin_review_save_candidate", publish: "admin_review_publish", reject: "admin_review_reject" };
+    const names = { save_facts: "admin_review_save_facts", exclude: "admin_review_exclude", save_candidate: "admin_review_save_candidate", review_change: "admin_myseoul_review_change", publish: "admin_review_publish", reject: "admin_review_reject" };
     if (command.action === "save_facts") args.p_facts = command.facts;
-    if (command.action === "save_candidate") args.p_content = command.content;
+    if (command.action === "save_candidate") { args.p_content = command.content; if (command.imageSelection) args.p_image = command.imageSelection; }
+    if (command.action === "review_change") { args.p_disposition = command.disposition; args.p_content = command.content ?? null; }
     if ("note" in command) args.p_note = command.note;
-    return this.item(await this.invoke(command.action === "save_facts" && command.confirmRestored ? "admin_review_save_restored" : names[command.action], args), kind, id);
+    return this.item(await this.invoke(command.action === "save_candidate" && command.imageSelection ? "admin_myseoul_save_candidate_image" : command.action === "save_facts" && command.confirmRestored ? "admin_review_save_restored" : names[command.action], args), kind, id);
   }
 }

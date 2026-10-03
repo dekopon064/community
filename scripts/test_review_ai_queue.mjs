@@ -13,6 +13,8 @@ let checks=0;const eq=(a,b)=>{assert.deepEqual(a,b);checks++;};
 eq(aiStateText(row),'AI 작업 대기');eq(aiStateText({...row,retryCount:1}),'재시도 대기');eq(aiStateText({...row,status:'claimed',leaseState:'expired'}),'처리 상태 확인 필요');
 eq(aiFailureText({...row,errorCode:'RAW_SECRET'}),'실패 이유를 확인할 수 없습니다.');
 eq(JSON.stringify(aiSnapshot(snap([row]))).includes('MUST_NOT_ECHO'),false);
+eq(aiSnapshot(snap([{...row,sourceName:'myseoul_program'}])).items[0].sourceName,'myseoul_program');
+assert.throws(()=>aiSnapshot(snap([{...row,sourceName:'unknown'}])));checks++;
 for(const bad of [snap([{...row,status:'completed',completedAt:when}]),snap([{...row,sourceItemId:'bad'}]),snap([{...row,nextRetryAt:'not-time'}]),snap([],Array(101).fill(row))]){
  assert.throws(()=>aiSnapshot(bad));checks++;
 }

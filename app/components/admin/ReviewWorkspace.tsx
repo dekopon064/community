@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type { CandidateContent, Facts, ReviewItem, ReviewKind, ListItem, ReviewCommand } from "@/app/lib/review/contracts";
+import type { CandidateImageSelection, CandidateContent, Facts, ReviewItem, ReviewKind, ListItem, ReviewCommand } from "@/app/lib/review/contracts";
 import { actionText, aiStatusText, categories, failureText, reasonText, sourceLink, statusText } from "@/app/lib/review/presentation";
 import { CandidateEditor, FactsEditor, fieldClass, primaryButton, secondaryButton } from "./ReviewEditors";
+import CandidateImageEditor, { candidateImageError } from "./CandidateImageEditor";
 import ProgramReviewPanel from "./ProgramReviewPanel";
 import MySeoulReviewPanel from "./MySeoulReviewPanel";
 import { myseoulGuidance } from "@/app/lib/review/myseoul-contract";
@@ -41,6 +42,7 @@ export default function ReviewWorkspace() {
   const [myseoulId, setMyseoulId] = useState<string | null>(null);
   const [programBlocked, setProgramBlocked] = useState(false);
   const [facts, setFacts] = useState<Facts | null>(null);
+  const [imageSelection, setImageSelection] = useState<CandidateImageSelection | null>(null);
   const [content, setContent] = useState<CandidateContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -52,6 +54,7 @@ export default function ReviewWorkspace() {
     if (next.status === "excluded") { setProgramId(null); setMyseoulId(null); setNotice(next.source.name === "myseoul_program" ? "서비스 범위에서 제외했습니다. My Seoul+의 휴지통 복구는 아직 연결하지 않았습니다." : "제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다."); }
   }, []);
   const [note, setNote] = useState("");
+  const [changeNote, setChangeNote] = useState("");
   const [confirmation, setConfirmation] = useState<"publish" | "reject" | "exclude" | null>(null);
   const [reload, setReload] = useState(0);
   const [mode, setMode] = useState<"database" | "local-fixture" | null>(null);
@@ -65,9 +68,14 @@ export default function ReviewWorkspace() {
   const resultMessage = useRef<HTMLParagraphElement>(null);
   const errorMessageBox = useRef<HTMLDivElement>(null);
   const confirmationBox = useRef<HTMLElement>(null);
-  const fieldsDirty = Boolean(item && (item.kind === "facts" ? JSON.stringify(item.facts) !== JSON.stringify(facts) : JSON.stringify(item.content) !== JSON.stringify(content)));
-  const dirty = programBlocked || fieldsDirty || Boolean(note);
-  const processed = item && (item.kind === "facts" ? item.status !== "open" : item.status !== "pending");
+  const imageEditable = item?.kind === "candidates" && item.source.name === "myseoul_program" && item.status === "pending" && !item.publishedId && Boolean(item.image);
+  const imageDirty = Boolean(imageEditable && imageSelection && item?.kind === "candidates" && (item.image?.mode !== imageSelection.mode || item.image?.url !== imageSelection.url));
+  const invalidImage = imageEditable && imageSelection ? candidateImageError(imageSelection) : "";
+  const contentDirty = Boolean(item && (item.kind === "facts" ? JSON.stringify(item.facts) !== JSON.stringify(facts) : JSON.stringify(item.content) !== JSON.stringify(content)));
+  const fieldsDirty = contentDirty || imageDirty;
+  const dirty = programBlocked || fieldsDirty || Boolean(note) || Boolean(changeNote);
+  const publicChange = Boolean(item?.kind === "candidates" && item.source.name === "myseoul_program" && item.status === "published" && item.programInfo?.inputChanged);
+  const processed = item && (item.kind === "facts" ? item.status !== "open" : item.status !== "pending" && !publicChange);
   const locked = busy || Boolean(processed) || Boolean(confirmation);
 
   useEffect(() => {
@@ -87,7 +95,8 @@ export default function ReviewWorkspace() {
 
   function accept(next: ReviewItem) {
     setItem(next); setFacts(next.kind === "facts" ? next.facts : null); setContent(next.kind === "candidates" ? next.content : null);
-    setNote(""); setConfirmation(null); setErrors({});
+    setImageSelection(next.kind === "candidates" && next.image ? { mode: next.image.mode, url: next.image.url } : null);
+    setNote(""); setChangeNote(""); setConfirmation(null); setErrors({});
   }
   async function select(id: string) {
     if (busy || dirty || confirmation || kind === "ai" || kind === "trash") return;
@@ -114,10 +123,11 @@ export default function ReviewWorkspace() {
       const key = JSON.stringify(payload);
       if (payload && pendingRequest.current?.key !== key) pendingRequest.current = { key, id: crypto.randomUUID() };
       const data = await call(payload ? "/api/admin/review-trash" : `/api/admin/review/${kind}/${item.id}`, payload ? { ...payload, requestId: pendingRequest.current!.id } : command);
-      const next: ReviewItem = data.item; accept(next);
+      const next: ReviewItem = data.item; accept(next); setChangeNote("");
       setList((old) => old.flatMap((entry) => next.kind === "facts" && entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry]));
       const result = command.action === "save_facts" && next.kind === "facts" ?
         next.status === "excluded" ? "사실 저장 후 대상 부적격으로 판정되었습니다. AI는 진행하지 않습니다." : `사실을 저장했습니다. 남은 확인 사유 ${next.reasons.length}개. ${aiStatusText[next.aiStatus]} 저장 요청에서 AI를 실행하지 않았습니다.` :
+        command.action === "review_change" ? `${publicChange && command.disposition === "edited" ? "공개 내용을 수정하고 " : ""}최신 원문 대조와 처리 근거를 저장했습니다. AI 실행·재번역은 하지 않았습니다.` :
         command.action === "save_candidate" ? "수정 내용을 비공개로 저장했습니다. AI 실행·재번역은 하지 않았습니다." :
         command.action === "publish" ? "저장된 내용의 승인·게시와 이력을 기록했습니다." : command.action === "exclude" ? `제외했습니다. ${time(data.expiresAt)} (한국 시간)까지 휴지통에서 복구할 수 있습니다.` : "사유를 기록하고 후보를 반려했습니다.";
       if (command.action === "exclude") { setItem(null); setFacts(null); pendingRequest.current = null; }
@@ -140,7 +150,7 @@ export default function ReviewWorkspace() {
     <TrashPanel active={kind === "trash"} onBusy={trashBusy} onRestored={restored} />
     <AiQueuePanel active={kind === "ai"} />
     <div hidden={kind === "ai" || kind === "trash"}>
-    <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
+    <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : publicChange ? "공개된 콘텐츠의 원문 변경을 확인합니다. ‘공개 내용 수정·변경 확인’은 현재 공개 글에 직접 반영됩니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
     {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}
     {error && <div ref={errorMessageBox} tabIndex={-1} role="alert" className="my-5 scroll-mt-36 border-y border-info-rule py-5">
       <p className="max-w-3xl leading-7 text-info-status">{errorMessage}</p>
@@ -185,18 +195,30 @@ export default function ReviewWorkspace() {
           {item.kind === "candidates" && item.programInfo && <div className="my-5 border-y border-info-rule py-4 text-sm leading-6 text-info-body">
             <p>후보 입력 사실 버전 {item.programInfo.inputFactsVersion} · 현재 사실 버전 {item.programInfo.currentFactsVersion}</p>
             <p>신청 기간: {item.programInfo.applicationPeriod}</p><p>운영 기간: {item.programInfo.operatingPeriod} (한국 시간)</p>
-            {item.programInfo.inputChanged ? <p role="status" className="mt-2 text-info-status">후보 생성 후 사실이 변경되었습니다. 수정 저장·반려는 가능하지만 게시는 차단됩니다. 자동 요약·재번역은 하지 않았으며 사실과 후보의 재대조 기능은 아직 없습니다.</p> : !item.programInfo.canPublish && <p role="status" className="mt-2 text-info-status">현재 접수 상태·판정 또는 수집원 권한으로 게시할 수 없습니다. 수정 저장·반려는 계속할 수 있습니다.</p>}
+            {item.programInfo.inputChanged && item.source.name !== "myseoul_program" ? <p role="status" className="mt-2 text-info-status">후보 생성 후 사실이 변경되었습니다. 수정 저장·반려는 가능하지만 게시는 차단됩니다. 자동 요약·재번역은 하지 않았으며 사실과 후보의 재대조 기능은 아직 없습니다.</p> : !publicChange && !item.programInfo.canPublish && <p role="status" className="mt-2 text-info-status">현재 접수 상태·판정 또는 수집원 권한으로 게시할 수 없습니다. 수정 저장·반려는 계속할 수 있습니다.</p>}
           </div>}
-          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content) void submit({ ...preconditions(), action: "save_candidate", content }); }}>
+          {item.kind === "candidates" && item.source.name === "myseoul_program" && item.programInfo?.inputChanged && <section className="my-6 border-y border-info-rule py-5" aria-label="원문 변경 확인">
+            <h3 className="font-semibold">생성 이후 원문이 변경됨</h3>
+            <p className="mt-2 leading-7 text-info-body">{item.programInfo.changeReviewed ? "현재 원문과의 대조를 완료했습니다. 다른 게시 조건은 계속 검사합니다." : publicChange ? "공개 글을 자동 수정하거나 숨기지 않았습니다. 최신 원문과 두 언어의 내용을 대조해 주세요." : "후보를 자동 수정하지 않았습니다. 최신 원문을 확인하고 필요한 내용을 수정하거나 영향 없음을 기록해 주세요."}</p>
+            <p className="mt-2 text-sm text-info-body">확인할 항목: {item.programInfo.changedFields?.join(" · ") || "본문 또는 입력 사실 변경"}</p>
+            {publicChange && item.publishedSlug && <Link prefetch={false} className="mt-3 inline-flex min-h-11 items-center underline underline-offset-4" href={`/ko/info/${encodeURIComponent(item.publishedSlug)}`} target="_blank" rel="noopener noreferrer">관련 공개 콘텐츠 열기 (새 창)</Link>}
+            {!item.programInfo.comparisonAvailable && <p className="mt-2 text-sm text-info-muted">생성 당시 비교 자료가 없어 정확한 변경 비교가 불가능합니다. 공식 원문을 확인해 주세요.</p>}
+            <label htmlFor="change-review-note" className="mt-4 block font-semibold">최신 원문 대조·처리 근거</label>
+            <textarea id="change-review-note" className={fieldClass} rows={3} maxLength={4000} disabled={busy || Boolean(confirmation)} value={changeNote} onChange={e => setChangeNote(e.target.value)} />
+            <p className="mt-2 text-sm leading-6 text-info-muted">수정한 경우 아래 한국어·일본어 편집값을 함께 저장합니다.{publicChange && " 현재 공개 글에 직접 반영됩니다."}</p>
+            <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || imageDirty || Boolean(confirmation) || !changeNote.trim()} onClick={() => void submit({ ...preconditions(), action: "review_change", disposition: contentDirty ? "edited" : "no_impact", note: changeNote, ...(contentDirty && content ? { content } : {}) })}>{busy ? "처리 중…" : fieldsDirty ? publicChange ? "공개 내용 수정·변경 확인" : "수정 저장·변경 확인" : "내용 영향 없음·변경 확인"}</button>
+          </section>}
+          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation || publicChange) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content && !invalidImage) void submit({ ...preconditions(), action: "save_candidate", content, ...(imageEditable && imageSelection ? { imageSelection } : {}) }); }}>
+            {imageEditable && item.kind === "candidates" && item.image && imageSelection && <CandidateImageEditor key={item.id + item.version} saved={item.image} value={imageSelection} onChange={setImageSelection} disabled={locked} error={errors.imageUrl} title={content?.titleKo ?? item.content.titleKo} />}
             {item.kind === "facts" && facts ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor value={content} onChange={setContent} errors={errors} disabled={locked} />}
             {fieldsDirty && <p className="mt-6 leading-7 text-info-status">아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요.</p>}
             {!processed && <div className="my-7 flex flex-wrap gap-3">
-              <button type="submit" disabled={busy || Boolean(confirmation) || (!fieldsDirty && !(item.kind === "facts" && item.restoredReviewPending))} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
+              <button type="submit" disabled={publicChange || busy || Boolean(invalidImage) || Boolean(confirmation) || (!fieldsDirty && !(item.kind === "facts" && item.restoredReviewPending))} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
               {dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(""); setNotice(""); }}>수정 취소</button>}
-              {item.kind === "candidates" && <button type="button" className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || (item.kind === "candidates" && Boolean(item.programInfo && !item.programInfo.canPublish))} onClick={() => setConfirmation("publish")}>승인하고 게시</button>}
+              {item.kind === "candidates" && item.status === "pending" && <button type="button" className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || (item.kind === "candidates" && Boolean(item.programInfo && !item.programInfo.canPublish))} onClick={() => setConfirmation("publish")}>승인하고 게시</button>}
             </div>}
           </form>
-          {!processed && (item.kind === "candidates" || item.excludeAllowed !== false) && <section className="border-t border-info-rule pt-6">
+          {!processed && !publicChange && (item.kind === "candidates" || item.excludeAllowed !== false) && <section className="border-t border-info-rule pt-6">
               {item.kind === "facts" && <><h3 className="font-bold">빠른 제외</h3><p className="mt-2 text-sm leading-6 text-info-muted">사유를 자동 기록하고 휴지통으로 이동합니다. 72시간 이내에 복구할 수 있습니다.</p>
               <div className="my-4 flex flex-wrap gap-3">{Object.entries(quickReasons).map(([code, label]) => <button key={code} type="button" className={secondaryButton} disabled={locked || fieldsDirty || Boolean(note)} onClick={() => void submit({ ...preconditions(), action: "exclude", reasonCode: code as QuickReason, note: "" })}>{label} · 제외</button>)}</div></>}
             <h3 className="text-lg font-bold">{item.kind === "facts" ? "부적격으로 제외" : "후보 반려"}</h3>
@@ -214,7 +236,7 @@ export default function ReviewWorkspace() {
           {item.kind === "candidates" && item.publishedAt && <p className="mt-7 text-info-body">{mode === "local-fixture" ? "시험 게시" : "게시"} 시각: {time(item.publishedAt)} (한국 시간)</p>}
           <details className="mt-10 border-t border-info-rule pt-4" open={item.history.length > 0}>
             <summary className="min-h-11 cursor-pointer py-2 font-semibold">저장·처리 이력 ({item.history.length})</summary>
-            {item.history.length ? <ol className="divide-y divide-info-rule">{item.history.map((entry, index) => <li key={index} className="py-4 text-sm leading-6"><p className="font-semibold">{actionText[entry.action] ?? "처리 기록"} · {time(entry.at)} (한국 시간)</p><p className="break-all text-info-muted">작업 계정: {entry.actor}</p>{entry.note && <p className="mt-1 whitespace-pre-wrap break-words text-info-body">{entry.note}</p>}</li>)}</ol> : <p className="py-3 text-info-muted">아직 저장·처리 이력이 없습니다.</p>}
+            {item.history.length ? <ol className="divide-y divide-info-rule">{item.history.map((entry, index) => <li key={index} className="py-4 text-sm leading-6"><p className="font-semibold">{entry.changeLabel ?? actionText[entry.action] ?? "처리 기록"} · {time(entry.at)} (한국 시간)</p><p className="break-all text-info-muted">작업 계정: {entry.actor}</p>{entry.note && <p className="mt-1 whitespace-pre-wrap break-words text-info-body">{entry.note}</p>}</li>)}</ol> : <p className="py-3 text-info-muted">아직 저장·처리 이력이 없습니다.</p>}
           </details>
         </>}
       </section>

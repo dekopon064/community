@@ -52,6 +52,7 @@ ALLOWED_PERMISSION_TRANSITIONS: Final[dict[str, frozenset[str]]] = {
 
 _CANONICAL_BY_CURATION: Final = {
     "seoul_reservation": "seoul_reservation",
+    "myseoul_program": "myseoul_program",
     LEGACY_POLICY_CURATION_SOURCE: CANONICAL_POLICY_SOURCE,
     CONTENT_CURATION_SOURCE: CANONICAL_CONTENT_SOURCE,
     CANONICAL_POLICY_SOURCE: CANONICAL_POLICY_SOURCE,
@@ -60,6 +61,7 @@ _CANONICAL_BY_CURATION: Final = {
 
 _CURATION_BY_CANONICAL: Final = {
     "seoul_reservation": "seoul_reservation",
+    "myseoul_program": "myseoul_program",
     CANONICAL_POLICY_SOURCE: LEGACY_POLICY_CURATION_SOURCE,
     CANONICAL_CONTENT_SOURCE: CONTENT_CURATION_SOURCE,
 }
