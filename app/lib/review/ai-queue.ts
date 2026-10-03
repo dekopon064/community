@@ -15,7 +15,7 @@ export const aiErrors: Record<string,string> = {
 export type AiJob = {
  jobId:string;sourceItemId:string;revision:string;currentRevision:boolean;
  status:"queued"|"claimed"|"failed"|"completed"|"cancelled";
- title:string;sourceName:"youthcenter_policy"|"youthcenter_content"|"seoul_reservation";
+ title:string;sourceName:"youthcenter_policy"|"youthcenter_content"|"seoul_reservation"|"myseoul_program";
  completedAt:string|null;retryCount:number;nextRetryAt:string|null;
  leaseState:"none"|"active"|"expired"|"unknown";errorCode:string|null;
  resultState:"ready"|"missing"|"processed"|"source_changed"|"input_changed"|"unavailable"|null;
@@ -32,7 +32,7 @@ function parseJob(x:unknown):AiJob{
  const o=object(x),jobId=str(o.jobId,36),sourceItemId=str(o.sourceItemId,36),revision=str(o.revision,64);
  if(!jobUuid.test(jobId)||!jobUuid.test(sourceItemId)||!/^[a-f0-9]{64}$/.test(revision)||
  typeof o.currentRevision!=="boolean"||!["queued","claimed","failed","completed","cancelled"].includes(String(o.status))||
- !["youthcenter_policy","youthcenter_content","seoul_reservation"].includes(String(o.sourceName))||
+ !["youthcenter_policy","youthcenter_content","seoul_reservation","myseoul_program"].includes(String(o.sourceName))||
  !Number.isSafeInteger(o.retryCount)||(o.retryCount as number)<0||
  !["none","active","expired","unknown"].includes(String(o.leaseState))||
  o.resultState!==null&&!["ready","missing","processed","source_changed","input_changed","unavailable"].includes(String(o.resultState)))

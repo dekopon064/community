@@ -25,6 +25,7 @@ export const reasonPatchFields: Record<string,string[]>={
 };
 for(const code of ["period_missing_or_unparsed","body_period_needs_confirmation","period_order_conflict","body_api_period_conflict","invalid_body_date","date_weekday_conflict"])reasonPatchFields[code]=["periods","period_evidence"];
 export function reviewDetailPath(kind:string,id:string,source:string) {
+ if(kind==="facts"&&source==="myseoul_program")return `/api/admin/myseoul-review/${id}`;
  return kind==="facts"&&source==="seoul_reservation"?`/api/admin/program-review/${id}`:`/api/admin/review/${kind}/${id}`;
 }
 export function programPatch(saved:ProgramFacts,draft:ProgramFacts,editable:string[]) {

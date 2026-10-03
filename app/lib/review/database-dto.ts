@@ -38,7 +38,7 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
   const publishedAt = nullable(v.publishedAt);
   if (publishedAt !== null && Number.isNaN(Date.parse(publishedAt))) throw new ReviewFailure("unavailable");
   let programInfo;
-  if (base.source.name === "seoul_reservation") {
+  if (["seoul_reservation", "myseoul_program"].includes(base.source.name)) {
     const p = object(v.programInfo);
     if (!Number.isSafeInteger(p.inputFactsVersion) || Number(p.inputFactsVersion) < 1 || !Number.isSafeInteger(p.currentFactsVersion) || Number(p.currentFactsVersion) < 1 ||
         typeof p.inputChanged !== "boolean" || typeof p.canPublish !== "boolean" || p.inputChanged !== (p.inputFactsVersion !== p.currentFactsVersion) || (p.inputChanged && p.canPublish)) throw new ReviewFailure("unavailable");

@@ -6,6 +6,8 @@ import type { CandidateContent, Facts, ReviewItem, ReviewKind, ListItem, ReviewC
 import { actionText, aiStatusText, categories, failureText, reasonText, sourceLink, statusText } from "@/app/lib/review/presentation";
 import { CandidateEditor, FactsEditor, fieldClass, primaryButton, secondaryButton } from "./ReviewEditors";
 import ProgramReviewPanel from "./ProgramReviewPanel";
+import MySeoulReviewPanel from "./MySeoulReviewPanel";
+import { myseoulGuidance } from "@/app/lib/review/myseoul-contract";
 import AiQueuePanel from "./AiQueuePanel";
 import TrashPanel from "./TrashPanel";
 import { quickReasons } from "@/app/lib/review/trash";
@@ -36,6 +38,7 @@ export default function ReviewWorkspace() {
   const [list, setList] = useState<ListItem[]>([]);
   const [item, setItem] = useState<ReviewItem | null>(null);
   const [programId, setProgramId] = useState<string | null>(null);
+  const [myseoulId, setMyseoulId] = useState<string | null>(null);
   const [programBlocked, setProgramBlocked] = useState(false);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [content, setContent] = useState<CandidateContent | null>(null);
@@ -44,9 +47,9 @@ export default function ReviewWorkspace() {
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
-  const programResult = useCallback((next: { id: string; status: string; source: { title: string }; result: { reasons: string[] } }) => {
+  const programResult = useCallback((next: { id: string; status: string; source: { title: string; name?: string }; result: { reasons: string[] } }) => {
     setList(old => old.flatMap(entry => entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, title: next.source.title, status: next.status, reasons: next.status === "open" ? next.result.reasons : [] } : entry]));
-    if (next.status === "excluded") { setProgramId(null); setNotice("제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다."); }
+    if (next.status === "excluded") { setProgramId(null); setMyseoulId(null); setNotice(next.source.name === "myseoul_program" ? "서비스 범위에서 제외했습니다. My Seoul+의 휴지통 복구는 아직 연결하지 않았습니다." : "제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다."); }
   }, []);
   const [note, setNote] = useState("");
   const [confirmation, setConfirmation] = useState<"publish" | "reject" | "exclude" | null>(null);
@@ -90,6 +93,8 @@ export default function ReviewWorkspace() {
     if (busy || dirty || confirmation || kind === "ai" || kind === "trash") return;
     const entry = list.find(row => row.id === id);
     setError(""); setNotice(""); setItem(null);
+    if (kind === "facts" && entry?.sourceName === "myseoul_program") { setProgramId(null); setMyseoulId(id); return; }
+    setMyseoulId(null);
     if (kind === "facts" && entry?.sourceName === "seoul_reservation") { setProgramId(id); return; }
     setProgramId(null); setBusy(true);
     try { const data = await call(reviewDetailPath(kind, id, entry?.sourceName ?? "")); accept(data.item); }
@@ -98,7 +103,7 @@ export default function ReviewWorkspace() {
   }
   function switchKind(next: ReviewKind | "ai" | "trash") {
     if (busy || dirty || confirmation || next === kind) return;
-    setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(next !== "ai" && next !== "trash");
+    setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setMyseoulId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(next !== "ai" && next !== "trash");
   }
   async function submit(command: ReviewCommand & { reasonCode?: QuickReason }) {
     if (!item || busy || sending.current) return;
@@ -152,20 +157,20 @@ export default function ReviewWorkspace() {
         <h2 className="mb-3 text-lg font-bold">{kind === "facts" ? "사실 확인 항목" : "결과 후보"}</h2>
         {!list.length && !error && <p className="py-6 leading-7 text-info-muted">현재 검토할 항목이 없습니다. 새 항목이 준비되면 이 목록에서 확인할 수 있습니다.</p>}
         <ul className="divide-y divide-info-rule border-y border-info-rule">
-          {list.map((entry) => <li key={entry.id}><button disabled={busy || dirty || Boolean(confirmation)} aria-current={(item?.id ?? programId) === entry.id ? "true" : undefined} className={`w-full px-3 py-5 text-left hover:bg-info-surface disabled:cursor-not-allowed disabled:opacity-60 ${(item?.id ?? programId) === entry.id ? "bg-info-surface" : ""}`} onClick={() => select(entry.id)}>
+          {list.map((entry) => <li key={entry.id}><button disabled={busy || dirty || Boolean(confirmation)} aria-current={(item?.id ?? myseoulId ?? programId) === entry.id ? "true" : undefined} className={`w-full px-3 py-5 text-left hover:bg-info-surface disabled:cursor-not-allowed disabled:opacity-60 ${(item?.id ?? myseoulId ?? programId) === entry.id ? "bg-info-surface" : ""}`} onClick={() => select(entry.id)}>
             <span className="block text-sm text-info-status">{statusText[entry.status] ?? "상태 확인 필요"}</span>
             <span className="mt-2 block break-keep font-semibold leading-6">{entry.title}</span>
-            <span className="mt-2 block text-sm text-info-muted">{entry.sourceName === "seoul_reservation" ? "서울 공공서비스예약" : entry.sourceName}</span>
-            {entry.reasons.length > 0 && <span className="mt-2 block text-sm leading-6 text-info-body">{entry.sourceName === "seoul_reservation" ? programReasonText[entry.reasons[0]] ?? "원문에서 추가 사실을 확인해 주세요." : reasonText(entry.reasons[0]).title}{entry.reasons.length > 1 ? ` 외 ${entry.reasons.length - 1}개` : ""}</span>}
+            <span className="mt-2 block text-sm text-info-muted">{entry.sourceName === "myseoul_program" ? "마이서울플러스" : entry.sourceName === "seoul_reservation" ? "서울 공공서비스예약" : entry.sourceName}</span>
+            {entry.reasons.length > 0 && <span className="mt-2 block text-sm leading-6 text-info-body">{entry.sourceName === "myseoul_program" ? myseoulGuidance(entry.reasons[0]) : entry.sourceName === "seoul_reservation" ? programReasonText[entry.reasons[0]] ?? "원문에서 추가 사실을 확인해 주세요." : reasonText(entry.reasons[0]).title}{entry.reasons.length > 1 ? ` 외 ${entry.reasons.length - 1}개` : ""}</span>}
           </button></li>)}
         </ul>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || offset === 0} onClick={() => { setOffset((n) => Math.max(0, n - 25)); setItem(null); setProgramId(null); setLoading(true); }}>이전 목록</button>
-          <button className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || !hasMore} onClick={() => { setOffset((n) => n + 25); setItem(null); setProgramId(null); setLoading(true); }}>다음 목록</button>
+          <button className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || offset === 0} onClick={() => { setOffset((n) => Math.max(0, n - 25)); setItem(null); setProgramId(null); setMyseoulId(null); setLoading(true); }}>이전 목록</button>
+          <button className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || !hasMore} onClick={() => { setOffset((n) => n + 25); setItem(null); setProgramId(null); setMyseoulId(null); setLoading(true); }}>다음 목록</button>
         </div>
       </aside>
       <section aria-label="선택한 항목 검토" aria-busy={busy} className="min-w-0">
-        {programId ? <ProgramReviewPanel key={programId} id={programId} onBlocked={setProgramBlocked} onResult={programResult}/> : !item ? <p className="py-6 leading-7 text-info-muted">{busy ? "항목을 불러오는 중입니다." : "목록에서 항목을 선택하면 원문과 검토할 내용을 확인할 수 있습니다."}</p> : <>
+        {myseoulId ? <MySeoulReviewPanel key={myseoulId} id={myseoulId} onBlocked={setProgramBlocked} onResult={programResult}/> : programId ? <ProgramReviewPanel key={programId} id={programId} onBlocked={setProgramBlocked} onResult={programResult}/> : !item ? <p className="py-6 leading-7 text-info-muted">{busy ? "항목을 불러오는 중입니다." : "목록에서 항목을 선택하면 원문과 검토할 내용을 확인할 수 있습니다."}</p> : <>
           <header className="border-b border-info-rule pb-5">
             <p className="text-sm text-info-status">{statusText[item.status]}</p>
             <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>

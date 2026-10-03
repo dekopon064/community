@@ -4,7 +4,7 @@ import {aiSnapshot,aiStateText,aiFailureText,observeAi} from "@/app/lib/review/a
 import type {AiSnapshot,Observation} from "@/app/lib/review/ai-queue";
 import {failureText} from "@/app/lib/review/presentation";
 import {secondaryButton} from "./ReviewEditors";
-const sources={youthcenter_policy:"온통청년 정책",youthcenter_content:"온통청년 콘텐츠",seoul_reservation:"서울 공공서비스예약"};
+const sources={youthcenter_policy:"온통청년 정책",youthcenter_content:"온통청년 콘텐츠",seoul_reservation:"서울 공공서비스예약",myseoul_program:"마이서울플러스"};
 function time(value:string){return new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"short"}).format(new Date(value));}
 export default function AiQueuePanel({active}:{active:boolean}){
  const [snapshot,setSnapshot]=useState<AiSnapshot|null>(null),[offset,setOffset]=useState(0);
