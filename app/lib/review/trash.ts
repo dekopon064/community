@@ -5,13 +5,29 @@ import { programItem } from "./program-store";
 
 export const quickReasons = { service_not_suitable: "서비스에 적합하지 않음", region_not_suitable: "대상 지역이 아님" } as const;
 export type QuickReason = keyof typeof quickReasons;
-export type TrashItem = { id: string; sourceItemId: string; revision: string; version: string; sourceName: string; title: string; reasonCode: QuickReason | "custom"; note: string; excludedAt: string; expiresAt: string; canRestore: boolean; blockReason: string | null };
+export type TrashItem = { id: string; sourceItemId: string; revision: string; version: string; dismissVersion?: string; sourceName: string; title: string; reasonCode: QuickReason | "custom"; note: string; excludedAt: string; expiresAt: string; canRestore: boolean; blockReason: string | null };
 export type TrashList = { serverNow: string; items: TrashItem[] };
 export type TrashCommand =
   | { action: "exclude"; id: string; revision: string; version: string; requestId: string; reasonCode: QuickReason | "custom"; note: string }
   | { action: "restore"; episodeId: string; revision: string; version: string; requestId: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const digest = /^[a-f0-9]{64}$/;
+export type DismissCommand = { action: "dismiss" | "empty"; episodeId: string | null; version: string; requestId: string };
+export type DismissPreview = { count: number; version: string };
+export function dismissPreview(input: unknown): DismissPreview {
+  const v = obj(input);
+  if (!Number.isSafeInteger(v.count) || Number(v.count) < 0 || !digest.test(str(v.version, 64))) throw new ReviewFailure("unavailable");
+  return { count: Number(v.count), version: String(v.version) };
+}
+export function dismissCommand(input: unknown): DismissCommand {
+  try {
+    const v = obj(input);
+    if (Object.keys(v).length !== 4 || Object.keys(v).some(k => !["action", "episodeId", "version", "requestId"].includes(k)) ||
+      !["dismiss", "empty"].includes(String(v.action)) || !digest.test(str(v.version, 64)) || !uuid.test(str(v.requestId, 36)) ||
+      (v.action === "empty" ? v.episodeId !== null : !uuid.test(str(v.episodeId, 36)))) throw new ReviewFailure("invalid_input");
+    return { action: v.action as DismissCommand["action"], episodeId: v.episodeId as string | null, version: String(v.version), requestId: String(v.requestId) };
+  } catch { throw new ReviewFailure("invalid_input"); }
+}
 function obj(v: unknown) { if (!v || typeof v !== "object" || Array.isArray(v)) throw new ReviewFailure("unavailable"); return v as Record<string, unknown>; }
 function str(v: unknown, max = 60000) { if (typeof v !== "string" || v.length > max) throw new ReviewFailure("unavailable"); return v; }
 function date(v: unknown) { const s = str(v, 100); if (!Number.isFinite(Date.parse(s))) throw new ReviewFailure("unavailable"); return s; }
@@ -42,7 +58,8 @@ export function trashList(input: unknown): TrashList {
     if (blockReason !== null && !["source_missing", "source_changed", "processing_active", "already_published", "state_changed"].includes(blockReason) || e.canRestore !== (blockReason === null)) throw new ReviewFailure("unavailable");
     const excludedAt = date(e.excludedAt), expiresAt = date(e.expiresAt);
     if (Date.parse(expiresAt) - Date.parse(excludedAt) !== 72 * 3600000) throw new ReviewFailure("unavailable");
-    return { id: String(e.id), sourceItemId: String(e.sourceItemId), revision: String(e.revision), version: String(e.version), sourceName: str(e.sourceName, 100), title: str(e.title), reasonCode: e.reasonCode as TrashItem["reasonCode"], note: str(e.note, 4000), excludedAt, expiresAt, canRestore: e.canRestore, blockReason };
+    if (e.dismissVersion !== undefined && !digest.test(str(e.dismissVersion, 64))) throw new ReviewFailure("unavailable");
+    return { id: String(e.id), sourceItemId: String(e.sourceItemId), revision: String(e.revision), version: String(e.version), ...(e.dismissVersion === undefined ? {} : { dismissVersion: String(e.dismissVersion) }), sourceName: str(e.sourceName, 100), title: str(e.title), reasonCode: e.reasonCode as TrashItem["reasonCode"], note: str(e.note, 4000), excludedAt, expiresAt, canRestore: e.canRestore, blockReason };
   });
   return { serverNow, items };
 }
@@ -61,6 +78,12 @@ export class TrashStore {
     } catch (e) { if (e instanceof ReviewFailure) throw e; throw new ReviewFailure("unavailable"); }
   }
   async list(offset: number) { return trashList(await this.invoke("admin_review_trash", { p_offset: offset, p_limit: 25 })); }
+  async preview() { return dismissPreview(await this.invoke("admin_review_trash_dismiss_preview", {})); }
+  async dismiss(command: DismissCommand, actor: string) {
+    const v = obj(await this.invoke("admin_review_trash_dismiss", { p_action: command.action, p_episode: command.episodeId, p_version: command.version, p_actor: actor, p_request: command.requestId }));
+    if (v.action !== command.action || v.episodeId !== command.episodeId || !Number.isSafeInteger(v.count) || Number(v.count) < 1 || Number(v.count) > 5000 || command.action === "dismiss" && v.count !== 1) throw new ReviewFailure("unavailable");
+    return { action: command.action, episodeId: command.episodeId, count: Number(v.count) };
+  }
   async execute(command: TrashCommand, actor: string) {
     const args: Record<string, unknown> = { p_revision: command.revision, p_version: command.version, p_actor: actor, p_request: command.requestId };
     if (command.action === "exclude") Object.assign(args, { p_id: command.id, p_reason: command.reasonCode, p_note: command.note });

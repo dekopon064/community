@@ -27,6 +27,8 @@ export const aiStatusText: Record<string, string> = {
 };
 export const actionText: Record<string, string> = { save_facts: "사실 저장·재평가", exclude: "부적격 제외", save_candidate: "비공개 수정 저장", publish: "승인하고 게시", reject: "반려" };
 export const failureText: Record<string, string> = {
+  trash_targets_changed: "삭제 대상이 변경되었습니다. 새로고침한 뒤 대상과 건수를 다시 확인해 주세요.",
+  too_many_trash_items: "한 번에 비울 수 있는 항목은 5,000개까지입니다. 개별 삭제로 항목을 줄인 뒤 다시 확인해 주세요.",
   program_input_changed: "후보 생성 이후 프로그램 사실이 변경되어 게시할 수 없습니다. 자동 요약·재번역은 실행하지 않았습니다. 현재 사실과 후보의 대조가 필요합니다.",
   program_unavailable: "현재 프로그램의 접수 상태·검토 결과 또는 수집원 권한 때문에 게시할 수 없습니다. 후보는 비공개로 유지됩니다.",
   not_connected: "관리 데이터 연결 설정을 확인할 수 없습니다. 서버의 DB 모드와 키 설정이 준비되어야 항목을 조회하거나 처리할 수 있습니다.",
