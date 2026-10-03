@@ -36,8 +36,9 @@ export class MySeoulReviewStore {
   }
   async get(id: string) { return myseoulItem(await this.invoke("admin_myseoul_program_detail", { p_id: id }), id); }
   async execute(id: string, c: MySeoulCommand, actor: string) {
-    const args: Record<string, unknown> = { p_id: id, p_revision: c.revision, p_version: c.version, p_note: c.note, p_actor: actor };
-    if (c.action === "save_facts") { args.p_patch = c.patch; args.p_resolve = c.resolve; }
-    return myseoulItem(await this.invoke(c.action === "save_facts" ? "admin_myseoul_program_save" : "admin_myseoul_program_exclude", args), id);
+    const args: Record<string, unknown> = { p_id: id, p_revision: c.revision, p_version: c.version, p_actor: actor };
+    if (c.action === "save_facts") args.p_patch = c.patch;
+    else args.p_note = c.note;
+    return myseoulItem(await this.invoke(c.action === "save_facts" ? "admin_myseoul_program_save_v2" : "admin_myseoul_program_exclude", args), id);
   }
 }

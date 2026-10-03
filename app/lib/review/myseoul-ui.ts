@@ -1,5 +1,5 @@
 import { ReviewFailure } from './contracts';
-import { myseoulCommand, myseoulReasonFields } from './myseoul-contract';
+import { myseoulCommand } from './myseoul-contract';
 import type { MySeoulFacts, MySeoulField, MySeoulPeriod } from './myseoul-contract';
 
 export const myseoulLabels: Record<MySeoulField, string> = {
@@ -13,8 +13,8 @@ export const myseoulLabels: Record<MySeoulField, string> = {
 };
 export const myseoulChoices: Record<string, Record<string, string>> = {
   application_actor: { unknown: '확인 필요', individual: '개인 신청 가능', institution_only: '개인 신청 불가 · 기관 전용' },
-  delivery_mode: { unknown: '확인 필요', offline: '오프라인', online: '온라인', mixed: '온·오프라인 혼합', course_unresolved: '과정별 방식 확인 필요' },
-  activity_region: { unknown: '확인 필요', capital: '서울·경기·인천', noncapital: '수도권 외' },
+  delivery_mode: { offline: '오프라인', online: '온라인', mixed: '온·오프라인 혼합' },
+  activity_region: { capital: '서울·경기·인천' },
   residence_scope: { unknown: '확인 필요', nationwide: '전국·지역 제한 없음', includes_capital: '수도권 포함', capital: '수도권 거주자', noncapital_only: '비수도권 거주자 전용' },
   public_category: { unknown: '확인 필요', program: '프로그램', event: '행사' },
 };
@@ -31,13 +31,41 @@ export function myseoulPatch(saved: MySeoulFacts, draft: MySeoulFacts, editable:
     return [k, value];
   }).filter(([k, v]) => JSON.stringify(saved[k as string]) !== JSON.stringify(v)));
 }
-export function buildMySeoulSave(item: { revision: string; version: string; facts: MySeoulFacts; editableFields: string[]; result: { reasons: string[] } }, draft: MySeoulFacts, note: string, resolve: string[]) {
-  const patch = myseoulPatch(item.facts, draft, item.editableFields);
-  if (!Object.keys(patch).length) throw new ReviewFailure('invalid_input', { form: '확인한 사실을 변경해 주세요.' });
-  if (resolve.some(code => !item.result.reasons.includes(code) || !myseoulReasonFields(code).some(field => Object.hasOwn(patch, field)))) {
-    throw new ReviewFailure('invalid_input', { form: '확인할 사유와 관련된 사실을 변경해 주세요.' });
+export function reviewPeriodAxes(reasons: string[]): ('application' | 'operation')[] {
+  return (['application', 'operation'] as const).filter(axis => reasons.some(r => r === `${axis}_period_unknown` || r.endsWith(`:${axis}`) || r === 'source_change_conflict:periods' || r === 'application_state_unknown' || r === 'source_fact_conflict:status'));
+}
+export function visibleMySeoulFields(editable: string[], facts: MySeoulFacts): MySeoulField[] {
+  return (Object.keys(myseoulLabels) as MySeoulField[]).filter(k => editable.includes(k) && k !== 'activity_evidence' && !(facts.delivery_mode === 'online' && ['activity_region', 'venue'].includes(k)));
+}
+type SaveItem = { revision: string; version: string; facts: MySeoulFacts; editableFields: string[]; result: { reasons: string[] } };
+export function buildMySeoulSave(item: SaveItem, draft: MySeoulFacts, fields?: string[], axes?: ('application' | 'operation')[]) {
+  const allowed = visibleMySeoulFields(item.editableFields, draft);
+  if (fields?.some(k => !allowed.includes(k as MySeoulField))) throw new ReviewFailure('invalid_input');
+  const patch = fields ? Object.fromEntries(fields.map(k => [k, draft[k]])) : myseoulPatch(item.facts, draft, allowed);
+  if (patch.periods) {
+    const periods = patch.periods as MySeoulPeriods;
+    const selected = axes ?? reviewPeriodAxes(item.result.reasons).filter(axis => fields || JSON.stringify(periods[axis]) !== JSON.stringify((item.facts.periods as MySeoulPeriods)[axis]));
+    if (selected.some(axis => !reviewPeriodAxes(item.result.reasons).includes(axis))) throw new ReviewFailure('invalid_input');
+    patch.periods = Object.fromEntries(selected.map(axis => [axis, periods[axis]]));
+    if (!selected.length) delete patch.periods;
   }
-  return myseoulCommand({ action: 'save_facts', revision: item.revision, version: item.version, patch, resolve, note });
+  if (!Object.keys(patch).length) throw new ReviewFailure('invalid_input', { form: '확인할 사실을 선택해 주세요.' });
+  return myseoulCommand({ action: 'save_facts', revision: item.revision, version: item.version, patch });
+}
+// A scoped save must not discard another issue's unsubmitted edits.
+export function mergeMySeoulDraft(saved: MySeoulFacts, draft: MySeoulFacts, next: MySeoulFacts, patch: Partial<Record<MySeoulField, unknown>>) {
+  const merged = structuredClone(next);
+  for (const key of Object.keys(myseoulLabels) as MySeoulField[]) {
+    if (key === 'periods') {
+      const submitted = (patch.periods ?? {}) as Partial<MySeoulPeriods>;
+      for (const axis of ['application', 'operation'] as const) {
+        if (!Object.hasOwn(submitted, axis) && JSON.stringify((saved.periods as MySeoulPeriods)[axis]) !== JSON.stringify((draft.periods as MySeoulPeriods)[axis])) {
+          (merged.periods as MySeoulPeriods)[axis] = structuredClone((draft.periods as MySeoulPeriods)[axis]);
+        }
+      }
+    } else if (!Object.hasOwn(patch, key) && JSON.stringify(saved[key]) !== JSON.stringify(draft[key])) merged[key] = structuredClone(draft[key]);
+  }
+  return merged;
 }
 export function displayMySeoulValue(key: string, value: unknown): string {
   if (key === 'periods') {

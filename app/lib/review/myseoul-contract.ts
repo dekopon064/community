@@ -8,7 +8,7 @@ type Endpoint = { value: string; precision: "day" | "minute" };
 export type MySeoulPeriod = { raw: string; status: string; endpoints: Endpoint[]; origin: string; label: string };
 export type MySeoulIssue = { code: string; field: string; evidence: string[] };
 export type MySeoulFacts = Record<string, unknown>;
-export type MySeoulCommand = { action: "save_facts" | "exclude"; revision: string; version: string; note: string; patch?: Partial<Record<MySeoulField, unknown>>; resolve?: string[] };
+export type MySeoulCommand = { action: "save_facts"; revision: string; version: string; patch: Partial<Record<MySeoulField, unknown>> } | { action: "exclude"; revision: string; version: string; note: string };
 
 export function myObject(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new ReviewFailure("invalid_input");
@@ -96,30 +96,36 @@ export function myseoulFacts(raw: unknown): MySeoulFacts {
 export function myseoulCommand(raw: unknown): MySeoulCommand {
   const o = myObject(raw), action = o.action;
   if (!["save_facts", "exclude"].includes(String(action))) throw new ReviewFailure("invalid_input");
-  exact(o, action === "save_facts" ? ["action", "revision", "version", "note", "patch", "resolve"] : ["action", "revision", "version", "note"]);
-  const revision = myText(o.revision, 64), version = myText(o.version, 64), note = myText(o.note, 4000).trim();
-  if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version) || !note) throw new ReviewFailure("invalid_input");
-  const command: MySeoulCommand = { action: action as MySeoulCommand["action"], revision, version, note };
+  exact(o, action === "save_facts" ? ["action", "revision", "version", "patch"] : ["action", "revision", "version", "note"]);
+  const revision = myText(o.revision, 64), version = myText(o.version, 64);
+  if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version)) throw new ReviewFailure("invalid_input");
   if (action === "save_facts") {
     const patch = myObject(o.patch);
     if (!Object.keys(patch).length || Object.keys(patch).some(k => !(myseoulPatchFields as readonly string[]).includes(k))) throw new ReviewFailure("invalid_input");
-    command.patch = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, fieldValue(k, v)]));
-    command.resolve = myStrings(o.resolve, 30);
+    return { action, revision, version, patch: Object.fromEntries(Object.entries(patch).map(([k, v]) => {
+      if (k !== 'periods') return [k, fieldValue(k, v)];
+      const axes = myObject(v);
+      if (!Object.keys(axes).length || Object.keys(axes).some(axis => !['application', 'operation'].includes(axis))) throw new ReviewFailure('invalid_input');
+      const checked = fieldValue(k, { application: [], operation: [], ...axes }) as Record<string, unknown>;
+      return [k, Object.fromEntries(Object.keys(axes).map(axis => [axis, checked[axis]]))];
+    })) };
   }
-  return command;
+  const note = myText(o.note, 4000).trim();
+  if (!note) throw new ReviewFailure('invalid_input');
+  return { action: 'exclude', revision, version, note };
 }
 
 const guidance: Record<string, string> = {
   description_missing: "공식 원문에서 프로그램 설명을 확인해 입력해 주세요.", target_missing: "명시된 참여 대상을 확인해 주세요.",
   application_actor_unknown: "개인이 신청 가능한지 원문 조건을 확인해 주세요.", delivery_mode_unknown: "실제 진행 방식과 장소를 확인해 주세요.", course_modes_unresolved: "과정별 온라인·현장 안내를 대조해 주세요.",
-  activity_region_unknown: "집결지·기관 소재지와 실제 개최지를 구분해 수도권 여부와 근거를 입력해 주세요.", online_residence_unknown: "온라인 참여자의 거주 지역 조건을 확인해 주세요.",
+  activity_region_unknown: "실제 개최 장소와 주소를 확인해 주세요. 집결지나 운영기관 주소와 구분합니다.", online_residence_unknown: "온라인 참여자의 거주 지역 조건을 확인해 주세요.",
   category_unresolved: "주요 활동의 근거에 따라 프로그램 또는 행사를 확인해 주세요.", nationality_or_visa_unresolved: "명시된 체류·국적 자격을 보존하고 일본인 거주자의 해당 조건 충족 근거를 기록해 주세요.",
-  application_period_unknown: "신청 기간의 원문과 날짜·시각 정밀도를 확인해 주세요.", operation_period_unknown: "운영 기간·회차·집결 시간의 차이를 확인해 주세요.",
+  application_period_unknown: "신청 시작일과 마감일을 확인해 입력해 주세요.", operation_period_unknown: "교육·행사의 날짜와 시작·종료 시각을 확인해 주세요. 집결 시각은 시작 시각과 구분합니다.",
   application_method_missing: "신청 방법을 확인해 주세요. 별도 신청 폼은 필수가 아닙니다.", fee_unknown: "수강료와 별도 비용을 확인해 주세요.", fee_components_unresolved: "복합 비용의 항목별 근거를 확인해 주세요. 금액을 임의 분할하지 않습니다.", application_state_unknown: "현재 신청 상태와 기간을 대조해 주세요.",
 };
 export function myseoulGuidance(code: string) {
-  if (code.startsWith("source_change_conflict:")) return "새 원문과 이전 운영자 보완값이 다릅니다. 최신 원문을 대조하고 해당 사실과 판단 근거를 입력해 주세요.";
-  if (code.startsWith("source_fact_conflict:")) return `상단과 본문의 ${code.endsWith("application_method") ? "신청 방법" : code.endsWith("operation") ? "운영 기간" : code.endsWith("application") ? "신청 기간" : "해당 사실"}이 다릅니다. 양쪽 근거를 대조하고 변경 이유를 기록해 주세요.`;
+  if (code.startsWith("source_change_conflict:")) return "새 원문과 이전 보완값이 다릅니다. 확인한 사실을 입력하고 저장해 주세요.";
+  if (code.startsWith("source_fact_conflict:")) return `상단과 본문의 ${code.endsWith("application_method") ? "신청 방법" : code.endsWith("operation") ? "운영 일정" : code.endsWith("application") ? "신청 기간" : "해당 사실"}이 다릅니다. 원문을 대조하고 사용할 값을 입력해 주세요.`;
   return guidance[code] ?? "지원하지 않는 사유입니다. 원문과 계약을 확인하고 임의로 해소하지 마세요.";
 }
 
