@@ -56,3 +56,8 @@
 .fullImage {display:block;width:auto;height:auto;max-width:min(600px,calc(100vw - 50px));object-fit:contain;}
 @media(min-width:768px){.card {padding:24px;}.cardGrid {grid-template-columns:80px minmax(0,1fr);gap:18px;}.thumbnail {width:80px;height:107px;}.noCardImage {grid-template-columns:24px minmax(0,1fr);gap:12px;}.plainCard {grid-template-columns:minmax(0,1fr);}}
 @media(max-width:1023px){.heading,.heading.multiline {display:block;width:100%;}.headingText {display:block;}.lower {display:grid;grid-template-columns:fit-content(calc(100% - 90px)) 72px;gap:18px;justify-content:start;align-items:start;margin-top:20px;}.heading h1 {font-size:32px;line-height:1.2;}.meta {display:flex;flex-direction:column;gap:20px;align-items:flex-start;grid-column:1;grid-row:1;margin-top:0;}.headerPoster,.multiline .headerPoster {grid-column:2;grid-row:1;width:72px;height:96px;margin-top:0;}.noImage .lower {grid-template-columns:minmax(0,1fr);}.zoomCue {width:20px;height:20px;right:-5px;bottom:-3px;}}
+
+@media (max-width: 1023px) {
+  .imageOnly { grid-template-columns: 72px; gap: 0; }
+  .imageOnly .headerPoster { grid-column: 1; }
+}

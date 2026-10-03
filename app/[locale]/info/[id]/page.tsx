@@ -6,11 +6,9 @@ import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
 import CurationTrustPanel from "@/app/components/CurationTrustPanel";
 import CurationBody from "@/app/components/CurationBody";
-import SourceImage from "@/app/components/SourceImage";
-import ProgramDetailHeading from "@/app/components/ProgramDetailHeading";
+import CurationDetailHeading from "@/app/components/CurationDetailHeading";
 import SaveControl from "@/app/components/auth/SaveControl";
-import styles from "@/app/components/auth/AuthSurfaces.module.css";
-import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
+import { getCurationPeriodPresentation, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +29,17 @@ export default async function InfoDetailPage({
 
   const t = await getTranslations("InfoDetail");
   const categoriesT = await getTranslations("Categories");
+  const periodInput = {
+    category: item.userCategory,
+    deadlineKind: item.application_deadline_kind,
+    deadlineOn: item.application_deadline_on,
+    eventStartOn: item.event_start_on,
+    eventEndOn: item.event_end_on,
+    todayKst: todayKst(),
+    locale,
+  };
+  const hasPeriod = !!getCurationPeriodPresentation(periodInput);
+  const canSave = item.userCategory === "policy" || item.userCategory === "program";
   return (
     <div className="mx-auto min-h-[60vh] max-w-6xl bg-canvas px-5 pt-8 pb-24 md:px-8 md:pt-12 lg:px-10 lg:pt-16">
       <Link
@@ -41,57 +50,22 @@ export default async function InfoDetailPage({
         {t("back")}
       </Link>
 
-      {item.userCategory === "program" ? (
-        <ProgramDetailHeading
-          url={item.source_image_url}
-          title={item.title}
-          locale={locale}
-          category={<div className="flex items-center gap-2.5 text-sm font-semibold text-primary-text">
-            <CategoryIcon category="program" size={20} className="h-5 w-5 shrink-0" />
-            <span>{categoriesT("program")}</span>
-          </div>}
-          period={<CurationPeriodText
-            category={item.userCategory}
-            deadlineKind={item.application_deadline_kind}
-            deadlineOn={item.application_deadline_on}
-            eventStartOn={item.event_start_on}
-            eventEndOn={item.event_end_on}
-            todayKst={todayKst()}
-            locale={locale}
-            detail
-          />}
-          save={<SaveControl id={item.id} slug={id} locale={locale} />}
-        />
-      ) : (
-      <div className={styles.detailHeading}>
-      <header className="min-w-0 max-w-4xl flex-1">
-        {item.userCategory && (
+      <CurationDetailHeading
+        url={item.source_image_url}
+        title={item.title}
+        locale={locale}
+        category={item.userCategory ? (
           <div className="flex items-center gap-2.5 text-sm font-semibold text-primary-text">
             <CategoryIcon category={item.userCategory} size={20} className="h-5 w-5 shrink-0" />
             <span>{categoriesT(item.userCategory)}</span>
           </div>
-        )}
-        <h1 className="mt-4 break-words text-[clamp(2rem,5vw,3.25rem)] font-bold leading-[1.17] tracking-[-0.025em] text-primary-text [overflow-wrap:anywhere]">
-          {item.title}
-        </h1>
-        <CurationPeriodText
-          category={item.userCategory}
-          deadlineKind={item.application_deadline_kind}
-          deadlineOn={item.application_deadline_on}
-          eventStartOn={item.event_start_on}
-          eventEndOn={item.event_end_on}
-          todayKst={todayKst()}
-          locale={locale}
-          detail
-        />
-      </header>
-      {item.userCategory === "policy" && <SaveControl id={item.id} slug={id} locale={locale} />}
-      </div>
-      )}
+        ) : null}
+        period={hasPeriod ? <CurationPeriodText {...periodInput} detail /> : null}
+        save={canSave ? <SaveControl id={item.id} slug={id} locale={locale} /> : null}
+      />
 
       <div className="mt-10 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
         <article className="min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">
-          {item.userCategory !== "program" && <SourceImage url={item.source_image_url} title={item.title} locale={locale} variant="detail" />}
           <CurationBody content={item.content} locale={locale} />
         </article>
 
