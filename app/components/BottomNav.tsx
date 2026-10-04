@@ -4,6 +4,8 @@ import { useTranslations } from "next-intl";
 import { Home, Mailbox, type LucideIcon } from "lucide-react";
 import { Link, usePathname } from "@/i18n/navigation";
 
+import PublicNavigationLink from "@/app/components/PublicNavigationLink";
+
 interface Tab {
   id: "home" | "mailbox";
   href: string;
@@ -23,11 +25,13 @@ export default function BottomNav() {
     <nav className="site-bottom-nav fixed bottom-0 left-0 right-0 z-50 border-t border-stone/90 bg-canvas-white pb-[env(safe-area-inset-bottom)] lg:hidden">
       <ul className="mx-auto flex h-[4.25rem] max-w-md items-center justify-around px-7">
         {TABS.map(({ id, href, icon: Icon }) => {
+          const NavigationLink = id === "home" ? PublicNavigationLink : Link;
           const isActive =
             href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
             <li key={id} className="flex-1">
-              <Link
+              <NavigationLink
+                {...(id === "home" ? { feedback: "navigation" as const } : {})}
                 href={href}
                 aria-current={isActive ? "page" : undefined}
                 className={`flex w-full flex-col items-center justify-center gap-1 py-2 transition-colors ${
@@ -42,7 +46,7 @@ export default function BottomNav() {
                   aria-hidden="true"
                 />
                 <span className="text-xs tracking-tight">{t(id)}</span>
-              </Link>
+              </NavigationLink>
             </li>
           );
         })}

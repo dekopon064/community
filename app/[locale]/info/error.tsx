@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import InfoStatePanel from "@/app/components/InfoStatePanel";
-import { Link } from "@/i18n/navigation";
+import Link from "@/app/components/PublicNavigationLink";
 
 export default function InfoError({
   unstable_retry,

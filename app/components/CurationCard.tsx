@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
 import { sourceImageUrl } from "@/app/lib/sourceImages";
-import { Link } from "@/i18n/navigation";
+import Link from "@/app/components/PublicNavigationLink";
 import type { UserCategory } from "@/app/lib/userCategories";
 import styles from "./SourceImageLayout.module.css";
 
@@ -77,7 +77,7 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
       {summaryLabel && <span className="sr-only">{summaryLabel}: </span>}{summary}
     </p></>;
 
-  if (!hasImage) return <Link href={href} data-source-card className="group block border-b border-info-rule bg-info-surface px-4 py-5 transition-colors hover:bg-info-hover focus-visible:bg-info-hover md:px-6 md:py-6">
+  if (!hasImage) return <Link feedback="card" href={href} data-source-card className="group block border-b border-info-rule bg-info-surface px-4 py-5 transition-colors hover:bg-info-hover focus-visible:bg-info-hover md:px-6 md:py-6">
     <article className={`grid min-w-0 gap-x-3 ${category ? "grid-cols-[24px_minmax(0,1fr)]" : "grid-cols-1"}`}>
       <div className={category ? "col-start-2" : "col-start-1"}>{meta}</div>
       {category && <CategoryIcon category={category} size={24} className="col-start-1 row-start-2 mt-3 h-6 w-6 shrink-0" />}
@@ -88,7 +88,7 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
   return <>
     <article data-source-card className={styles.card}>
       <div className={styles.cardGrid}>
-        <Link href={href} ref={thumb} className={styles.thumbnail} aria-controls={preview ? id : undefined} aria-expanded={!!preview}
+        <Link feedback="card" href={href} ref={thumb} className={styles.thumbnail} aria-controls={preview ? id : undefined} aria-expanded={!!preview}
           aria-label={`${japanese ? "画像のある情報" : "이미지가 있는 정보"}: ${title}`}
           onMouseEnter={() => { suppressed.current = false; clearTimers(); showTimer.current = setTimeout(() => show(), 250); }}
           onMouseLeave={() => { suppressed.current = false; scheduleClose(); }}
@@ -102,7 +102,7 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
           <Image src={src} alt="" fill unoptimized referrerPolicy="no-referrer" loading="lazy" className={styles.image}
             onError={() => { close(); setFailed(src); }} />
         </Link>
-        <Link href={href} className={styles.textLink}>{meta}<div className="pt-2">{text}</div></Link>
+        <Link feedback="card" href={href} className={styles.textLink}>{meta}<div className="pt-2">{text}</div></Link>
       </div>
     </article>
     {preview && createPortal(<div ref={panel} id={id} role="region" aria-label={japanese ? "画像の拡大プレビュー" : "이미지 확대 미리보기"}

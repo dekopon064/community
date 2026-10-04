@@ -1,6 +1,6 @@
 import { getTranslations } from "next-intl/server";
 import InfoStatePanel from "@/app/components/InfoStatePanel";
-import { Link } from "@/i18n/navigation";
+import Link from "@/app/components/PublicNavigationLink";
 
 export default async function CurationNotFound() {
   const t = await getTranslations("InfoStates");

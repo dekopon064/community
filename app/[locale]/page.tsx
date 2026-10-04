@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { PublicCardsLoading } from "@/app/components/PublicPageLoading";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import HomeCurationEntry from "@/app/components/HomeCurationEntry";
 import HomeMailbox from "@/app/components/HomeMailbox";
@@ -20,12 +22,8 @@ export default async function Home({
   const { locale } = await params;
   setRequestLocale(locale);
   const t = await getTranslations("Home");
-  const categoriesT = await getTranslations("Categories");
   const headlineParts = asStringList(t.raw("headlineParts"));
 
-  const curations = await fetchLocalizedCurations(locale);
-  const today = todayKst();
-  const [primary, secondary] = curations;
   const isJapanese = locale === "ja";
 
   return (
@@ -73,6 +71,25 @@ export default async function Home({
             {t("sectionTitle")}
           </h2>
           <div className="border-t border-info-rule">
+            <Suspense fallback={<PublicCardsLoading />}><HomeCards locale={locale} /></Suspense>
+          </div>
+        </section>
+
+        <aside className="relative hidden min-w-0 pl-5 lg:block lg:pt-[82px]">
+          <HomeMailbox />
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+async function HomeCards({ locale }: { locale: string }) {
+  const curations = await fetchLocalizedCurations(locale);
+  const t = await getTranslations("Home");
+  const categoriesT = await getTranslations("Categories");
+  const today = todayKst();
+  const [primary, secondary] = curations;
+  return <>
           {primary ? (
             <HomeCurationEntry
               slug={primary.slug}
@@ -109,13 +126,5 @@ export default async function Home({
               todayKst={today}
             />
           )}
-          </div>
-        </section>
-
-        <aside className="relative hidden min-w-0 pl-5 lg:block lg:pt-[82px]">
-          <HomeMailbox />
-        </aside>
-      </div>
-    </div>
-  );
+  </>;
 }

@@ -2,7 +2,7 @@ import { useLocale, useTranslations } from "next-intl";
 import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationCard from "@/app/components/CurationCard";
 import InfoStatePanel from "@/app/components/InfoStatePanel";
-import { Link } from "@/i18n/navigation";
+import Link from "@/app/components/PublicNavigationLink";
 import type { LocalizedCuration } from "@/app/lib/types";
 import { USER_CATEGORIES, type UserCategory } from "@/app/lib/userCategories";
 

@@ -5,7 +5,8 @@ import LocaleSwitcher from "@/app/components/LocaleSwitcher";
 import ThemeToggle from "@/app/components/ThemeToggle";
 import AccountControl from "@/app/components/auth/AccountControl";
 import { USER_CATEGORIES } from "@/app/lib/userCategories";
-import { Link, usePathname } from "@/i18n/navigation";
+import { usePathname } from "@/i18n/navigation";
+import Link from "@/app/components/PublicNavigationLink";
 
 const ITEMS = [
   { id: "home", href: "/" },
@@ -37,6 +38,7 @@ export default function Header() {
             return (
               <Link
                 key={id}
+                feedback="navigation"
                 href={href}
                 aria-current={isActive ? "page" : undefined}
                 className={`relative inline-flex min-h-11 items-center py-2 text-sm font-semibold transition-colors after:absolute after:bottom-0 after:left-0 after:h-0.5 after:rounded-full after:bg-focus after:transition-transform ${
@@ -67,6 +69,7 @@ export default function Header() {
             return (
               <Link
                 key={id}
+                feedback="navigation"
                 href={href}
                 aria-current={isActive ? "page" : undefined}
                 className={`inline-flex min-h-11 items-center border-b-2 text-sm font-semibold ${
