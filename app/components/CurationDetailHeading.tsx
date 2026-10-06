@@ -28,7 +28,7 @@ export default function CurationDetailHeading({ url, title, locale, category, pe
   return <header className={`${styles.heading} ${multiline ? styles.multiline : ""} ${hasImage ? "" : styles.noImage}`} data-source-heading>
     <div className={styles.headingText}>
       <div className={styles.category}>{category}</div>
-      <h1 ref={heading}>{title}</h1>
+      <h1 ref={heading} className="public-readable">{title}</h1>
     </div>
     {(hasMeta || hasImage) && <div className={`${styles.lower} ${hasMeta ? "" : styles.imageOnly}`}>
       {hasMeta && <div className={styles.meta}>

@@ -7,6 +7,7 @@ import CurationPeriodText from "@/app/components/CurationPeriodText";
 import CurationTrustPanel from "@/app/components/CurationTrustPanel";
 import CurationBody from "@/app/components/CurationBody";
 import CurationDetailHeading from "@/app/components/CurationDetailHeading";
+import CurationMobileSourceLink from "@/app/components/CurationMobileSourceLink";
 import SaveControl from "@/app/components/auth/SaveControl";
 import { getCurationPeriodPresentation, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
@@ -64,8 +65,10 @@ export default async function InfoDetailPage({
         save={canSave ? <SaveControl id={item.id} slug={id} locale={locale} /> : null}
       />
 
+      <CurationMobileSourceLink sourceUrl={item.source_url} />
+
       <div className="mt-10 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
-        <article className="min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">
+        <article className="public-readable min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">
           <CurationBody content={item.content} locale={locale} />
         </article>
 

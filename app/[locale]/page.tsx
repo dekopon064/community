@@ -61,7 +61,7 @@ export default async function Home({
               t("headline")
             )}
           </h1>
-          <p className="mt-5 max-w-sm text-base leading-7 text-info-body md:text-lg">
+          <p className="public-readable mt-5 max-w-sm text-base leading-7 text-info-body md:text-lg">
             {t("intro")}
           </p>
         </section>

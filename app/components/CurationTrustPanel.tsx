@@ -1,5 +1,6 @@
 import { CalendarDays, ExternalLink, ShieldCheck } from "lucide-react";
 import { getTranslations } from "next-intl/server";
+import { getSafeSource } from "@/app/lib/publicSourceUrl";
 
 interface CurationTrustPanelProps {
   locale: string;
@@ -12,18 +13,6 @@ function formatDate(value: string, locale: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return new Intl.DateTimeFormat(locale, { dateStyle: "long" }).format(date);
-}
-
-function getSafeSource(value: string | null) {
-  if (!value) return null;
-
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    return { href: url.href, hostname: url.hostname.replace(/^www\./, "") };
-  } catch {
-    return null;
-  }
 }
 
 export default async function CurationTrustPanel({

@@ -68,6 +68,13 @@ body {
   color: var(--color-ink);
 }
 
+/* Public Korean reading surfaces only; keep long URLs/words within their measure. */
+.public-readable:lang(ko),
+.public-readable:lang(ko) :is(p, h1, h2, h3, li, blockquote) {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
 ::selection {
   background: #cbe7f8;
   color: #102f5c;

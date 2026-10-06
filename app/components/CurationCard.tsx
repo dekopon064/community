@@ -72,8 +72,8 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
     <CurationPeriodText category={category} deadlineKind={deadlineKind} deadlineOn={deadlineOn} eventStartOn={eventStartOn}
       eventEndOn={eventEndOn} todayKst={todayKst} locale={locale} />
   </div>;
-  const text = <><h2 className="break-words text-xl font-bold leading-[1.35] tracking-[-0.025em] text-primary-text md:text-[1.45rem]">{title}</h2>
-    <p className="mt-2 line-clamp-2 break-words text-sm leading-6 text-info-body md:text-[0.95rem] md:leading-7">
+  const text = <><h2 className="public-readable break-words text-xl font-bold leading-[1.35] tracking-[-0.025em] text-primary-text md:text-[1.45rem]">{title}</h2>
+    <p className="public-readable mt-2 line-clamp-2 break-words text-sm leading-6 text-info-body md:text-[0.95rem] md:leading-7">
       {summaryLabel && <span className="sr-only">{summaryLabel}: </span>}{summary}
     </p></>;
 

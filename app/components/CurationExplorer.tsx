@@ -25,20 +25,26 @@ export default function CurationExplorer({
       : curations.filter((item) => item.userCategory === selectedCategory);
 
   return (
-    <div className="grid min-w-0 gap-10 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14">
+    <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14">
       <aside className="lg:sticky lg:top-28 lg:self-start">
-        <div className="flex items-center gap-2.5 md:gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 md:gap-3">
           {selectedCategory && (
             <CategoryIcon category={selectedCategory} size={48} className="h-10 w-10 shrink-0 md:h-12 md:w-12" />
           )}
           <h1 className="max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-primary-text md:text-5xl">
             {selectedCategory ? categoriesT(selectedCategory) : t("title")}
           </h1>
+          <span aria-hidden="true" className="ml-auto whitespace-nowrap text-sm font-semibold leading-6 text-primary-text lg:hidden">
+            {t("resultCount", { count: filtered.length })}
+          </span>
         </div>
-        <p className="mt-5 max-w-md text-base leading-7 text-info-body">
+        <p className="public-readable mt-3 text-sm leading-6 text-info-muted lg:hidden">
+          {t("compactReviewNote")}
+        </p>
+        <p className="public-readable mt-5 hidden max-w-md text-base leading-7 text-info-body lg:block">
           {t("intro")}
         </p>
-        <p className="mt-7 border-t border-info-rule pt-5 text-sm leading-6 text-info-muted">
+        <p className="mt-7 hidden border-t border-info-rule pt-5 text-sm leading-6 text-info-muted lg:block">
           {t("reviewNote")}
         </p>
 
@@ -66,7 +72,7 @@ export default function CurationExplorer({
         <p
           id="curation-results-title"
           aria-live="polite"
-          className="mb-4 text-sm font-bold text-primary-text"
+          className="sr-only text-sm font-bold text-primary-text lg:not-sr-only lg:mb-4"
         >
           {t("resultCount", { count: filtered.length })}
         </p>

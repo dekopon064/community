@@ -57,6 +57,7 @@
     "title": "すべての情報",
     "intro": "政策、プログラム、イベント、青年スペース、暮らしの情報を探せます。",
     "reviewNote": "それぞれの情報について、公式の発信元と原文をあわせて確認できます。",
+    "compactReviewNote": "公式の発信元と原文も確認できます。",
     "filterLabel": "情報カテゴリーを選ぶ",
     "resultCount": "情報 {count}件",
     "atAGlance": "ひと目でわかる概要",
@@ -114,6 +115,7 @@
     "updatedAt": "最終更新",
     "sourceTitle": "公式情報",
     "openSource": "公式ページを開く",
+    "earlySource": "公式原文を見る",
     "newWindow": "新しいタブで開きます",
     "sourceUnavailable": "現在確認できる公式ページへのリンクはありません。"
   },
