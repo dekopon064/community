@@ -2,6 +2,7 @@ import { ReviewFailure } from "./contracts";
 import type { RpcClient } from "./database-store";
 import { myObject, myText, myStrings, myseoulFacts, myseoulGuidance, myseoulOfficialUrl, myseoulPatchFields, myseoulProfile, myseoulSchema, myseoulReasonFields } from "./myseoul-contract";
 import type { MySeoulCommand } from "./myseoul-contract";
+import { myseoulRpcFailure } from './myseoul-errors';
 
 export function myseoulItem(raw: unknown, id: string) {
   try {
@@ -29,7 +30,7 @@ export class MySeoulReviewStore {
   private async invoke(name: string, args: Record<string, unknown>) {
     try {
       const { data, error } = await this.client.rpc(name, args);
-      if (error) throw new ReviewFailure(error.code === "PT409" ? "conflict" : error.code === "PT422" ? "invalid_input" : error.code === "PT404" ? "not_found" : "unavailable");
+      if (error) throw myseoulRpcFailure(error);
       if (data === null || data === undefined) throw new ReviewFailure("unavailable");
       return data;
     } catch (e) { if (e instanceof ReviewFailure) throw e; throw new ReviewFailure("unavailable"); }

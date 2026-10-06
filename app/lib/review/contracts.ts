@@ -19,6 +19,7 @@ export type CandidateContent = {
 };
 export type CandidateImageSelection = { mode: "source" | "override" | "none"; url: string | null };
 export type CandidateImage = CandidateImageSelection & { sourceUrl: string | null };
+export type CandidateNotice = { kind: "difference" | "unverified"; language: "ko" | "ja" | "both"; section: string; item: string; expected: string; result: string };
 export type History = { action: string; actor: string; at: string; note: string; changeLabel?: string };
 type BaseItem = {
   id: string; revision: string; version: string;
@@ -39,6 +40,9 @@ export type CandidateItem = BaseItem & {
   category: Category; period: string;
   publishedAt: string | null; publishedId: string | null; publishedSlug?: string | null;
   image?: CandidateImage;
+  // Recomputed from the immutable generation snapshot and SAVED candidate.
+  // Informational only: never used in commands, validation or publish gates.
+  contentNotices?: CandidateNotice[];
   programInfo?: { inputFactsVersion: number; currentFactsVersion: number; inputChanged: boolean; canPublish: boolean; changeReviewed?: boolean; changedFields?: string[]; comparisonAvailable?: boolean; applicationPeriod: string; operatingPeriod: string };
 };
 export type ReviewItem = FactsItem | CandidateItem;

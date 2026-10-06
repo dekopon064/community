@@ -1,4 +1,5 @@
 import { ReviewFailure } from "./contracts";
+import { myseoulHasMarkup } from "./myseoul-text";
 
 export const myseoulSchema = "myseoul-program-facts-v1-local";
 export const myseoulProfile = "myseoul-program-v1-local";
@@ -15,7 +16,7 @@ export function myObject(v: unknown): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 export function myText(v: unknown, max = 60000): string {
-  if (typeof v !== "string" || v.length > max || /<[/!A-Za-z][^>]*>/.test(v)) throw new ReviewFailure("invalid_input");
+  if (typeof v !== "string" || v.length > max || myseoulHasMarkup(v)) throw new ReviewFailure("invalid_input");
   return v;
 }
 export function myStrings(v: unknown, limit = 200): string[] {

@@ -1,6 +1,7 @@
 import { ReviewFailure } from "./contracts";
 import type { ReviewStore, ReviewKind, ReviewItem, ReviewCommand, ListItem } from "./contracts";
 import { databaseItem, databaseList } from "./database-dto";
+import { mySeoulCandidateNotices, unavailableMySeoulNotices } from "./myseoul-candidate-notices";
 
 export type RpcClient = { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }> };
 const errors: Record<string, "conflict" | "already_processed" | "invalid_input" | "not_found" | "publish_failed" | "program_input_changed" | "program_unavailable"> = {
@@ -26,8 +27,17 @@ export class DatabaseReviewStore implements ReviewStore {
   async get(kind: ReviewKind, id: string): Promise<ReviewItem> {
     return this.item(await this.invoke("admin_review_detail", { p_kind: kind, p_id: id }), kind, id);
   }
-  private item(data: unknown, kind: ReviewKind, id: string): ReviewItem {
-    return databaseItem(data, kind, id);
+  private async item(data: unknown, kind: ReviewKind, id: string): Promise<ReviewItem> {
+    const item = databaseItem(data, kind, id);
+    if (item.kind === "candidates" && item.source.name === "myseoul_program") {
+      // Source-scoped, read-only generation snapshot. A missing notice RPC must
+      // not prevent reading/saving a candidate or introduce a publication gate.
+      try {
+        const input = await this.invoke("admin_myseoul_candidate_notice_input", { p_id: id });
+        item.contentNotices = mySeoulCandidateNotices(input, id, item.programInfo!.inputFactsVersion, item.content);
+      } catch { item.contentNotices = unavailableMySeoulNotices(); }
+    }
+    return item;
   }
   async execute(kind: ReviewKind, id: string, command: ReviewCommand, actor: string): Promise<ReviewItem> {
     if ((kind === "facts") !== ["save_facts", "exclude"].includes(command.action)) throw new ReviewFailure("invalid_input");

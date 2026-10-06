@@ -8,15 +8,18 @@ import type { MySeoulCommand, MySeoulFacts, MySeoulIssue, MySeoulPeriod } from '
 import { buildMySeoulSave, mergeMySeoulDraft, myseoulArrayFields, myseoulChoices, myseoulFeeLabels, myseoulLabels, myseoulPatch, reviewPeriodAxes, visibleMySeoulFields } from '@/app/lib/review/myseoul-ui';
 import type { MySeoulFee, MySeoulPeriods } from '@/app/lib/review/myseoul-ui';
 import { failureText, sourceLink, statusText } from '@/app/lib/review/presentation';
+import { myseoulErrorMessage } from '@/app/lib/review/myseoul-errors';
 import { fieldClass, primaryButton, secondaryButton } from './ReviewEditors';
 
 type Item = ReturnType<typeof myseoulItem>;
-class Failure extends Error {}
+class Failure extends Error {
+  constructor(code: string, readonly fields?: unknown) { super(code); }
+}
 async function request(id: string, command?: MySeoulCommand, signal?: AbortSignal): Promise<Item> {
   const response = await fetch(`/api/admin/myseoul-review/${id}`, { cache: 'no-store', credentials: 'same-origin', signal,
     ...(command ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(command) } : {}) });
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Failure(data?.code ?? 'unavailable');
+  if (!response.ok) throw new Failure(data?.code ?? 'unavailable', data?.fields);
   if (data?.mode !== 'database') throw new Failure('unavailable');
   try { return myseoulItem(data.item, id); } catch { throw new Failure('unavailable'); }
 }
@@ -89,6 +92,7 @@ function IssueEvidence({ item, code }: { item: Item; code: string }) {
 export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: string; onBlocked: (blocked: boolean) => void; onResult: (next: Item) => void }) {
   const [item, setItem] = useState<Item | null>(null), [draft, setDraft] = useState<MySeoulFacts | null>(null);
   const [busy, setBusy] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [errorDetail, setErrorDetail] = useState('');
   const [excludeNote, setExcludeNote] = useState(''), [confirm, setConfirm] = useState(false);
   const sending = useRef(false), heading = useRef<HTMLHeadingElement>(null), message = useRef<HTMLDivElement>(null);
   const dirty = Boolean(item && draft && Object.keys(myseoulPatch(item.facts, draft, visibleMySeoulFields(item.editableFields, draft))).length);
@@ -97,7 +101,8 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
   useEffect(() => { onBlocked(busy || unsaved || confirm); return () => onBlocked(false); }, [busy, unsaved, confirm, onBlocked]);
   useEffect(() => { if (!unsaved) return; const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [unsaved]);
   function accept(next: Item) { setItem(next); setDraft(structuredClone(next.facts)); setExcludeNote(''); setConfirm(false); }
-  useEffect(() => { const controller = new AbortController(); request(id, undefined, controller.signal).then(next => { accept(next); setError(''); }).catch(e => { if (!controller.signal.aborted) setError(e instanceof Failure ? e.message : 'unavailable'); }).finally(() => { if (!controller.signal.aborted) setBusy(false); }); return () => controller.abort(); }, [id]);
+  function showFailure(e: unknown) { setError(e instanceof Error ? e.message : 'unavailable'); setErrorDetail(myseoulErrorMessage(e)); }
+  useEffect(() => { const controller = new AbortController(); request(id, undefined, controller.signal).then(next => { accept(next); setError(''); }).catch(e => { if (!controller.signal.aborted) showFailure(e); }).finally(() => { if (!controller.signal.aborted) setBusy(false); }); return () => controller.abort(); }, [id]);
   const loadedId = item?.id;
   useEffect(() => { if (loadedId) focus(heading.current); }, [loadedId]);
   useEffect(() => { if (error || notice) focus(message.current); }, [error, notice]);
@@ -106,19 +111,19 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
     try { const next = await request(id, command); accept(next);
       if (command.action === 'save_facts' && item && draft) { setDraft(mergeMySeoulDraft(item.facts, draft, next.facts, command.patch)); setExcludeNote(excludeNote); }
       onResult(next); setNotice(command.action === 'exclude' ? '서비스 범위상 제외 사유를 기록했습니다.' : '사실을 저장하고 다시 평가했습니다.'); }
-    catch (e) { setError(e instanceof Failure ? e.message : 'unavailable'); setConfirm(false); }
+    catch (e) { showFailure(e); setConfirm(false); }
     finally { sending.current = false; setBusy(false); }
   }
-  async function reload() { if (sending.current) return; sending.current = true; setBusy(true); setError(''); try { const next = await request(id); accept(next); onResult(next); setNotice(''); } catch (e) { setError(e instanceof Failure ? e.message : 'unavailable'); } finally { sending.current = false; setBusy(false); } }
+  async function reload() { if (sending.current) return; sending.current = true; setBusy(true); setError(''); try { const next = await request(id); accept(next); onResult(next); setNotice(''); } catch (e) { showFailure(e); } finally { sending.current = false; setBusy(false); } }
   const link = item ? sourceLink(item.source.url) : null;
   return <section aria-label="마이서울플러스 사실 검토" aria-busy={busy}>
-    {(error || notice) && <div ref={message} tabIndex={-1} role={error ? 'alert' : 'status'} className="mb-6 scroll-mt-36 border-y border-info-rule py-4 leading-7"><p className={error ? 'text-info-status' : 'text-info-body'}>{error ? failureText[error] ?? failureText.unavailable : notice}</p>
+    {(error || notice) && <div ref={message} tabIndex={-1} role={error ? 'alert' : 'status'} className="mb-6 scroll-mt-36 border-y border-info-rule py-4 leading-7"><p className={error ? 'text-info-status' : 'text-info-body'}>{error ? errorDetail || failureText.unavailable : notice}</p>
       {error && <div className="mt-3 flex flex-wrap gap-3"><button type="button" className={secondaryButton} disabled={busy} onClick={() => void reload()}>{unsaved ? '입력을 버리고 최신 내용 불러오기' : '최신 내용 다시 확인'}</button>{['signed_out', 'forbidden'].includes(error) && <Link prefetch={false} href="/ko/login?next=%2Fko%2Fadmin" className={secondaryButton}>로그인 상태 확인</Link>}</div>}</div>}
     {!item || !draft ? <p role="status" className="py-6 text-info-muted">{busy ? '마이서울플러스 항목을 불러오는 중입니다.' : '항목을 불러오지 못했습니다.'}</p> : <>
       <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">마이서울플러스 · {statusText[item.status]}</p></header>
       <details className="my-6 border-b border-info-rule pb-5"><summary className="cursor-pointer py-3 font-semibold">원문 확인 · 읽기 전용</summary>{link && <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a>}<p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || '저장된 본문이 없습니다.'}</p></details>
       {['closed', 'ended', 'not_started'].includes(item.result.application) && <p className="mb-6 text-info-status">{item.result.application === 'not_started' ? '아직 접수 전입니다.' : '접수 또는 운영이 종료된 항목입니다.'}</p>}
-      <form onSubmit={e => { e.preventDefault(); try { void submit(buildMySeoulSave(item, draft)); } catch { setError('invalid_input'); } }}>
+      <form onSubmit={e => { e.preventDefault(); try { void submit(buildMySeoulSave(item, draft)); } catch (e) { showFailure(e); } }}>
         <h3 className="mb-3 text-lg font-bold">남은 확인 사유 {item.result.reasons.length}개</h3>
         <div className="divide-y divide-info-rule">{reviewGroups(item).map(group => {
           const fields = visibleMySeoulFields(group.fields, draft);
@@ -127,7 +132,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
               {!group.fields.includes('periods') && <IssueEvidence item={item} code={reason.code}/>}</div>)}
             {!processed && fields.length > 0 && <>
               <fieldset disabled={busy || confirm}><legend className="sr-only">확인한 사실 입력</legend><FactEditor value={draft} editable={fields} axes={reviewPeriodAxes(group.reasons.map(r => r.code))} onChange={setDraft}/></fieldset>
-              <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || confirm} onClick={() => { try { void submit(buildMySeoulSave(item, draft, fields, reviewPeriodAxes(group.reasons.map(r => r.code)))); } catch { setError('invalid_input'); } }}>이 값으로 확인·저장</button>
+              <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || confirm} onClick={() => { try { void submit(buildMySeoulSave(item, draft, fields, reviewPeriodAxes(group.reasons.map(r => r.code)))); } catch (e) { showFailure(e); } }}>이 값으로 확인·저장</button>
             </>}
           </section>;
         })}</div>
