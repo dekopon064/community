@@ -1,3 +1,4 @@
+import { filterInfo } from './content-filter-store';
 import { ReviewFailure } from "./contracts";
 import type { RpcClient } from "./database-store";
 import { patchFields, programFacts, programReasonText, strings } from "./program-contract";
@@ -20,7 +21,7 @@ export function programItem(data: unknown, id: string) {
     if (!["in_scope", "out_of_scope", "review_required", "not_currently_available"].includes(str(result.decision))) throw new ReviewFailure("unavailable");
     if (!Array.isArray(o.history) || o.history.length > 25) throw new ReviewFailure("unavailable");
     const history = o.history.map((x) => { const h = obj(x); return { action: str(h.action, 30), actor: str(h.actor, 36), at: str(h.at, 100), note: str(h.note, 4000), fields: strings(h.fields) }; });
-    return { id, revision: str(o.revision), version: str(o.version), schema: str(o.schema), profile: str(o.profile),
+    return { id, filterInfo: filterInfo(o.filterInfo, String(o.revision)), revision: str(o.revision), version: str(o.version), schema: str(o.schema), profile: str(o.profile),
       factsVersion: o.factsVersion, source: { name: str(source.name), title: str(source.title), url: source.url === null ? null : str(source.url), body: str(source.body) },
       facts: programFacts(o.facts), observedFacts: programFacts(o.observedFacts), status: str(o.status), aiStatus: str(o.aiStatus),
       result: { decision: str(result.decision), disposition: str(result.disposition), reasons },

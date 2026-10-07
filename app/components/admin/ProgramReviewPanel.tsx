@@ -1,4 +1,5 @@
 "use client";
+import FilterReviewPanel from './FilterReviewPanel';
 import {useEffect,useRef,useState} from "react";
 import Link from "next/link";
 import type {ProgramFacts,ProgramField,Period,ProgramCommand} from "@/app/lib/review/program-contract";
@@ -44,10 +45,12 @@ function FactFields({facts,editable,disabled,onChange,reasons}:{facts:ProgramFac
 }
 export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;onBlocked:(blocked:boolean)=>void;onResult:(item:{id:string;status:string;source:{title:string};result:{reasons:string[]}})=>void}){
  const [item,setItem]=useState<Item|null>(null),[draft,setDraft]=useState<ProgramFacts|null>(null);
- const [busy,setBusy]=useState(true),[error,setError]=useState(""),[notice,setNotice]=useState(""),[note,setNote]=useState(""),[excludeNote,setExcludeNote]=useState("");
+ const [filterBlocked,setFilterBlocked]=useState(false);
+ const [operationBusy,setBusy]=useState(true),[error,setError]=useState(""),[notice,setNotice]=useState(""),[note,setNote]=useState(""),[excludeNote,setExcludeNote]=useState("");
  const [resolve,setResolve]=useState<string[]>([]),[confirm,setConfirm]=useState(false);
  const heading=useRef<HTMLHeadingElement>(null),message=useRef<HTMLDivElement>(null),sending=useRef(false),pendingRequest=useRef<{key:string;id:string}|null>(null);
  const dirty=Boolean(item&&draft&&Object.keys(programPatch(item.facts,draft,item.editableFields)).length);
+ const busy=operationBusy||filterBlocked;
  const unsaved=dirty||Boolean(note||excludeNote||resolve.length);
  const processed=item?.status!=="open";
  useEffect(()=>{onBlocked(busy||unsaved||confirm);return()=>onBlocked(false);},[busy,unsaved,confirm,onBlocked]);
@@ -81,6 +84,7 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  {unsaved&&<p className="mt-4 text-info-status">아직 저장하지 않은 입력이 있습니다. 저장하거나 수정을 취소한 뒤 다른 항목으로 이동해 주세요.</p>}
  <div className="my-6 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={busy||confirm||(!dirty&&!item.restoredReviewPending)||(dirty&&!note.trim())}>{busy?"저장 중…":"사실 저장·재평가"}</button>{unsaved&&<button type="button" className={secondaryButton} disabled={busy} onClick={()=>{accept(item);setError("");}}>수정 취소</button>}</div>
  </form>}
+ {item.filterInfo&&!processed&&<FilterReviewPanel key={item.filterInfo.filterVersion} id={id} version={item.version} info={item.filterInfo} disabled={operationBusy||unsaved||confirm} onBlocked={setFilterBlocked} onSaved={async()=>{const next=await request(id);setItem(next);onResult(next);setNotice("탐색 정보를 확인·저장했습니다.");}}/>}
  <p className="mb-6 text-sm leading-6 text-info-muted">사실 저장은 AI를 실행하지 않습니다.</p>
  <p className="mb-6 text-info-body">현재 접수 상태: {displayProgramValue("source_status",item.facts.source_status)}</p>
  {!processed&&<section className="mt-8 border-t border-info-rule pt-5"><h3 className="font-bold">빠른 제외</h3><p className="mt-2 text-sm leading-6 text-info-muted">사유를 자동 기록하고 휴지통으로 이동합니다. 72시간 이내에 복구할 수 있습니다.</p><div className="my-4 flex flex-wrap gap-3">{Object.entries(quickReasons).map(([code,label])=><button type="button" key={code} className={secondaryButton} disabled={busy||confirm||unsaved} onClick={()=>void submit({action:"exclude",revision:item.revision,version:item.version,note:"",reasonCode:code as QuickReason})}>{label} · 제외</button>)}</div><h3 className="font-bold">기타 사유로 제외</h3><p className="mt-2 text-info-muted">외국인 자격 불가 사실로 바꾸지 않고 제외 사유를 기록합니다.</p><label htmlFor="program-exclude" className="mt-4 block font-semibold">제외 사유</label><textarea id="program-exclude" className={fieldClass} rows={3} maxLength={4000} disabled={busy||confirm} value={excludeNote} onChange={e=>setExcludeNote(e.target.value)}/><button type="button" className={`${secondaryButton} mt-4`} disabled={busy||dirty||Boolean(note)||Boolean(resolve.length)||!excludeNote.trim()||confirm} onClick={()=>setConfirm(true)}>사유를 남기고 제외</button>

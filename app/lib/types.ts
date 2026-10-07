@@ -1,8 +1,10 @@
+import type { ContentFilters } from './contentFilters';
 import type { UserCategory } from "@/app/lib/userCategories";
 
 // Supabase 테이블 행(row)에 대응하는 도메인 타입
 
 export interface Curation {
+  content_filters?: unknown;
   id: string;
   slug: string;
   category: string;
@@ -29,6 +31,7 @@ export interface Curation {
 }
 
 export interface LocalizedCuration {
+  contentFilters?: ContentFilters | null;
   id: string;
   slug: string;
   category: string;

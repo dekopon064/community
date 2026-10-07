@@ -1,5 +1,6 @@
 "use client";
 
+import FilterReviewPanel from './FilterReviewPanel';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { myseoulItem } from '@/app/lib/review/myseoul-store';
@@ -92,11 +93,13 @@ function IssueEvidence({ item, code }: { item: Item; code: string }) {
 
 export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: string; onBlocked: (blocked: boolean) => void; onResult: (next: Item) => void }) {
   const [item, setItem] = useState<Item | null>(null), [draft, setDraft] = useState<MySeoulFacts | null>(null);
-  const [busy, setBusy] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [filterBlocked, setFilterBlocked] = useState(false);
+  const [operationBusy, setBusy] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [errorDetail, setErrorDetail] = useState('');
   const [excludeNote, setExcludeNote] = useState(''), [confirm, setConfirm] = useState(false);
   const sending = useRef(false), heading = useRef<HTMLHeadingElement>(null), message = useRef<HTMLDivElement>(null);
   const dirty = Boolean(item && draft && Object.keys(myseoulPatch(item.facts, draft, visibleMySeoulFields(item.editableFields, draft))).length);
+  const busy = operationBusy || filterBlocked;
   const unsaved = dirty || Boolean(excludeNote);
   const processed = item?.status !== 'open';
   useEffect(() => { onBlocked(busy || unsaved || confirm); return () => onBlocked(false); }, [busy, unsaved, confirm, onBlocked]);
@@ -144,6 +147,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
           <p className="text-sm text-info-muted">저장 후 남은 사유를 다시 판단합니다. 요약·번역은 실행하지 않습니다.</p>
         </>}
       </form>
+      {item.filterInfo && !processed && <FilterReviewPanel key={item.filterInfo.filterVersion} id={id} version={item.version} info={item.filterInfo} disabled={operationBusy || unsaved || confirm} onBlocked={setFilterBlocked} onSaved={async () => { const next = await request(id); setItem(next); onResult(next); setNotice('탐색 정보를 확인·저장했습니다.'); }}/>}
       {!processed && <section className="mt-6 border-t border-info-rule pt-5"><h3 className="font-bold">서비스 범위에서 제외</h3><label htmlFor="myseoul-exclude" className="mt-3 block font-semibold">제외 사유</label><textarea id="myseoul-exclude" className={fieldClass} rows={3} maxLength={4000} disabled={busy || confirm} value={excludeNote} onChange={e => setExcludeNote(e.target.value)}/><button type="button" className={`${secondaryButton} mt-4`} disabled={busy || dirty || !excludeNote.trim() || confirm} onClick={() => setConfirm(true)}>사유를 남기고 제외</button>{confirm && <div role="group" aria-label="제외 최종 확인" className="mt-4 border-y border-info-rule py-4"><p className="whitespace-pre-wrap break-words">이 항목을 서비스 범위에서 제외할까요? 기록할 사유: {excludeNote}</p><div className="mt-3 flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={busy} onClick={() => void submit({ action: 'exclude', revision: item.revision, version: item.version, note: excludeNote })}>확인하고 제외</button><button type="button" className={secondaryButton} disabled={busy} onClick={() => setConfirm(false)}>돌아가기</button></div></div>}</section>}
 
     </>}

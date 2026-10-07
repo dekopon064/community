@@ -1,5 +1,6 @@
 "use client";
 
+import FilterReviewPanel, { CandidateFilterComparison } from './FilterReviewPanel';
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { CandidateImageSelection, CandidateContent, Facts, ReviewItem, ReviewKind, ListItem, ReviewCommand } from "@/app/lib/review/contracts";
@@ -46,7 +47,9 @@ export default function ReviewWorkspace() {
   const [imageSelection, setImageSelection] = useState<CandidateImageSelection | null>(null);
   const [content, setContent] = useState<CandidateContent | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [filterBlocked, setFilterBlocked] = useState(false);
+  const [operationBusy, setBusy] = useState(false);
+  const busy = operationBusy || filterBlocked;
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
@@ -210,14 +213,16 @@ export default function ReviewWorkspace() {
             <p className="mt-2 text-sm leading-6 text-info-muted">수정한 경우 아래 한국어·일본어 편집값을 함께 저장합니다.{publicChange && " 현재 공개 글에 직접 반영됩니다."}</p>
             <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || imageDirty || Boolean(confirmation) || !changeNote.trim()} onClick={() => void submit({ ...preconditions(), action: "review_change", disposition: contentDirty ? "edited" : "no_impact", note: changeNote, ...(contentDirty && content ? { content } : {}) })}>{busy ? "처리 중…" : fieldsDirty ? publicChange ? "공개 내용 수정·변경 확인" : "수정 저장·변경 확인" : "내용 영향 없음·변경 확인"}</button>
           </section>}
+          {item.kind === 'facts' && item.filterInfo && !processed && <FilterReviewPanel key={item.filterInfo.filterVersion} id={item.id} version={item.version} info={item.filterInfo} disabled={operationBusy || fieldsDirty || Boolean(note) || Boolean(confirmation)} onBlocked={setFilterBlocked} onSaved={async () => { const data = await call(`/api/admin/review/facts/${item.id}`); setItem(data.item); setReload(n => n + 1); setNotice('탐색 정보를 확인·저장했습니다.'); }}/>}
+          {item.kind === 'candidates' && item.filterInfo && <CandidateFilterComparison info={item.filterInfo}/>}
           <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation || publicChange) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content && !invalidImage) void submit({ ...preconditions(), action: "save_candidate", content, ...(imageEditable && imageSelection ? { imageSelection } : {}) }); }}>
             {imageEditable && item.kind === "candidates" && item.image && imageSelection && <CandidateImageEditor key={item.id + item.version} saved={item.image} value={imageSelection} onChange={setImageSelection} disabled={locked} error={errors.imageUrl} title={content?.titleKo ?? item.content.titleKo} />}
             {item.kind === "facts" && facts ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor value={content} onChange={setContent} errors={errors} disabled={locked} />}
             {fieldsDirty && <p className="mt-6 leading-7 text-info-status">아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요.</p>}
             {!processed && <div className="my-7 flex flex-wrap gap-3">
-              <button type="submit" disabled={publicChange || busy || Boolean(invalidImage) || Boolean(confirmation) || (!fieldsDirty && !(item.kind === "facts" && item.restoredReviewPending))} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
+              <button type="submit" disabled={publicChange || busy || Boolean(invalidImage) || Boolean(confirmation) || (!fieldsDirty && !(item.kind === "facts" && item.restoredReviewPending) && !(item.kind === "candidates" && item.filterInfo?.changed))} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
               {dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(""); setNotice(""); }}>수정 취소</button>}
-              {item.kind === "candidates" && item.status === "pending" && <button type="button" className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || (item.kind === "candidates" && Boolean(item.programInfo && !item.programInfo.canPublish))} onClick={() => setConfirmation("publish")}>승인하고 게시</button>}
+              {item.kind === "candidates" && item.status === "pending" && <button type="button" className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || (item.kind === "candidates" && Boolean((item.programInfo && !item.programInfo.canPublish) || (item.filterInfo && !item.filterInfo.canPublish)))} onClick={() => setConfirmation("publish")}>승인하고 게시</button>}
             </div>}
           </form>
           {!processed && !publicChange && (item.kind === "candidates" || item.excludeAllowed !== false) && <section className="border-t border-info-rule pt-6">

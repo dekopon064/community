@@ -1,3 +1,4 @@
+import { filterInfo, candidateFilterInfo } from './content-filter-store';
 import { sourceImageUrl } from "../sourceImages";
 import { ReviewFailure } from "./contracts";
 import type { ReviewItem, ReviewKind, ListItem, Facts, CandidateContent } from "./contracts";
@@ -33,7 +34,7 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
     };
     const editableFields = strings(v.editableFields);
     if (editableFields.some((key) => !Object.hasOwn(facts, key)) || typeof v.excludeAllowed !== "boolean") throw new ReviewFailure("unavailable");
-    return { ...base, kind, facts, editableFields: editableFields as (keyof Facts)[], excludeAllowed: v.excludeAllowed,
+    return { ...base, kind, facts, filterInfo: filterInfo(v.filterInfo, base.revision), editableFields: editableFields as (keyof Facts)[], excludeAllowed: v.excludeAllowed,
       restoredReviewPending: v.restoredReviewPending === true,
       status: choice(v.status, ["open", "resolved", "excluded"]), reasons: strings(v.reasons), aiStatus: choice(v.aiStatus, ["blocked", "queued", "claimed", "completed", "failed", "cancelled"]) };
   }
@@ -57,5 +58,5 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
     programInfo = { inputFactsVersion: Number(p.inputFactsVersion), currentFactsVersion: Number(p.currentFactsVersion), inputChanged: p.inputChanged, canPublish: p.canPublish,
       applicationPeriod: string(p.applicationPeriod), operatingPeriod: string(p.operatingPeriod), ...(base.source.name === "myseoul_program" ? { changeReviewed: p.changeReviewed === true, changedFields: p.changedFields === undefined ? [] : strings(p.changedFields), comparisonAvailable: p.comparisonAvailable === true } : {}) };
   }
-  return { ...base, kind, content, status: choice(v.status, ["pending", "published", "rejected", "superseded"]), category: choice(v.category, ["", "policy", "program", "event", "youth_space", "living"]), period: string(v.period), publishedAt, publishedId: nullable(v.publishedId), ...(base.source.name === "myseoul_program" ? { publishedSlug: nullable(v.publishedSlug ?? null) } : {}), ...(programInfo ? { programInfo } : {}), ...(image ? { image } : {}) };
+  return { ...base, kind, content, filterInfo: candidateFilterInfo(v.filterInfo), status: choice(v.status, ["pending", "published", "rejected", "superseded"]), category: choice(v.category, ["", "policy", "program", "event", "youth_space", "living"]), period: string(v.period), publishedAt, publishedId: nullable(v.publishedId), ...(base.source.name === "myseoul_program" ? { publishedSlug: nullable(v.publishedSlug ?? null) } : {}), ...(programInfo ? { programInfo } : {}), ...(image ? { image } : {}) };
 }

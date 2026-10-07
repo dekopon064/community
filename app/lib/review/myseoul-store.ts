@@ -1,3 +1,4 @@
+import { filterInfo } from './content-filter-store';
 import { ReviewFailure } from "./contracts";
 import type { RpcClient } from "./database-store";
 import { myObject, myText, myStrings, myseoulFacts, myseoulGuidance, myseoulOfficialUrl, myseoulPatchFields, myseoulProfile, myseoulSchema, myseoulReasonFields } from "./myseoul-contract";
@@ -15,7 +16,7 @@ export function myseoulItem(raw: unknown, id: string) {
     if (editableFields.some(k => !(myseoulPatchFields as readonly string[]).includes(k)) || !Array.isArray(o.history) || o.history.length > 25) throw new ReviewFailure("unavailable");
     const facts = myseoulFacts(o.facts), observedFacts = myseoulFacts(o.observedFacts);
     if (facts.source_revision !== o.revision || observedFacts.source_revision !== o.revision || facts.official_url !== source.url) throw new ReviewFailure("unavailable");
-    return { id, revision: myText(o.revision), version: myText(o.version), schema: myseoulSchema, profile: myseoulProfile, factsVersion: o.factsVersion,
+    return { id, filterInfo: filterInfo(o.filterInfo, String(o.revision)), revision: myText(o.revision), version: myText(o.version), schema: myseoulSchema, profile: myseoulProfile, factsVersion: o.factsVersion,
       source: { name: "myseoul_program", title: myText(source.title, 500), url: myseoulOfficialUrl(source.url), body: myText(source.body) },
       facts, observedFacts, status: myText(o.status), aiStatus: myText(o.aiStatus, 20), editableFields, restoredReviewPending: o.restoredReviewPending === true,
       result: { decision: myText(result.decision), disposition: myText(result.disposition), scope: myText(result.scope), application: myText(result.application), quality: myText(result.quality), public_category: myText(result.public_category), reasons },

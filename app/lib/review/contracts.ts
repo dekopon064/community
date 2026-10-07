@@ -1,3 +1,4 @@
+import type { FilterInfo, CandidateFilterInfo } from './content-filter-store';
 export type ReviewKind = "facts" | "candidates";
 export type Category = "" | "policy" | "program" | "event" | "youth_space" | "living";
 export type Facts = {
@@ -27,6 +28,7 @@ type BaseItem = {
   history: History[];
 };
 export type FactsItem = BaseItem & {
+  filterInfo?: FilterInfo;
   kind: "facts"; facts: Facts; reasons: string[];
   editableFields?: (keyof Facts)[];
   excludeAllowed?: boolean;
@@ -35,6 +37,7 @@ export type FactsItem = BaseItem & {
   aiStatus: "blocked" | "queued" | "claimed" | "completed" | "failed" | "cancelled";
 };
 export type CandidateItem = BaseItem & {
+  filterInfo?: CandidateFilterInfo;
   kind: "candidates"; content: CandidateContent;
   status: "pending" | "published" | "rejected" | "superseded";
   category: Category; period: string;

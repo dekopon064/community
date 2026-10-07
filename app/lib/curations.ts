@@ -1,3 +1,4 @@
+import { parseContentFilters } from './contentFilters';
 import { supabase } from "@/app/lib/supabase";
 import { isUserCategory } from "@/app/lib/userCategories";
 import { sourceImageUrl } from "@/app/lib/sourceImages";
@@ -49,7 +50,10 @@ export function localizeCuration(
     return null;
   }
 
+  let contentFilters = null;
+  if (row.content_filters != null) { try { contentFilters = parseContentFilters(row.content_filters); } catch { /* Keep legacy visibility; unusable metadata is not a filter value. */ } }
   return {
+    contentFilters,
     id: row.id,
     slug: row.slug,
     category: row.category,
