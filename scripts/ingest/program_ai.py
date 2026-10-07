@@ -16,7 +16,27 @@ from ingest.program_scope import PROGRAM_PROFILE, PROGRAM_SCHEMA, ProgramFacts, 
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout, map_rpc_exception
 from ingest.region_ja_glossary import validate_japanese_output
 
+from ingest.content_filters import validate_claim_filter, validate_program_filter_snapshot
+
 SOURCE = "seoul_reservation"
+PROGRAM_TEMPORAL_REASONS = frozenset({"application_not_started", "not_currently_accepting", "program_ended"})
+
+
+def reviewed_temporal_ready(result: Any, *, temporal_reasons: frozenset[str]) -> bool:
+    """After substantive facts validation only; never used for discovery selection.
+
+    Mirrors Build's publication_temporal_ready decision/reasons contract, with
+    each adapter supplying only its own evaluator's known temporal reasons.
+    """
+    if not isinstance(result, dict) or type(result.get("reasons")) is not list:
+        return False
+    reasons = result["reasons"]
+    if any(type(reason) is not str for reason in reasons):
+        return False
+    if result.get("decision") == "in_scope":
+        return not reasons
+    return (result.get("decision") == "not_currently_available" and bool(reasons)
+            and all(reason in temporal_reasons for reason in reasons))
 
 
 class ProgramAIAdapter:
@@ -60,7 +80,10 @@ def validate_context(c: Any, target: str, revision: str, worker: str) -> dict[st
                     "source_status", "conflicts", "missing", "editorial_pending", "period_evidence", "periods", "official_url", "description"}
         if not isinstance(f, dict) or set(f) != required or f["schema_version"] != PROGRAM_SCHEMA or f["content_kind"] != "program":
             raise ValueError()
-        if f["missing"] or f["conflicts"] or f["editorial_pending"] or f["source_status"] != "open":
+        if f["missing"] or f["conflicts"] or f["editorial_pending"]:
+            raise ValueError()
+        # Known source states are structural input, not an open-only AI policy.
+        if f["source_status"] not in {"open", "reservation_closed", "application_closed"}:
             raise ValueError()
         if not isinstance(f["description"], str) or len(f["description"].strip()) < 20:
             raise ValueError()
@@ -82,7 +105,10 @@ def validate_context(c: Any, target: str, revision: str, worker: str) -> dict[st
         if f["application_actor"] not in {"individual", "individual_or_group"} or f["delivery_mode"] not in {"online", "offline", "hybrid"} or f["fee_kind"] not in {"free", "paid", "unknown"}:
             raise ValueError()
         current = ProgramFacts(**{k: v for k, v in f.items() if k != "periods"})
-        if assess_program_facts(current, f["periods"], now=datetime.now().astimezone()).decision != "in_scope":
+        assessed = assess_program_facts(current, f["periods"], now=datetime.now().astimezone())
+        if not reviewed_temporal_ready(
+                {"decision": assessed.decision, "reasons": list(assessed.reason_codes)},
+                temporal_reasons=PROGRAM_TEMPORAL_REASONS):
             raise ValueError()
         return c
     except (KeyError, TypeError, ValueError, AttributeError):
@@ -134,6 +160,10 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         if not rows:
             return AiWorkerResult(status="ai_no_jobs")
         c = validate_context(rows[0], source_item_id, revision, worker_id)
+        if c.get("filterContext") is not None:
+            validate_claim_filter(c["filterContext"], worker=worker_id, fence=c,
+                                  category=c.get("publicCategory", "program"))
+            validate_program_filter_snapshot(c["filterContext"]["data"], c["facts"])
     except Exception:
         # Malformed claim context must not be used to fail/complete some other job.
         return AiWorkerResult(status="ai_state_unknown", state_unknown=1)

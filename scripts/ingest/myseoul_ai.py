@@ -11,7 +11,7 @@ from ingest.ai_errors import AiJobError
 from ingest.ai_worker import (KO_SUMMARY_HEADER, KO_SECTION_HEADERS, JA_SUMMARY_HEADER,
                              JA_SECTION_HEADERS, extract_summary_section)
 from ingest.myseoul_db import SCHEMA, evaluate_myseoul_facts
-from ingest.program_ai import ProgramAIAdapter
+from ingest.program_ai import ProgramAIAdapter, reviewed_temporal_ready
 from ingest.myseoul_ai_support import section_body, schedule_values, process_program_job
 from ingest.region_ja_glossary import validate_japanese_output
 
@@ -19,7 +19,62 @@ SOURCE = "myseoul_program"
 PROFILE = "myseoul-program-v1-local"
 
 
-def validate_context(c: dict[str, Any], target: str, revision: str, worker: str) -> dict[str, Any]:
+MYSEOUL_TEMPORAL_REASONS = frozenset({"application_not_started", "application_closed", "operation_ended"})
+MYSEOUL_APPLICATION_STATES = frozenset({"open", "not_started", "closed", "ended"})
+
+
+def myseoul_ai_ready(result: dict[str, Any]) -> bool:
+    """Current-facts readiness, aligned with Build's reviewed temporal contract.
+
+    Callers must evaluate current facts, never accept a client-supplied result.
+    Date/status meaning stays intact; unresolved facts remain blocking.
+    """
+    if (result.get("scope") != "included" or result.get("quality") != "sufficient"
+            or result.get("public_category") not in {"program", "event"}
+            or result.get("application") not in MYSEOUL_APPLICATION_STATES):
+        return False
+    return reviewed_temporal_ready(result, temporal_reasons=MYSEOUL_TEMPORAL_REASONS)
+
+
+def _same_snapshot(left: Any, right: Any) -> bool:
+    # JSON equality must distinguish true from 1, unlike Python dict equality.
+    return json.dumps(left, sort_keys=True, allow_nan=False) == json.dumps(right, sort_keys=True, allow_nan=False)
+
+
+def _server_activity_ready(c: dict[str, Any], read_detail: Callable[[str], Any]) -> bool:
+    """Use the protected detail RPC's fresh gate for the exact claimed snapshot.
+
+    The SQL evaluator verifies the administrator's venue audit. No client flag,
+    audit history, actor, or source quotation is added to facts/provider input.
+    A changed input is rejected here and still fenced again by the finish RPC.
+    """
+    d = read_detail(c["sourceItemId"])
+    if c.get("filterContext") is not None:
+        info = d.get("filterInfo") if isinstance(d, dict) else None
+        if (not isinstance(info, dict) or info.get("schema") != c["filterContext"]["schema"]
+                or info.get("revision") != c["revision"]
+                or type(info.get("filterVersion")) is not int
+                or info["filterVersion"] != c["filterContext"]["filterVersion"]
+                or info.get("missing") != []
+                or not _same_snapshot(info.get("data"), c["filterContext"]["data"])):
+            return False
+    return (isinstance(d, dict) and
+            (d.get("id"), d.get("revision"), d.get("schema"), d.get("profile")) ==
+            (c["sourceItemId"], c["revision"], SCHEMA, PROFILE) and
+            type(d.get("factsVersion")) is int and d["factsVersion"] == c["factsVersion"] and
+            d.get("status") == "resolved" and d.get("aiStatus") == "claimed" and
+            isinstance(d.get("source"), dict) and
+            (d["source"].get("name"), d["source"].get("title"), d["source"].get("url")) ==
+            (SOURCE, c["title"], c["facts"]["official_url"]) and
+            _same_snapshot(d.get("facts"), c["facts"]) and
+            _same_snapshot(d.get("observedFacts"), c["observedFacts"]) and
+            isinstance(d.get("result"), dict) and
+            d["result"].get("public_category") == c["publicCategory"] and
+            myseoul_ai_ready(d["result"]))
+
+
+def validate_context(c: dict[str, Any], target: str, revision: str, worker: str, *,
+                     read_detail: Callable[[str], Any] | None = None) -> dict[str, Any]:
     try:
         if (c["source"], c["schema"], c["profile"], c["sourceItemId"], c["revision"], c["workerId"]) != (
                 SOURCE, SCHEMA, PROFILE, target, revision, worker):
@@ -41,8 +96,21 @@ def validate_context(c: dict[str, Any], target: str, revision: str, worker: str)
             raise ValueError()
         if f["public_category"] not in {"program", "event"} or c["publicCategory"] != f["public_category"]:
             raise ValueError()
-        if evaluate_myseoul_facts(f, now=datetime.now().astimezone())["decision"] != "in_scope":
-            raise ValueError()
+        local = evaluate_myseoul_facts(f, now=datetime.now().astimezone())
+        if not myseoul_ai_ready(local):
+            # This is the one database-backed fact the pure local evaluator
+            # cannot know. Temporal reasons can coexist with this one missing
+            # fact, but only the protected server result can confirm readiness.
+            if (local["decision"] != "review_required" or
+                    local["application"] not in MYSEOUL_APPLICATION_STATES or
+                    "activity_region_unknown" not in local["reasons"] or
+                    any(reason not in MYSEOUL_TEMPORAL_REASONS | {"activity_region_unknown"}
+                        for reason in local["reasons"]) or
+                    f["delivery_mode"] not in {"offline", "mixed"} or
+                    f["activity_region"] != "capital" or f["activity_evidence"] != [] or
+                    not f["venue"].strip() or read_detail is None or
+                    not _server_activity_ready(c, read_detail)):
+                raise ValueError()
     except (KeyError, ValueError, TypeError, AttributeError, IndexError):
         raise AiJobError("ai_schema_error") from None
     return c
@@ -134,5 +202,9 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
 
 
 def process_myseoul_job(adapter: ProgramAIAdapter, **kwargs):
-    return process_program_job(adapter, rpc_source="myseoul_program", validate=validate_context,
+    def validate(c, target, revision, worker):
+        return validate_context(c, target, revision, worker,
+            read_detail=lambda identity: adapter.invoke("admin_myseoul_program_detail", {"p_id": identity}))
+
+    return process_program_job(adapter, rpc_source="myseoul_program", validate=validate,
                                generate=generate_myseoul_output, **kwargs)

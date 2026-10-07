@@ -8,12 +8,13 @@ from typing import Any, Callable
 
 from ingest.ai_errors import AI_OR_ENQUEUE_FAILED, AiJobError
 from ingest.models import ClaimedJob
-from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
+from ingest.rpc_errors import RpcAmbiguous, RpcTimeout, RpcFailure
 from ingest.source_identity import (
     CANONICAL_POLICY_SOURCE,
     curation_source_for_enqueue,
 )
-from ingest.store import AI_CLAIM_LIMIT, DEFAULT_JOB_LEASE_SECONDS, IngestStore
+from ingest.store import AI_CLAIM_LIMIT, DEFAULT_JOB_LEASE_SECONDS, IngestStore, LeaseLost
+from ingest.content_filters import validate_claim_filter
 
 WORKER_ID = "ingest-ai-worker"
 AI_SKIPPED_NOT_CONFIGURED = "ai_skipped_not_configured"
@@ -22,7 +23,7 @@ AI_PROCESSED = "processed"
 AI_STATE_UNKNOWN = "ai_state_unknown"
 AI_SKIPPED_SOURCE_INCOMPLETE = "ai_skipped_source_incomplete"
 AI_NO_JOBS = "ai_no_jobs"
-_RAW_PAYLOAD_SKIP_KEYS = frozenset({"atchfile", "atch_file", "facts"})
+_RAW_PAYLOAD_SKIP_KEYS = frozenset({"atchfile", "atch_file", "facts", "content_filter_context", "filterfacts"})
 _ONE_OFF_INCOMPLETE_SOURCE_ITEM_ID = "98396243-8907-4c70-b823-066d972c4ac2"
 _ONE_OFF_INCOMPLETE_REVISION = "c43eb4a979733eb688a75aa98fb6d9c28f5af61dc71850494d2d82a580e8476f"
 _ONE_OFF_INCOMPLETE_BODY = "홈페이지 링크: https://buly.kr/jc9Pam"
@@ -119,19 +120,45 @@ def process_ai_jobs(
     failed = 0
     state_unknown = 0
     for job in claimed:
+        filter_context = None
+        payload = job.normalized_payload or {}
+        if "content_filter_context" in payload:
+            try:
+                from uuid import UUID
+                import re
+                UUID(job.job_id); UUID(job.source_item_id)
+                if (job.source_id not in {"youthcenter_content", "youthcenter_policy"}
+                        or job.processing_stage != "ai_enrichment" or job.disposition != "target"
+                        or not re.fullmatch(r"[a-f0-9]{64}", job.revision_hash)
+                        or not job.external_key or not callable(getattr(store, "finish_content_filter_ai", None))):
+                    raise ValueError()
+                filter_context = validate_claim_filter(payload["content_filter_context"], worker=WORKER_ID)
+                _validate_filter_input(payload)
+            except Exception:
+                # An untrusted claim cannot authorize any failure/completion write.
+                state_unknown += 1
+                break
         try:
-            _process_one(
+            atomic = _process_one(
                 job,
                 supabase=supabase,
                 summarize_ko=summarize_ko,
                 translate_ja=translate_ja,
                 enqueue=enqueue,
                 revision_precheck=revision_precheck,
+                filter_context=filter_context,
+                finish_filter=getattr(store, "finish_content_filter_ai", None),
             )
         except (RpcTimeout, RpcAmbiguous):
             state_unknown += 1
             break
         except AiJobError as exc:
+            if filter_context is not None:
+                if _record_filter_failure(store, job, filter_context, exc.code):
+                    failed += 1
+                    continue
+                state_unknown += 1
+                break
             try:
                 new_status = store.fail_processing_job(
                     job.job_id, worker_id=WORKER_ID, error_code=exc.code
@@ -147,7 +174,16 @@ def process_ai_jobs(
                 state_unknown += 1
                 break
             continue
-        except Exception:
+        except Exception as exc:
+            if filter_context is not None:
+                if isinstance(exc, LeaseLost) or isinstance(exc, RpcFailure) and exc.code == "lease_lost":
+                    state_unknown += 1
+                    break
+                if _record_filter_failure(store, job, filter_context, AI_OR_ENQUEUE_FAILED):
+                    failed += 1
+                    continue
+                state_unknown += 1
+                break
             try:
                 new_status = store.fail_processing_job(
                     job.job_id, worker_id=WORKER_ID, error_code=AI_OR_ENQUEUE_FAILED
@@ -164,6 +200,9 @@ def process_ai_jobs(
                 break
             continue
 
+        if atomic:
+            completed += 1
+            continue
         try:
             store.complete_processing_job(job.job_id, worker_id=WORKER_ID)
         except Exception:
@@ -182,6 +221,22 @@ def process_ai_jobs(
     )
 
 
+def _validate_filter_input(payload: dict) -> None:
+    title = payload.get("plcyNm") or payload.get("pstTtl")
+    body = payload.get("plain_text")
+    if type(title) is not str or not 1 <= len(title.strip()) <= 300 or type(body) is not str or not body.strip():
+        raise AiJobError("ai_schema_error")
+
+
+def _record_filter_failure(store: IngestStore, job: ClaimedJob, context: dict, code: str) -> bool:
+    try:
+        # Recheck the same captured lease after generation; never renew or retry.
+        validate_claim_filter(context, worker=WORKER_ID)
+        return store.fail_content_filter_ai(job, context=context, error_code=AiJobError(code).code) == "failed"
+    except Exception:
+        return False
+
+
 def _process_one(
     job: ClaimedJob,
     *,
@@ -190,7 +245,9 @@ def _process_one(
     translate_ja: TranslateFn | None,
     enqueue: EnqueueFn,
     revision_precheck: PrecheckFn | None,
-) -> None:
+    filter_context: dict | None = None,
+    finish_filter: Callable | None = None,
+) -> bool | None:
     if job.processing_stage != "ai_enrichment":
         raise ValueError("human_job_claimed")
     if job.source_id in {"seoul_reservation", "myseoul_program"}:
@@ -198,7 +255,10 @@ def _process_one(
         raise AiJobError("ai_schema_error")
     payload = job.normalized_payload or {}
     curation_source = job.curation_source or curation_source_for_enqueue(job.source_id)
-    if revision_precheck is not None:
+    if "content_filter_context" in payload and filter_context is None:
+        # Direct callers cannot silently route filter jobs through legacy enqueue.
+        raise ValueError("content_filter_fence_required")
+    if revision_precheck is not None and filter_context is None:
         is_latest = revision_precheck(
             supabase,
             curation_source,
@@ -208,6 +268,8 @@ def _process_one(
         if is_latest:
             return
 
+    if filter_context is not None:
+        _validate_filter_input(payload)
     title = str(payload.get("plcyNm") or payload.get("pstTtl") or job.external_key)
     body = str(payload.get("plain_text") or "")
     if (
@@ -235,6 +297,30 @@ def _process_one(
         summary_ja = extract_summary_section(
             content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS
         )
+
+    if filter_context is not None:
+        from ingest.myseoul_ai_support import section_body
+        if ai_status_ko != "success" or ai_status_ja != "success" or finish_filter is None:
+            raise AiJobError("ai_schema_error")
+        for content, headers in ((content_ko, KO_SECTION_HEADERS), (content_ja, JA_SECTION_HEADERS)):
+            for header in headers:
+                section_body(content, header, headers)
+        output = {"aiModel": ai_model, "titleKo": title, "titleJa": title_ja,
+                  "summaryKo": summary_ko, "summaryJa": summary_ja,
+                  "contentKo": content_ko, "contentJa": content_ja}
+        for key, value in output.items():
+            maximum = 300 if key.startswith("title") else 1000 if key.startswith("summary") else 100 if key == "aiModel" else 200000
+            if type(value) is not str or not 1 <= len(value.strip()) <= maximum:
+                raise AiJobError("ai_schema_error")
+        result = finish_filter(job, context=filter_context, output=output)
+        from uuid import UUID
+        if type(result) is not dict or set(result) != {"candidateId", "outcome"} or result["outcome"] != "inserted":
+            raise RpcAmbiguous()
+        try:
+            UUID(result["candidateId"])
+        except (ValueError, TypeError, AttributeError):
+            raise RpcAmbiguous() from None
+        return True  # Server atomically finished candidate/snapshot/job.
 
     slug_prefix = "policy" if job.source_id == CANONICAL_POLICY_SOURCE else "content"
     params = {

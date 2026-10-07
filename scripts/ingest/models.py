@@ -183,6 +183,8 @@ class ObservationRecord:
     evaluated_profile: str | None = None
     application_deadline: Any | None = None
     discovery_selection: DiscoverySelection | None = None
+    filter_facts: Mapping[str, Any] | None = None
+    filter_contract: str | None = None
 
     def to_rpc_item(self) -> dict[str, Any]:
         normalized = self.normalized_payload
@@ -233,6 +235,11 @@ class ObservationRecord:
             payload["evaluated_profile"] = self.evaluated_profile
         if self.application_deadline is not None:
             payload["application_deadline"] = self.application_deadline.to_payload()
+        if self.filter_facts is not None:
+            import copy
+            payload["filterFacts"] = copy.deepcopy(dict(self.filter_facts))
+        if self.filter_contract is not None:
+            payload["filterContract"] = self.filter_contract
         return payload
 
 

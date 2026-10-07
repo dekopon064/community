@@ -5,6 +5,7 @@ import unicodedata
 from typing import Callable
 from uuid import UUID
 from ingest.ai_errors import AiJobError
+from ingest.content_filters import validate_claim_filter, validate_program_filter_snapshot
 from ingest.ai_worker import AiWorkerResult
 from ingest.program_ai import ProgramAIAdapter
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout
@@ -67,6 +68,10 @@ def process_program_job(adapter: ProgramAIAdapter, *, source_item_id: str, revis
         if not rows:
             return AiWorkerResult(status="ai_no_jobs")
         c = validate(rows[0], source_item_id, revision, worker_id)
+        if c.get("filterContext") is not None:
+            validate_claim_filter(c["filterContext"], worker=worker_id, fence=c,
+                                  category=c.get("publicCategory", "program"))
+            validate_program_filter_snapshot(c["filterContext"]["data"], c["facts"])
     except Exception:
         # Malformed claim context must not be used to fail/complete some other job.
         return AiWorkerResult(status="ai_state_unknown", state_unknown=1)

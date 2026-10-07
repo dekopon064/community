@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from ingest.models import ObservationRecord
 from ingest.program_scope import extract_program_facts
+from ingest.content_filters import SCHEMA, extract_filter_facts
 
 
 def program_rpc_item(record: ObservationRecord) -> dict[str, Any]:
@@ -22,6 +23,10 @@ def program_rpc_item(record: ObservationRecord) -> dict[str, Any]:
     item = record.to_rpc_item()
     # Decisions/job plans are computed by the protected SQL evaluator.
     item.update(disposition="observe_only", jobs=[], relationships=[], program_facts=facts)
+    filters = extract_filter_facts("seoul_reservation", payload, facts)
+    item["filterContract"] = SCHEMA
+    if filters is not None:
+        item["filterFacts"] = filters
     return item
 
 

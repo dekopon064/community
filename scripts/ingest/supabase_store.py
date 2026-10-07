@@ -40,6 +40,8 @@ from ingest.rpc_errors import (
 )
 from ingest.source_identity import ALLOWED_PERMISSION_TRANSITIONS
 from ingest.store import LeaseLost
+from ingest.content_filters import SCHEMA, extract_filter_facts, validate_claim_filter
+from ingest.ai_errors import ALLOWED_AI_ERROR_CODES
 
 INGEST_RPC_TIMEOUT_SECONDS = 30
 STOP_REASON_MAX_LEN = 64
@@ -170,6 +172,8 @@ def _v4_proposal_record(
         gate_facts=facts_payload,
         assessment_schema_version=schema,
         evaluated_profile=profile,
+        filter_facts=extract_filter_facts(source_id, record.normalized_payload or {}),
+        filter_contract=SCHEMA if source_id == "youthcenter_content" else None,
     )
 
 
@@ -195,8 +199,14 @@ def _rpc_data(client: Any, name: str, params: dict[str, Any]) -> Any:
         raise
     except Exception as exc:
         message = safe_api_message(exc)
-        if message == LEASE_LOST:
+        filter_message = getattr(exc, "message", None) if name in {"finish_content_filter_ai", "fail_content_filter_ai"} else None
+        if message == LEASE_LOST or filter_message in (
+            "content_filter_identity_changed", "content_filter_fence_lost", "content_filter_input_changed",
+        ):
             mapped = LeaseLost()
+        elif name == "finish_content_filter_ai" and filter_message in ("review_invalid_input", "program_candidate_unavailable"):
+            # Only these explicit server rejections prove completion did not commit.
+            mapped = RpcFailure("rpc_failure")
         else:
             mapped = map_rpc_exception(exc)
     if mapped is not None:
@@ -564,6 +574,13 @@ class SupabaseIngestStore:
             processing_stage = row["processing_stage"]
             if type(processing_stage) is not str or processing_stage != AI_STAGE:
                 raise RpcAmbiguous()
+            if payload is not None and "content_filter_context" in payload:
+                try:
+                    if row["source_id"] not in {"youthcenter_content", "youthcenter_policy"} or row["disposition"] != "target":
+                        raise ValueError()
+                    validate_claim_filter(payload["content_filter_context"], worker=worker_id)
+                except (ValueError, TypeError, KeyError, OverflowError):
+                    raise RpcAmbiguous() from None
             jobs.append(
                 ClaimedJob(
                     job_id=_uuid_str(row["job_id"]),
@@ -587,6 +604,40 @@ class SupabaseIngestStore:
         ):
             raise RpcAmbiguous()
         return jobs
+
+    def _content_filter_fence(self, job: ClaimedJob, context: dict) -> dict:
+        if job.source_id not in {"youthcenter_content", "youthcenter_policy"} or job.processing_stage != AI_STAGE or job.disposition != "target":
+            raise RpcAmbiguous()
+        _uuid_str(job.job_id); _uuid_str(job.source_item_id); _revision_hash(job.revision_hash)
+        context = validate_claim_filter(context, worker=context["workerId"])
+        captured = validate_claim_filter((job.normalized_payload or {}).get("content_filter_context"),
+                                         worker=context["workerId"])
+        if context != captured:
+            raise RpcAmbiguous()
+        return {
+            "p_job_id": job.job_id, "p_revision": job.revision_hash,
+            "p_filter_version": context["filterVersion"], "p_claimed_at": context["claimedAt"],
+            "p_lease_until": context["leaseUntil"], "p_worker_id": context["workerId"],
+        }
+
+    def finish_content_filter_ai(self, job: ClaimedJob, *, context: dict, output: dict) -> dict:
+        data = _rpc_data(self._client, "finish_content_filter_ai", {
+            **self._content_filter_fence(job, context), "p_output": output,
+        })
+        if type(data) is not dict or set(data) != {"candidateId", "outcome"} or data["outcome"] != "inserted":
+            raise RpcAmbiguous()
+        _uuid_str(data["candidateId"])
+        return data
+
+    def fail_content_filter_ai(self, job: ClaimedJob, *, context: dict, error_code: str) -> str:
+        if type(error_code) is not str or error_code not in ALLOWED_AI_ERROR_CODES:
+            raise ValueError("invalid_ai_error_code")
+        data = _rpc_data(self._client, "fail_content_filter_ai", {
+            **self._content_filter_fence(job, context), "p_error_code": error_code,
+        })
+        if type(data) is not str or data != "failed":
+            raise RpcAmbiguous()
+        return data
 
     def complete_processing_job(self, job_id: str, *, worker_id: str) -> None:
         data = _rpc_data(

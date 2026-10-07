@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from ingest.connectors.myseoul_program import SOURCE, PARSER_VERSION, REVISION_CONTRACT
 from ingest.models import ObservationRecord
+from ingest.content_filters import SCHEMA as FILTER_SCHEMA, extract_filter_facts
 from ingest.myseoul_scope import KST, _boundary, _fact_comparison, assess_myseoul
 
 SCHEMA = "myseoul-program-facts-v1-local"
@@ -140,6 +141,10 @@ def myseoul_rpc_item(record: ObservationRecord, *, now: datetime) -> dict[str, A
     item = copy.deepcopy(record.to_rpc_item())
     item.update(disposition="observe_only", jobs=[], relationships=[],
                 myseoul_facts=myseoul_facts(record, now=now))
+    filters = extract_filter_facts("myseoul_program", p, item["myseoul_facts"])
+    item["filterContract"] = FILTER_SCHEMA
+    if filters is not None:
+        item["filterFacts"] = filters
     return item
 
 

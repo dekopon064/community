@@ -86,7 +86,11 @@ class MyAITests(unittest.TestCase):
         with self.assertRaises(AiJobError): generate_myseoul_output(c, summarize_ko=ko, translate_ja=ja)
         ja.assert_not_called()
 
-    def test_gate_rejects_missing_closed_excluded(self):
+    def test_gate_allows_reviewed_closed_but_rejects_unresolved_or_excluded(self):
+        c = context(); c["facts"]["source_status"] = ["신청마감"]
+        before = copy.deepcopy(c)
+        self.assertEqual(validate_context(c, ID, c["revision"], c["workerId"]), c)
+        self.assertEqual(c, before)
         for change in ({"source_status": ["申請終了", "신청마감"]}, {"issues": [{"code": "target_missing"}]}, {"application_actor": "institution_only"}, {"activity_region": "noncapital"}):
             c = context(); c["facts"].update(change)
             with self.assertRaises(AiJobError): validate_context(c, ID, c["revision"], c["workerId"])
