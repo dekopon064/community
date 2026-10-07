@@ -17,7 +17,7 @@ export function myseoulItem(raw: unknown, id: string) {
     if (facts.source_revision !== o.revision || observedFacts.source_revision !== o.revision || facts.official_url !== source.url) throw new ReviewFailure("unavailable");
     return { id, revision: myText(o.revision), version: myText(o.version), schema: myseoulSchema, profile: myseoulProfile, factsVersion: o.factsVersion,
       source: { name: "myseoul_program", title: myText(source.title, 500), url: myseoulOfficialUrl(source.url), body: myText(source.body) },
-      facts, observedFacts, status: myText(o.status), aiStatus: myText(o.aiStatus, 20), editableFields,
+      facts, observedFacts, status: myText(o.status), aiStatus: myText(o.aiStatus, 20), editableFields, restoredReviewPending: o.restoredReviewPending === true,
       result: { decision: myText(result.decision), disposition: myText(result.disposition), scope: myText(result.scope), application: myText(result.application), quality: myText(result.quality), public_category: myText(result.public_category), reasons },
       reasonGuidance: reasons.map(code => ({ code, text: myseoulGuidance(code), supported: myseoulReasonFields(code).length > 0 })),
       history: o.history.map(raw => { const h = myObject(raw); return { action: myText(h.action, 30), actor: myText(h.actor, 36), at: myText(h.at, 100), note: myText(h.note, 4000), fields: myStrings(h.fields) }; }) };

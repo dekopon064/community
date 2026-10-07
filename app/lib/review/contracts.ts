@@ -19,7 +19,7 @@ export type CandidateContent = {
 };
 export type CandidateImageSelection = { mode: "source" | "override" | "none"; url: string | null };
 export type CandidateImage = CandidateImageSelection & { sourceUrl: string | null };
-export type CandidateNotice = { kind: "difference" | "unverified"; language: "ko" | "ja" | "both"; section: string; item: string; expected: string; result: string };
+export type CandidateNotice = { kind: "difference" | "possible_missing" | "unverified"; language: "ko" | "ja" | "both"; section: string; item: string; expected: string; result: string; actual?: string };
 export type History = { action: string; actor: string; at: string; note: string; changeLabel?: string };
 type BaseItem = {
   id: string; revision: string; version: string;

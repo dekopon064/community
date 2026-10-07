@@ -5,10 +5,10 @@ const record = (v: unknown): RecordValue | null => v !== null && typeof v === "o
 const text = (v: unknown): string => typeof v === "string" ? v : "";
 const texts = (v: unknown): string[] => Array.isArray(v) ? v.filter((s): s is string => typeof s === "string").slice(0, 200) : [];
 // Only short relevant excerpts leave the server. HTML/phone/email are not notices.
-function excerpt(v: string): string {
+function excerpt(v: string, limit = 280): string {
   return v.replace(/<[^>]*>/g, "").replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, "[연락처 생략]")
     .replace(/(?:\+82[- ]?)?0\d{1,2}[- )]?\d{3,4}[- ]?\d{4}/g, "[연락처 생략]")
-    .replace(/https?:\/\/\S+/g, "[링크]").slice(0, 280);
+    .replace(/https?:\/\/\S+/g, "[링크]").slice(0, limit);
 }
 function normalized(v: string): string {
   let previousEnd = -1, meridiem = "";
@@ -63,6 +63,17 @@ function section(content: string, header: string): string {
   return content.slice(at + header.length).split(/\n\s*\[[^\]\n]+\]/)[0].trim();
 }
 const unknown = (item: string): CandidateNotice => ({ kind: "unverified", language: "both", section: "전체", item, expected: "생성 당시 입력", result: "대조 자료를 읽지 못해 판단할 수 없습니다. 후보 내용은 그대로 표시합니다." });
+// Display-only excerpts from the SAVED candidate; never new generation evidence.
+function candidatePassage(content: CandidateContent, language: CandidateNotice["language"], label: string): string {
+  const passage = (lang: "ko" | "ja") => {
+    const body = lang === "ko" ? content.contentKo : content.contentJa;
+    const headers = lang === "ko" ? ["대상", "기간·상태", "주요 내용", "신청 방법"] : ["対象", "期間・状況", "主な内容", "申請方法"];
+    const labels = ["대상", "기간·상태", "주요 내용", "신청 방법"];
+    const pieces = headers.flatMap((header, i) => label.includes(labels[i]) ? [section(body, `[${header}]`)] : []).filter(Boolean);
+    return excerpt(pieces.length ? pieces.join("\n") : label === "전체" ? body : "해당 섹션 표지를 찾지 못했습니다. 아래 후보 본문에서 확인해 주세요.", 900);
+  };
+  return language === "both" ? `한국어: ${passage("ko")}\n일본어: ${passage("ja")}` : passage(language);
+}
 export function unavailableMySeoulNotices(): CandidateNotice[] { return [unknown("내용 대조")]; }
 
 /** Read-time advisory, not a generation audit record or a new publication gate.
@@ -75,7 +86,8 @@ export function mySeoulCandidateNotices(raw: unknown, id: string, inputFactsVers
       o.profile !== "myseoul-program-v1-local" || o.factsVersion !== inputFactsVersion || !/^[a-f0-9]{64}$/.test(text(o.revision))) return unavailableMySeoulNotices();
   const notices: CandidateNotice[] = [];
   const add = (language: CandidateNotice["language"], section: string, item: string, expected: string, result: string, kind: CandidateNotice["kind"] = "unverified") => {
-    if (notices.length < 48) notices.push({ language, section, item, expected: excerpt(expected), result: excerpt(result), kind });
+    if (notices.length < 48) notices.push({ language, section, item, expected: excerpt(expected), result: excerpt(result), kind,
+      actual: candidatePassage(content, language, section) });
   };
   const requirements: [string, string][] = [["참여 대상", text(f.target)], ["거주 조건", text(f.residence)], ["자격 조건", text(f.qualification_note)], ["개최 장소", text(f.venue)],
     ...["conditions", "age", "companion", "language"].flatMap(k => texts(f[k]).map(v => [({ conditions: "참여 조건", age: "연령", companion: "동반 조건", language: "진행 언어" } as Record<string, string>)[k], v] as [string, string])),
@@ -97,10 +109,10 @@ export function mySeoulCandidateNotices(raw: unknown, id: string, inputFactsVers
       const quantities = [...quantityTokens(unit(normalized(expected)))];
       const actual = unit(normalized(/연령|대상|조건/.test(item) ? participant : body));
       const missing = quantities.filter(v => !quantityTokens(actual).has(v));
-      if (missing.length) add(language, item === "비용" ? "전체" : "대상·주요 내용", item, expected, `명시된 숫자·단위 ${missing.join(", ")}를 관련 섹션에서 찾지 못했습니다. 다른 표현인지는 판단하지 못했습니다.`);
+      if (missing.length) add(language, item === "비용" ? "전체" : "대상·주요 내용", item, expected, `명시된 숫자·단위 ${missing.join(", ")}를 관련 섹션에서 찾지 못했습니다. 다른 표현인지는 판단하지 못했습니다.`, "possible_missing");
       else if (!quantities.length && (language === "ja" || !body.replace(/\s/g, "").includes(expected.replace(/\s/g, "")))) {
         // A substring mismatch cannot be labelled as a confirmed semantic error.
-        add(language, "대상·주요 내용", item, expected, "문장 의미가 같은지는 자동으로 판단하지 못했습니다.");
+        add(language, item === "개최 장소" ? "기간·상태·주요 내용" : item === "비용" ? "주요 내용" : "대상·주요 내용", item, expected, "같은 뜻으로 표현됐는지 아래 후보 문장과 비교해 주세요.");
       }
     }
     for (const key of ["application", "operation"]) {
@@ -144,7 +156,7 @@ export function mySeoulCandidateNotices(raw: unknown, id: string, inputFactsVers
       }
     }
     const methods = section(body, language === "ko" ? "[신청 방법]" : "[申請方法]");
-    for (const link of texts(f.application_links)) if (!methods.includes(link)) add(language, "신청 방법", "신청 링크", "생성 입력의 신청 링크", "관련 섹션에서 같은 링크를 찾지 못했습니다.", "difference");
+    for (const link of texts(f.application_links)) if (!methods.includes(link)) add(language, "신청 방법", "신청 링크", "생성 입력의 신청 링크", "관련 섹션에서 같은 링크를 찾지 못했습니다.", "possible_missing");
     for (const method of texts(f.application_methods)) if (language === "ja" || !methods.includes(method)) add(language, "신청 방법", "신청 방법", method, "신청 방법의 문장 의미가 같은지는 자동으로 판단하지 못했습니다.");
     if (language === "ja" && /[가-힣]|[円￥¥]/.test(body)) add(language, "전체", "일본어 표기", "일본어·원화 안내", "한글 또는 엔화 표기가 있습니다.", "difference");
   }
@@ -154,7 +166,7 @@ export function mySeoulCandidateNotices(raw: unknown, id: string, inputFactsVers
   for (const [ko, ja, label] of [["[대상]", "[対象]", "대상"], ["[주요 내용]", "[主な内容]", "주요 내용"]]) {
     const a = units(section(content.contentKo, ko)), b = units(section(content.contentJa, ja));
     const missing = [...quantityTokens(a)].filter(v => !quantityTokens(b).has(v));
-    if (missing.length) add("both", label, "한일 숫자·단위 대조", missing.join(", "), "한국어와 같은 숫자·단위를 일본어의 대응 섹션에서 찾지 못했습니다.");
+    if (missing.length) add("both", label, "한일 숫자·단위 대조", missing.join(", "), "한국어와 같은 숫자·단위를 일본어의 대응 섹션에서 찾지 못했습니다.", "possible_missing");
   }
   if (notices.length === 48) notices.push({ kind: "unverified", language: "both", section: "전체", item: "대조 범위", expected: "생성 당시 입력", result: "안내가 많아 일부 상세 대조를 표시하지 못했습니다. 자동 검사 결과는 정확성을 보장하지 않습니다." });
   return notices;

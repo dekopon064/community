@@ -10,6 +10,7 @@ import type { MySeoulFee, MySeoulPeriods } from '@/app/lib/review/myseoul-ui';
 import { failureText, sourceLink, statusText } from '@/app/lib/review/presentation';
 import { myseoulErrorMessage } from '@/app/lib/review/myseoul-errors';
 import { fieldClass, primaryButton, secondaryButton } from './ReviewEditors';
+import { RestoredMySeoulFacts } from './RestoredMySeoulFacts';
 
 type Item = ReturnType<typeof myseoulItem>;
 class Failure extends Error {
@@ -110,7 +111,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
     if (sending.current) return; sending.current = true; setBusy(true); setError(''); setNotice('');
     try { const next = await request(id, command); accept(next);
       if (command.action === 'save_facts' && item && draft) { setDraft(mergeMySeoulDraft(item.facts, draft, next.facts, command.patch)); setExcludeNote(excludeNote); }
-      onResult(next); setNotice(command.action === 'exclude' ? '서비스 범위상 제외 사유를 기록했습니다.' : '사실을 저장하고 다시 평가했습니다.'); }
+      onResult(next); setNotice(command.action === 'exclude' ? '제외 사유를 기록하고 휴지통으로 이동했습니다. 72시간 이내에 복원할 수 있습니다.' : '사실을 저장하고 다시 평가했습니다.'); }
     catch (e) { showFailure(e); setConfirm(false); }
     finally { sending.current = false; setBusy(false); }
   }
@@ -121,6 +122,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
       {error && <div className="mt-3 flex flex-wrap gap-3"><button type="button" className={secondaryButton} disabled={busy} onClick={() => void reload()}>{unsaved ? '입력을 버리고 최신 내용 불러오기' : '최신 내용 다시 확인'}</button>{['signed_out', 'forbidden'].includes(error) && <Link prefetch={false} href="/ko/login?next=%2Fko%2Fadmin" className={secondaryButton}>로그인 상태 확인</Link>}</div>}</div>}
     {!item || !draft ? <p role="status" className="py-6 text-info-muted">{busy ? '마이서울플러스 항목을 불러오는 중입니다.' : '항목을 불러오지 못했습니다.'}</p> : <>
       <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">마이서울플러스 · {statusText[item.status]}</p></header>
+      {item.restoredReviewPending && !processed && <section className="my-6 border-b border-info-rule pb-5" aria-label="복원한 사실 확인"><h3 className="font-semibold">휴지통에서 복원한 항목입니다.</h3><p className="mt-2 text-info-body">현재 사실과 원문을 확인해 주세요. 복원만으로 AI를 실행하거나 게시하지 않습니다.</p><RestoredMySeoulFacts facts={item.facts}/><button type="button" className={`${secondaryButton} mt-3`} disabled={busy || confirm || unsaved} onClick={() => void submit({ action: 'save_facts', revision: item.revision, version: item.version, patch: {}, confirmRestored: true })}>저장된 사실로 확인·저장</button></section>}
       <details className="my-6 border-b border-info-rule pb-5"><summary className="cursor-pointer py-3 font-semibold">원문 확인 · 읽기 전용</summary>{link && <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a>}<p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || '저장된 본문이 없습니다.'}</p></details>
       {['closed', 'ended', 'not_started'].includes(item.result.application) && <p className="mb-6 text-info-status">{item.result.application === 'not_started' ? '아직 접수 전입니다.' : '접수 또는 운영이 종료된 항목입니다.'}</p>}
       <form onSubmit={e => { e.preventDefault(); try { void submit(buildMySeoulSave(item, draft)); } catch (e) { showFailure(e); } }}>
@@ -128,7 +130,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
         <div className="divide-y divide-info-rule">{reviewGroups(item).map(group => {
           const fields = visibleMySeoulFields(group.fields, draft);
           return <section key={group.key} className="py-6" aria-label={group.reasons.map(r => r.text).join(' ')}>
-            {group.reasons.map(reason => <div key={reason.code} className="mb-4"><p className="font-semibold leading-7">{reason.text}</p>{!reason.supported && <p className="text-sm text-info-muted">현재 입력으로 해결할 수 없는 사유입니다.</p>}
+            {group.reasons.map(reason => <div key={reason.code} className="mb-4"><p className="font-semibold leading-7">{reason.code === 'restored_review_pending' ? '복원한 사실을 다시 확인해 주세요.' : reason.text}</p>{!reason.supported && reason.code !== 'restored_review_pending' && <p className="text-sm text-info-muted">현재 입력으로 해결할 수 없는 사유입니다.</p>}
               {!group.fields.includes('periods') && <IssueEvidence item={item} code={reason.code}/>}</div>)}
             {!processed && fields.length > 0 && <>
               <fieldset disabled={busy || confirm}><legend className="sr-only">확인한 사실 입력</legend><FactEditor value={draft} editable={fields} axes={reviewPeriodAxes(group.reasons.map(r => r.code))} onChange={setDraft}/></fieldset>

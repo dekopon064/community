@@ -9,7 +9,7 @@ type Endpoint = { value: string; precision: "day" | "minute" };
 export type MySeoulPeriod = { raw: string; status: string; endpoints: Endpoint[]; origin: string; label: string };
 export type MySeoulIssue = { code: string; field: string; evidence: string[] };
 export type MySeoulFacts = Record<string, unknown>;
-export type MySeoulCommand = { action: "save_facts"; revision: string; version: string; patch: Partial<Record<MySeoulField, unknown>> } | { action: "exclude"; revision: string; version: string; note: string };
+export type MySeoulCommand = { action: "save_facts"; revision: string; version: string; patch: Partial<Record<MySeoulField, unknown>>; confirmRestored?: true } | { action: "exclude"; revision: string; version: string; note: string };
 
 export function myObject(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new ReviewFailure("invalid_input");
@@ -97,13 +97,13 @@ export function myseoulFacts(raw: unknown): MySeoulFacts {
 export function myseoulCommand(raw: unknown): MySeoulCommand {
   const o = myObject(raw), action = o.action;
   if (!["save_facts", "exclude"].includes(String(action))) throw new ReviewFailure("invalid_input");
-  exact(o, action === "save_facts" ? ["action", "revision", "version", "patch"] : ["action", "revision", "version", "note"]);
+  exact(o, action === "save_facts" ? ["action", "revision", "version", "patch", ...(o.confirmRestored === true ? ["confirmRestored"] : [])] : ["action", "revision", "version", "note"]);
   const revision = myText(o.revision, 64), version = myText(o.version, 64);
   if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version)) throw new ReviewFailure("invalid_input");
   if (action === "save_facts") {
     const patch = myObject(o.patch);
-    if (!Object.keys(patch).length || Object.keys(patch).some(k => !(myseoulPatchFields as readonly string[]).includes(k))) throw new ReviewFailure("invalid_input");
-    return { action, revision, version, patch: Object.fromEntries(Object.entries(patch).map(([k, v]) => {
+    if ((!Object.keys(patch).length && o.confirmRestored !== true) || Object.keys(patch).some(k => !(myseoulPatchFields as readonly string[]).includes(k))) throw new ReviewFailure("invalid_input");
+    return { action, revision, version, ...(o.confirmRestored === true ? { confirmRestored: true as const } : {}), patch: Object.fromEntries(Object.entries(patch).map(([k, v]) => {
       if (k !== 'periods') return [k, fieldValue(k, v)];
       const axes = myObject(v);
       if (!Object.keys(axes).length || Object.keys(axes).some(axis => !['application', 'operation'].includes(axis))) throw new ReviewFailure('invalid_input');

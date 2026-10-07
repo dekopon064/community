@@ -52,7 +52,7 @@ export default function ReviewWorkspace() {
   const [notice, setNotice] = useState("");
   const programResult = useCallback((next: { id: string; status: string; source: { title: string; name?: string }; result: { reasons: string[] } }) => {
     setList(old => old.flatMap(entry => entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, title: next.source.title, status: next.status, reasons: next.status === "open" ? next.result.reasons : [] } : entry]));
-    if (next.status === "excluded") { setProgramId(null); setMyseoulId(null); setNotice(next.source.name === "myseoul_program" ? "서비스 범위에서 제외했습니다. My Seoul+의 휴지통 복구는 아직 연결하지 않았습니다." : "제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다."); }
+    if (next.status === "excluded") { setProgramId(null); setMyseoulId(null); setNotice("제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다."); }
   }, []);
   const [note, setNote] = useState("");
   const [changeNote, setChangeNote] = useState("");
@@ -236,10 +236,10 @@ export default function ReviewWorkspace() {
             <div className="mt-5 flex flex-wrap gap-3"><button className={primaryButton} disabled={busy} onClick={() => void submit(confirmation === "publish" ? { ...preconditions(), action: "publish" } : { ...preconditions(), action: confirmation, note })}>{busy ? "처리 중…" : confirmation === "publish" ? "확인하고 게시" : "확인하고 처리"}</button><button className={secondaryButton} disabled={busy} onClick={() => setConfirmation(null)}>돌아가기</button></div>
           </section>}
           {item.kind === "candidates" && item.publishedAt && <p className="mt-7 text-info-body">{mode === "local-fixture" ? "시험 게시" : "게시"} 시각: {time(item.publishedAt)} (한국 시간)</p>}
-          <details className="mt-10 border-t border-info-rule pt-4" open={item.history.length > 0}>
+          {item.kind === "candidates" && <details className="mt-10 border-t border-info-rule pt-4" open={item.history.length > 0}>
             <summary className="min-h-11 cursor-pointer py-2 font-semibold">저장·처리 이력 ({item.history.length})</summary>
             {item.history.length ? <ol className="divide-y divide-info-rule">{item.history.map((entry, index) => <li key={index} className="py-4 text-sm leading-6"><p className="font-semibold">{entry.changeLabel ?? actionText[entry.action] ?? "처리 기록"} · {time(entry.at)} (한국 시간)</p><p className="break-all text-info-muted">작업 계정: {entry.actor}</p>{entry.note && <p className="mt-1 whitespace-pre-wrap break-words text-info-body">{entry.note}</p>}</li>)}</ol> : <p className="py-3 text-info-muted">아직 저장·처리 이력이 없습니다.</p>}
-          </details>
+          </details>}
         </>}
       </section>
     </div>}

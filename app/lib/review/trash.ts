@@ -2,6 +2,7 @@ import { ReviewFailure } from "./contracts";
 import type { RpcClient } from "./database-store";
 import { databaseItem } from "./database-dto";
 import { programItem } from "./program-store";
+import { myseoulItem } from "./myseoul-store";
 
 export const quickReasons = { service_not_suitable: "서비스에 적합하지 않음", region_not_suitable: "대상 지역이 아님" } as const;
 export type QuickReason = keyof typeof quickReasons;
@@ -91,7 +92,7 @@ export class TrashStore {
     const v = obj(await this.invoke(command.action === "exclude" ? "admin_review_exclude_reason" : "admin_review_restore", args));
     const raw = obj(v.item), source = obj(raw.source); const id = str(raw.id, 36);
     if (!uuid.test(str(v.episodeId, 36)) || !uuid.test(id) || command.action === "exclude" && id !== command.id) throw new ReviewFailure("unavailable");
-    const item = source.name === "seoul_reservation" ? programItem(raw, id) : databaseItem(raw, "facts", id);
+    const item = source.name === "myseoul_program" ? myseoulItem(raw, id) : source.name === "seoul_reservation" ? programItem(raw, id) : databaseItem(raw, "facts", id);
     if (command.action === "exclude") return { episodeId: String(v.episodeId), expiresAt: date(v.expiresAt), item };
     if (v.sourceItemId !== id || v.sourceName !== source.name) throw new ReviewFailure("unavailable");
     return { episodeId: String(v.episodeId), sourceItemId: id, sourceName: String(source.name), item };
