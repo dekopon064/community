@@ -28,7 +28,7 @@ from ingest.models import (
     OrderingCapability,
     RelationshipPlan,
 )
-from ingest.sanitize import body_is_usable, extract_http_urls, html_to_plain_text, is_http_url
+from ingest.sanitize import extract_http_urls, html_to_plain_text, is_http_url
 from ingest.source_identity import (
     CANONICAL_CONTENT_SOURCE,
     CANONICAL_POLICY_SOURCE,
@@ -205,6 +205,7 @@ class YouthcenterContentConnector(BatchConnector):
         self.http = http or HttpClient(
             budget=CONTENT_HTTP_BUDGET,
             max_response_bytes=CONTENT_MAX_RESPONSE_BYTES,
+            max_attempts=1,
         )
         self._api_key_provider = api_key_provider
         self.known_policies = known_policies or {}
@@ -255,7 +256,8 @@ class YouthcenterContentConnector(BatchConnector):
         title = html_to_plain_text(cleaned.get("pstTtl"))
         source_url = select_content_source_url(cleaned, plain, hrefs)
         image_url = first_content_image(html_body, "https://www.youthcenter.go.kr/")
-        usable = body_is_usable(plain)
+        # Presence only; source-specific selection handles usefulness/uncertainty.
+        usable = bool(plain.strip())
         del permission_status, enabled
         deadline = parse_content_application_deadline(plain)
         relationships = policy_relationship_candidates(

@@ -31,6 +31,10 @@ def _item(key: str, rank: int, *, created: str | None = None, updated: str = "")
         oper_cd="11680",
         created=created if created is not None else f"2026-09-{30 - rank:02d} 12:00:00",
         updated=updated,
+        plcyExplnCn=(
+            "프로그램 신청 안내. 대상: 외국인 주민. 전국 거주자 신청 가능. "
+            "상시 신청 가능."
+        ),
     )
 
 

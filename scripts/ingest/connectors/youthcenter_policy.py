@@ -171,7 +171,7 @@ class YouthcenterPolicyConnector(BatchConnector):
         *,
         api_key_provider: Callable[[], str] | None = None,
     ) -> None:
-        self.http = http or HttpClient(budget=POLICY_HTTP_BUDGET)
+        self.http = http or HttpClient(budget=POLICY_HTTP_BUDGET, max_attempts=1)
         self._api_key_provider = api_key_provider
 
     def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:

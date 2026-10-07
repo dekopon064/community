@@ -15,6 +15,7 @@ from ingest.models import JobPlan, ObservationRecord
 from ingest.product_type import (
     PRODUCT_TYPE_EVENT_PROGRAM,
     PRODUCT_TYPE_KIND_CONFIRMED,
+    PRODUCT_TYPE_KIND_REVIEW,
     PRODUCT_TYPE_LIVING_GUIDE,
     PRODUCT_TYPE_POLICY_REFERENCE,
     ProductTypeClassification,
@@ -22,6 +23,8 @@ from ingest.product_type import (
 )
 from ingest.region import extract_eligibility_facts
 from ingest.relevance import classify_foreign_resident_eligibility
+from ingest.sanitize import is_http_url
+from ingest.source_identity import CANONICAL_CONTENT_SOURCE
 
 
 @dataclass(frozen=True)
@@ -97,10 +100,51 @@ def propose_assessment(
     record: ObservationRecord,
     *,
     source_kind: str | None = None,
+    source_id: str | None = None,
 ) -> AssessmentProposal:
     """Common facts → product type proposal → gate facts. Does not write."""
     del source_kind
     text = _record_text(record)
+    selection = record.discovery_selection
+    if selection is not None:
+        from ingest.youthcenter_selection import RULE_VERSION, SOURCE_POLICIES
+
+        if source_id not in SOURCE_POLICIES or source_id != selection.source_id:
+            raise ValueError("discovery_source_mismatch")
+        if selection.decision == "exclude":
+            raise ValueError("excluded_discovery_not_storable")
+        if not record.body_usable and not record.attachment_present:
+            # V4 currently evaluates an empty unattached body as non_target.
+            # Do not silently turn a discovery review into a server exclusion.
+            raise ValueError("empty_body_review_contract_required")
+        if (source_id == CANONICAL_CONTENT_SOURCE and not record.body_usable
+                and not is_http_url((record.normalized_payload or {}).get("source_url"))):
+            # Removed attachment metadata cannot authorize a material-less review,
+            # including unsupported alternate-text inputs. No non_target rewrite.
+            raise ValueError("review_material_contract_required")
+        review = selection.decision == "review"
+        classification = ProductTypeClassification(
+            kind=PRODUCT_TYPE_KIND_REVIEW if review else PRODUCT_TYPE_KIND_CONFIRMED,
+            product_type=None if review else selection.proposed_type,
+            reason_codes=selection.reason_codes or ("youthcenter_discovery_eligible",),
+            period_signals=(),
+            rule_version=RULE_VERSION,
+        )
+        facts = None
+        if not review:
+            living = selection.proposed_type == PRODUCT_TYPE_LIVING_GUIDE
+            facts = GateFacts(
+                schema_version=GATE_FACTS_SCHEMA_VERSION,
+                eligibility_scope=None if living else selection.region_scope,
+                eligibility_region_codes=() if living else selection.region_codes,
+                eligibility_region_evidence=None if living else selection.region_evidence,
+                foreign_resident_eligibility=(
+                    "eligible" if selection.proposed_type == PRODUCT_TYPE_POLICY_REFERENCE
+                    else None
+                ),
+                delivery_mode=extract_delivery_mode(text),
+            )
+        return AssessmentProposal(False, classification, facts, text)
     if _common_blocks_pipeline(record):
         return AssessmentProposal(
             skip_product_type=True,

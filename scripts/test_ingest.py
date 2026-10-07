@@ -955,6 +955,28 @@ class DateParseTests(unittest.TestCase):
 
 
 class AttachmentAndSanitizeTests(unittest.TestCase):
+    def test_empty_attachment_values_are_not_presence(self) -> None:
+        self.assertEqual(drop_forbidden_attachments({"title": "no attachment"})[1], (False, 0, False))
+        for key in ("atchFile", "atch_file", "atchFileName"):
+            for value in (None, "", " \t", [], {}, [None, "", []], {"file": None}):
+                with self.subTest(key=key, value=value):
+                    payload = {"title": "retained", "nested": [{key: value}]}
+                    before = json.dumps(payload)
+                    cleaned, meta = drop_forbidden_attachments(payload)
+                    self.assertEqual(meta, (False, 0, False))
+                    self.assertFalse(contains_forbidden_attachment_key(cleaned))
+                    self.assertEqual(json.dumps(payload), before)
+
+    def test_nonempty_data_attachment_presence_survives_removal_and_empty_siblings(self) -> None:
+        data = "data:application/pdf;base64,U1lOVEhFVElD"
+        payload = {"atchFile": None, "nested": [{"atch_file": data}, {"atchFileName": []}]}
+        before = json.dumps(payload)
+        cleaned, meta = drop_forbidden_attachments(payload)
+        self.assertEqual(meta, (True, len(data), True))
+        self.assertFalse(contains_forbidden_attachment_key(cleaned))
+        self.assertNotIn(data, json.dumps(cleaned))
+        self.assertEqual(json.dumps(payload), before)
+
     def test_atchfile_dropped_and_meta_kept(self) -> None:
         payload = load_content()
         cleaned, meta = drop_forbidden_attachments(payload)

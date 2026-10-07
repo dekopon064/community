@@ -104,6 +104,10 @@ def _print_summary(result: IngestArchitectureResult, *, run_ai: bool, exit_code:
         f"http_requests={source.http_request_count} "
         f"ordering={source.ordering_cli_token()}"
     )
+    if source.selection_counts:
+        counts = ",".join(f"{key}:{value}" for key, value in sorted(source.selection_counts.items()))
+        reasons = ",".join(f"{key}:{value}" for key, value in sorted(source.selection_reasons.items()))
+        print(f"ingest discovery={counts} reasons={reasons or '-'}")
     if run_ai:
         ai = result.ai
         print(

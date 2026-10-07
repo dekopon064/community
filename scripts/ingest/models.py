@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol
+
+if TYPE_CHECKING:
+    from ingest.youthcenter_selection import DiscoverySelection
 
 StartMode = Literal["fresh_from_origin", "resume_committed"]
 # Orchestrator processing policy, not an official source sort guarantee.
@@ -179,14 +182,19 @@ class ObservationRecord:
     assessment_schema_version: str | None = None
     evaluated_profile: str | None = None
     application_deadline: Any | None = None
+    discovery_selection: DiscoverySelection | None = None
 
     def to_rpc_item(self) -> dict[str, Any]:
+        normalized = self.normalized_payload
+        if self.discovery_selection is not None:
+            normalized = dict(normalized or {})
+            normalized["discovery_selection"] = self.discovery_selection.to_payload()
         payload = {
             "external_key": self.external_key,
             "revision_hash": self.revision_hash,
             "disposition": self.disposition,
             "min_fields": self.min_fields,
-            "normalized_payload": self.normalized_payload,
+            "normalized_payload": normalized,
             "source_created_at": self.source_created_at,
             "source_created_raw": self.source_created_raw,
             "source_created_parse_status": self.source_created_parse_status,

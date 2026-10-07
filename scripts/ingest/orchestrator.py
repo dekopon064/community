@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Callable, Iterable, Sequence
 
 from ingest.http_client import (
@@ -26,6 +27,7 @@ from ingest.store import (
     IngestStore,
     LeaseLost,
 )
+from ingest.youthcenter_selection import attach_selection, discovery_today, select_discovery
 
 SleepFn = Callable[[float], None]
 
@@ -79,6 +81,8 @@ class SourceRunResult:
         bootstrap_complete: bool,
         skipped: bool = False,
         ordering_diagnostics: frozenset[str] = frozenset(),
+        selection_counts: dict[str, int] | None = None,
+        selection_reasons: dict[str, int] | None = None,
     ) -> None:
         self.source_id = source_id
         self.status = status
@@ -88,6 +92,9 @@ class SourceRunResult:
         self.bootstrap_complete = bootstrap_complete
         self.skipped = skipped
         self.ordering_diagnostics = frozenset(ordering_diagnostics)
+        # Counts of discovery decisions attempted, never counts of saved outcomes.
+        self.selection_counts = dict(selection_counts or {})
+        self.selection_reasons = dict(selection_reasons or {})
 
     def ordering_cli_token(self) -> str:
         return format_ordering_cli_token(self.ordering_diagnostics)
@@ -152,6 +159,7 @@ def run_connector(
     lease_seconds: int = DEFAULT_LEASE_SECONDS,
     page_limit: int | None = None,
     force_full_range: bool = False,
+    discovered_on: date | None = None,
 ) -> SourceRunResult:
     if page_limit is not None and page_limit < 1:
         raise ValueError("page_limit must be positive")
@@ -162,6 +170,9 @@ def run_connector(
     if ordering_basis not in {"created", "updated_or_created"}:
         raise InvalidOrderingCapability()
     source_id = connector.canonical_source_id
+    today = discovered_on if discovered_on is not None else discovery_today()
+    selection_counts: dict[str, int] = {}
+    selection_reasons: dict[str, int] = {}
     source_row = store.get_source(source_id)
     enabled_flag = source_row["enabled"] if enabled is None else enabled
     permission = (
@@ -262,6 +273,25 @@ def run_connector(
             if found_anomaly:
                 anomaly = True
 
+            # Ordering, natural_end and configured item limits refer to the API
+            # page, not its eligible subset. Exclusions never become RPC outcomes.
+            observed_count = len(records)
+            selected = []
+            excluded_in_batch = False
+            for record in records:
+                selection = select_discovery(source_id, record, today=today)
+                if selection is None:
+                    selected.append(record)
+                    continue
+                selection_counts[selection.decision] = selection_counts.get(selection.decision, 0) + 1
+                for reason in selection.reason_codes:
+                    selection_reasons[reason] = selection_reasons.get(reason, 0) + 1
+                if selection.decision == "exclude":
+                    excluded_in_batch = True
+                    continue
+                selected.append(attach_selection(record, selection))
+            records = selected
+
             if not batch.items:
                 try:
                     store.upsert_source_observations_v4(
@@ -287,11 +317,11 @@ def run_connector(
                 break
 
             batches_ok += 1
-            items_committed += len(records)
+            items_committed += observed_count
             checkpoint = batch.next_checkpoint
 
             if capability == "require_descending" and not anomaly:
-                streak = advance_unchanged_streak(streak, results)
+                streak = 0 if excluded_in_batch else advance_unchanged_streak(streak, results)
 
             natural_short = batch.natural_end and bool(batch.items)
             if batch.natural_end and not batch.items:
@@ -393,6 +423,8 @@ def run_connector(
             http_request_count=_http_count(connector),
             bootstrap_complete=False,
             ordering_diagnostics=frozenset(ordering_diagnostics),
+            selection_counts=selection_counts,
+            selection_reasons=selection_reasons,
         )
 
     result_status = finish_result.status
@@ -406,6 +438,8 @@ def run_connector(
             http_request_count=_http_count(connector),
             bootstrap_complete=False,
             ordering_diagnostics=frozenset(ordering_diagnostics),
+            selection_counts=selection_counts,
+            selection_reasons=selection_reasons,
         )
     return SourceRunResult(
         source_id,
@@ -419,6 +453,8 @@ def run_connector(
             and result_reason in BOOTSTRAP_COMPLETE_REASONS
         ),
         ordering_diagnostics=frozenset(ordering_diagnostics),
+        selection_counts=selection_counts,
+        selection_reasons=selection_reasons,
     )
 
 

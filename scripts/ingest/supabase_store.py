@@ -153,8 +153,10 @@ RESOLVE_SOURCE_ITEM_APPLICATION_DEADLINE = "resolve_source_item_application_dead
 RESOLVE_SOURCE_ITEM_USER_CATEGORY = "resolve_source_item_user_category"
 
 
-def _v4_proposal_record(record: ObservationRecord) -> ObservationRecord:
-    proposal = propose_assessment(record)
+def _v4_proposal_record(
+    record: ObservationRecord, *, source_id: str | None = None,
+) -> ObservationRecord:
+    proposal = propose_assessment(record, source_id=source_id)
     facts_payload = None if proposal.gate_facts is None else proposal.gate_facts.to_payload()
     schema = None
     profile = None
@@ -438,7 +440,7 @@ class SupabaseIngestStore:
         records: list[ObservationRecord],
         next_checkpoint: Checkpoint | None,
     ) -> list[ObservationResult]:
-        proposed = [_v4_proposal_record(record) for record in records]
+        proposed = [_v4_proposal_record(record, source_id=source_id) for record in records]
         data = _rpc_data(
             self._client,
             UPSERT_SOURCE_OBSERVATIONS_V4,

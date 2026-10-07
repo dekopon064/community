@@ -647,7 +647,9 @@ class MemoryIngestStore:
         assessed: list[ObservationRecord] = []
         for record in records:
             self._reject_v4_input(record)
-            proposal = propose_assessment(record, source_kind=source.source_kind)
+            proposal = propose_assessment(
+                record, source_kind=source.source_kind, source_id=source_id
+            )
             evaluation = evaluate_proposal(record, proposal)
             rel_jobs = tuple(
                 job for job in record.jobs if job.stage == "relationship_review"

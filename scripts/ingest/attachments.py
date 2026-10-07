@@ -27,6 +27,17 @@ def _is_forbidden_key(key: object) -> bool:
     return compact.lower() in FORBIDDEN_ATTACHMENT_KEYS
 
 
+def _attachment_value_present(value: Any) -> bool:
+    """A key is not content. Presence does not imply retained/reviewable data."""
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(_attachment_value_present(child) for child in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_attachment_value_present(child) for child in value)
+    return bool(value)
+
+
 def drop_forbidden_attachments(value: Any) -> tuple[Any, AttachmentMeta]:
     """중첩 구조에서 첨부 키를 제거하고 메타를 합산한다. 원본 값은 버린다."""
     present = False
@@ -39,13 +50,14 @@ def drop_forbidden_attachments(value: Any) -> tuple[Any, AttachmentMeta]:
             cleaned: dict[str, Any] = {}
             for key, child in node.items():
                 if _is_forbidden_key(key):
-                    present = True
-                    if isinstance(child, str):
-                        length += len(child)
-                        if child.lstrip().lower().startswith("data:"):
-                            is_data_url = True
-                    elif child is not None:
-                        length += len(str(type(child)))
+                    if _attachment_value_present(child):
+                        present = True
+                        if isinstance(child, str):
+                            length += len(child)
+                            if child.lstrip().lower().startswith("data:"):
+                                is_data_url = True
+                        else:
+                            length += len(str(type(child)))
                     continue
                 cleaned[key] = walk(child)
             return cleaned

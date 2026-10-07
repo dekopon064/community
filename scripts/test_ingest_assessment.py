@@ -496,7 +496,14 @@ class AssessmentPipelineTests(unittest.TestCase):
 
     def test_orchestrator_uses_v4_write(self) -> None:
         store = MemoryIngestStore()
-        item = _event_item("orch")
+        item = _event_item(
+            "orch",
+            plcyExplnCn=(
+                "프로그램 참여 안내. 재한 일본인은 신청 가능합니다. "
+                "전국 거주자 신청 가능. 상시 신청 가능."
+            ),
+            plcySprtCn="",
+        )
         result = run_connector(
             FakeConnector(
                 batches=[
