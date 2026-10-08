@@ -4,10 +4,12 @@ import styles from "./AuthSurfaces.module.css";
 import { Bookmark } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { isUuid } from "@/app/lib/saved/intent";
+import SavedCount from "./SavedCount";
 export default function SaveControl({ id, slug, locale }: { id: string; slug: string; locale: string }) {
   const t = useTranslations("Saved");
   const [saved, setSaved] = useState(false), [busy, setBusy] = useState(true), [error, setError] = useState<string | null>(null), [message, setMessage] = useState<string | null>(null);
   const generation = useRef(0), working = useRef(false), revision = useRef<string | null>(null), retryAction = useRef("request");
+  const [countRefresh, setCountRefresh] = useState(0);
   useEffect(() => { if (!message) return; const timer = setTimeout(() => setMessage(null), 3000); return () => clearTimeout(timer); }, [message]);
   async function refresh() {
     if (working.current) return;
@@ -41,12 +43,14 @@ export default function SaveControl({ id, slug, locale }: { id: string; slug: st
       if (data.loginUrl) { window.location.assign(data.loginUrl); return; }
       if (!response.ok) {
         if (data.error === "state_changed") {
+          setCountRefresh(value => value + 1);
           revision.current = typeof data.version === "string" ? data.version : null;
           if (typeof data.saved === "boolean") setSaved(data.saved);
         }
         setError(action === "resume" && response.status >= 500 ? "save_after_login_failed" : data.error ?? "request_failed"); return; }
       if (typeof data.saved !== "boolean" || data.id !== id) { setError("request_failed"); return; }
       revision.current = typeof data.version === "string" ? data.version : null; setSaved(data.saved); setMessage(data.saved ? "saved" : "removed");
+      setCountRefresh(value => value + 1);
     } catch { if (version === generation.current) setError(action === "resume" ? "save_after_login_failed" : "request_failed"); }
     finally { if (version === generation.current) { working.current = false; setBusy(false); } }
   }
@@ -71,6 +75,7 @@ export default function SaveControl({ id, slug, locale }: { id: string; slug: st
   const errorKey = error && ["authentication_required", "information_unavailable", "intent_expired", "save_after_login_failed", "state_failed", "unavailable", "state_changed"].includes(error) ? error : "request_failed";
   return <div className={styles.save} aria-busy={busy}>
     <button type="button" disabled={busy || error === "state_failed"} aria-pressed={saved} aria-label={busy ? t("processing") : t(saved ? "remove" : "save")} onClick={() => void mutate(saved ? "remove" : "request")} className={styles.saveButton}><Bookmark size={18} fill={saved ? "currentColor" : "none"} aria-hidden="true" />{busy ? t("processing") : t(saved ? "isSaved" : "save")}</button>
+    <SavedCount id={id} refreshKey={countRefresh} />
     {message && <p role="status" aria-live="polite" aria-atomic="true" className={styles.result}>{t(message)}</p>}
     {error && <div role="alert" className={styles.saveError}><p>{t(`errors.${errorKey}`)}</p><button type="button" disabled={busy} onClick={() => error === "state_failed" ? void refresh() : void mutate(retryAction.current)} className="min-h-11 font-semibold text-ink underline underline-offset-4">{t("retry")}</button></div>}
   </div>;

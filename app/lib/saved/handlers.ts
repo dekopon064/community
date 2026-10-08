@@ -3,6 +3,7 @@ import { verifiedAccount } from "../auth/profile";
 import { privateResponse, authRedirect } from "../auth/http";
 import { isSameOriginPost, authLocale, loginUrl, publicBrowseReturnTo } from "../auth/urls";
 import { intentPath, isUuid, type IntentStore } from "./intent";
+import { isUserCategory } from "../userCategories";
 type Factory = () => Promise<SupabaseClient | null>;
 const reply = (data: object, status = 200) => privateResponse(Response.json(data, { status }));
 const errorReply = (e: { code?: string } | null) => reply({ error: e?.code === "PT404" ? "information_unavailable" : "request_failed" }, e?.code === "PT404" ? 404 : 503);
@@ -40,7 +41,7 @@ export async function savedRequest(request: Request, action: string, factory: Fa
       if (typeof body.slug !== "string" || !body.slug || body.slug.length > 200 || /[\\/\u0000-\u0020\u007f]/.test(body.slug)) return reply({ error: "invalid_request" }, 400);
       const { data, error } = await client.from("curations").select("id,slug,user_category,is_published,title_ko,summary_ko,content_ko,title_ja,summary_ja,content_ja").eq("id", id).eq("slug", body.slug).maybeSingle();
       if (error) return errorReply(error);
-      if (!data?.is_published || !["policy", "program"].includes(data.user_category) || (["title_ko", "summary_ko", "content_ko", "title_ja", "summary_ja", "content_ja"] as const).some(k => typeof data[k] !== "string" || !data[k].trim())) return reply({ error: "information_unavailable" }, 404);
+      if (!data?.is_published || !isUserCategory(data.user_category) || (["title_ko", "summary_ko", "content_ko", "title_ja", "summary_ja", "content_ja"] as const).some(k => typeof data[k] !== "string" || !data[k].trim())) return reply({ error: "information_unavailable" }, 404);
       const prepared = await client.rpc("prepare_saved_information_intent", { p_curation_id: id });
       if (prepared.error) return errorReply(prepared.error);
       if (!isUuid(prepared.data?.token)) return reply({ error: "request_failed" }, 503);

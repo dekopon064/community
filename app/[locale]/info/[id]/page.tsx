@@ -11,6 +11,7 @@ import CurationMobileSourceLink from "@/app/components/CurationMobileSourceLink"
 import SaveControl from "@/app/components/auth/SaveControl";
 import { getCurationPeriodPresentation, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
+import { isUserCategory } from "@/app/lib/userCategories";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,7 @@ export default async function InfoDetailPage({
     locale,
   };
   const hasPeriod = !!getCurationPeriodPresentation(periodInput);
-  const canSave = item.userCategory === "policy" || item.userCategory === "program";
+  const canSave = isUserCategory(item.userCategory);
   return (
     <div className="mx-auto min-h-[60vh] max-w-6xl bg-canvas px-5 pt-8 pb-24 md:px-8 md:pt-12 lg:px-10 lg:pt-16">
       <Link

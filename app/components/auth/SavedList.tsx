@@ -5,6 +5,7 @@ import { loginUrl } from "@/app/lib/auth/urls";
 import { ArrowRight, CircleAlert } from "lucide-react";
 import { formatApplicationDeadline, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import styles from "./AuthSurfaces.module.css";
+import { isUserCategory } from "@/app/lib/userCategories";
 type Item = { id: string; availability: string; information: { slug: string; title: string; category: string; applicationDeadlineKind: string | null; applicationDeadlineOn: string | null } | null };
 export default function SavedList({ locale }: { locale: "ko" | "ja" }) {
   const t = useTranslations("Saved"), generation = useRef(0);
@@ -55,7 +56,7 @@ export default function SavedList({ locale }: { locale: "ko" | "ja" }) {
     <ul className={styles.savedList}>{items.map(item => {
       const information = item.availability === "available" ? item.information : null;
       const deadline = information && formatApplicationDeadline({ kind: information.applicationDeadlineKind, on: information.applicationDeadlineOn, todayKst: todayKst(), locale });
-      return <li key={item.id} className={styles.savedRow}><div className="min-w-0">{information ? <><a href={`/${locale}/info/${encodeURIComponent(information.slug)}`} className={styles.savedOpen}>{["policy", "program"].includes(information.category) && <span className={styles.category}>{nav(information.category)}</span>}<span className={styles.savedTitle}>{information.title}</span></a>{deadline && <p className={styles.meta}>{deadline}</p>}</> : <p className={styles.unavailable}>{t("unavailable")}</p>}</div><button disabled={busy} onClick={() => void remove(item.id)} className={styles.remove} aria-label={`${t("remove")}: ${information?.title ?? t("unavailable")}`}>{t("remove")}</button></li>;
+      return <li key={item.id} className={styles.savedRow}><div className="min-w-0">{information ? <><a href={`/${locale}/info/${encodeURIComponent(information.slug)}`} className={styles.savedOpen}>{isUserCategory(information.category) && <span className={styles.category}>{nav(information.category)}</span>}<span className={styles.savedTitle}>{information.title}</span></a>{deadline && <p className={styles.meta}>{deadline}</p>}</> : <p className={styles.unavailable}>{t("unavailable")}</p>}</div><button disabled={busy} onClick={() => void remove(item.id)} className={styles.remove} aria-label={`${t("remove")}: ${information?.title ?? t("unavailable")}`}>{t("remove")}</button></li>;
     })}</ul>
     {!error && more && <button disabled={busy} onClick={() => void load(true)} className={`${styles.link} mt-4`}>{t("more")}</button>}
   </div>;

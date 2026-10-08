@@ -354,6 +354,10 @@
     }
   },
   "Saved": {
+    "count": "保存 {count, number}",
+    "countLoading": "保存数を確認中…",
+    "countUnavailable": "保存数を確認できませんでした。",
+    "countRetry": "保存数を再確認",
     "title": "保存した情報",
     "save": "保存",
     "remove": "保存を解除",
@@ -379,8 +383,8 @@
     },
     "continueSave": "元の情報に戻って保存する",
     "isSaved": "保存済み",
-    "description": "保存した政策・プログラムを見返せます。",
-    "emptyMore": "政策・プログラムの詳細から、必要な情報を保存してみましょう。",
+    "description": "保存した情報をもう一度確認できます。",
+    "emptyMore": "情報の詳細ページから必要な内容を保存してみましょう。",
     "explore": "生活情報を探す"
   },
   "PublicFilters": {

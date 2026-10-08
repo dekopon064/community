@@ -48,6 +48,8 @@
 .saveButton:hover:enabled {opacity:.85;}
 .saveButton:disabled {opacity:.55;}
 .result {font-size:14px;line-height:1.6;font-weight:400;color:var(--color-info-body);}
+.saveCount {display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:14px;line-height:1.6;color:var(--color-info-muted);font-variant-numeric:tabular-nums;}
+.countRetry {min-height:44px;font-weight:600;color:var(--color-ink);text-decoration:underline;text-underline-offset:4px;}
 .saveError {flex-basis:100%;margin-top:4px;font-size:14px;line-height:1.7;color:var(--color-info-status);}
 .saved {max-width:880px;margin:auto;padding:36px 20px 48px;}
 .savedList {margin-top:28px;}
