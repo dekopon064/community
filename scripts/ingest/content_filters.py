@@ -290,20 +290,88 @@ def _topic(text: str, category: str) -> str | None:
     return "other" if re.fullmatch(r"\s*(?:대표 분야|분야)\s*[:：]\s*기타\s*", t) else None
 
 
-def _audience(target: str) -> str | None:
-    if not target or re.search(r"출생|기준일|불명확|미정|어린이\s*(?:제외|불가)|아동\s*(?:제외|불가)", target):
+def _audience(text: str, *, role: str) -> str | None:
+    """Evidence signals for discovery, not applicant eligibility or an age gate.
+
+    Keep a default 'other' separate from an explicit contrary audience. Birth
+    years need no inferred age when the primary child audience is already clear.
+    """
+    if type(text) is not str:
+        return "unknown"
+    if not text.strip():
         return None
-    family = bool(re.search(r"가족|전\s*연령|누구나", target))
-    child = bool(re.search(r"(?:주\s*대상\s*[:：]?\s*)?(?:어린이|아동|초등학생)(?:\s*(?:과|및)?\s*보호자\s*동반)?(?:\s*(?:전용|대상|모집))?", target))
-    ages = re.search(r"(?:만\s*)?(\d+)\s*(?:~|-|부터)\s*(\d+)\s*세|(?:만\s*)?(\d+)\s*세\s*이하", target)
-    if ages and ages[1] and int(ages[1]) > int(ages[2]):
+    if re.fullmatch(r"\s*(?:[-—]|없음|미기재|N/?A)\s*", text, re.I):
         return None
-    incidental_child = bool(re.search(r"어린이\s*(?:도\s*)?참여\s*가능|성인|청년|청소년", target))
-    if child and not family and not incidental_child or ages and int(ages[2] or ages[3]) <= 12 and not family:
+    if not re.search(r"[가-힣A-Za-z0-9]", text):
+        return None
+    incomplete = r"불명확|미확인|미정|확인\s*필요|자료\s*(?:없음|부족)|정보\s*부족|(?:본문|내용)\s*[:：]?\s*(?:없음|소실|누락)"
+    if (role != "body" and not re.search(r"출생|기준일", text) and re.search(incomplete, text)
+            or role == "body" and re.fullmatch(r"\s*(?:" + incomplete + r")[.。…]*\s*", text)):
+        return "unknown"
+    if re.search(r"(?:어린이|아동|초등학생)\s*(?:주\s*대상)?\s*(?:여부|인지).*?(?:불명확|미확인)", text):
+        return "unknown"
+    children = r"(?:어린이|아동|초등학생)"
+    # Participation by a child/family member is not the activity's main audience.
+    incidental = bool(re.search(children + r"\s*(?:도\s*)?(?:참여|동반)\s*가능|(?:동반\s*)?(?:자녀|어린이\s*참가자)\s*[:：]", text))
+    main = re.sub(children + r"\s*(?:도\s*)?(?:참여|동반)\s*가능[^\n.]*", "", text)
+    negative = children + r"\s*(?:제외|불가|아님|대상\s*아님)"
+    main = re.sub(negative, "", main)
+    broad = bool(re.search(r"가족|전\s*연령|누구나", main)) if role == "target" else bool(re.search(
+        r"(?:전\s*연령|누구나)\s*(?:이|가|은|는)?\s*(?:참여|대상)|가족\s*(?:이|과|은|는)?\s*(?:프로그램|활동|체험|참여|함께)", main))
+    explicit_child = bool(re.search(
+        r"(?:주(?:요)?\s*대상|(?:참여\s*)?대상)\s*(?:[:：]|은|는|이)\s*" + children +
+        r"|" + children + r"(?:을|를)?\s*(?:위한|대상(?:으로)?|전용)\s*(?:프로그램|교육|수업|활동|체험)?", main))
+    primary_target = bool(re.match(r"\s*(?:(?:외국인|일본인)\s*)?" + children + r"(?=\s|$|[(:,·]|와|과)", main))
+    child = explicit_child or (role == "target" and not broad and not incidental and primary_target)
+    if re.search(children + r"\s*(?:의\s*|자녀를\s*둔\s*)?(?:보호자|부모)(?!\s*동반)", main):
+        child = False  # The child's parent, not the child, is the stated target.
+    opposite = bool(re.search(negative + r"|(?:성인|청년|청소년)\s*(?:전용|만\s*(?:신청|참여|대상))", text))
+    if role == "target" and not broad:
+        # An accompanying adult guardian is not an adult-only program.
+        without_guardian = re.sub(r"(?:성인\s*)?보호자\s*동반", "", main)
+        opposite |= bool(re.search(r"성인|청년|청소년", without_guardian))
+    ages = list(re.finditer(r"(?:만\s*)?(\d+)\s*(?:~|-|부터)\s*(\d+)\s*세|(?:만\s*)?(\d+)\s*세\s*이하", text))
+    bounds = [(int(m[1]) if m[1] else 0, int(m[2] or m[3])) for m in ages]
+    exact_age = re.fullmatch(r"\s*(?:만\s*)?(\d+)\s*세\s*", text) if role == "age" else None
+    if exact_age:
+        bounds.append((int(exact_age[1]), int(exact_age[1])))
+    if any(low > high for low, high in bounds):
+        return "conflict"
+    if not incidental and role in {"target", "age"}:
+        child |= bool(bounds) and all(high <= 12 for _, high in bounds) and not broad
+        opposite |= any(low >= 13 for low, _ in bounds)
+        lower = re.search(r"(?:만\s*)?(\d+)\s*세\s*이상", text)
+        opposite |= bool(lower and int(lower[1]) >= 13)
+    if child and opposite:
+        return "conflict"
+    if child:
         return "children"
-    if family or re.fullmatch(r"성인|청년|청소년|\d+\s*세\s*이상", target.strip()):
-        return "other"
-    return None
+    if opposite:
+        return "opposite"
+    if broad:
+        return "broad"
+    if role != "body" and re.search(r"출생|기준일", text) or role == "age" and not bounds and not incidental:
+        return "age_unknown"
+    return "material"  # Valid retained material, no positive child evidence.
+
+
+def _program_audience(materials: list[tuple[str, str, str, str]]) -> tuple[str, int] | None:
+    signals = [_audience(text, role=role) for _, text, _, role in materials]
+    if "conflict" in signals or "unknown" in signals:
+        return None
+    child = [i for i, value in enumerate(signals) if value == "children"]
+    if child:
+        if "opposite" in signals:
+            return None
+        # An unqualified program age bound contradicts an explicit all-age
+        # audience. A labelled child's incidental age never enters this branch.
+        if "broad" in signals and all(materials[i][3] == "age" for i in child):
+            return None
+        return "children", child[0]
+    if "age_unknown" in signals:
+        return None
+    usable = [i for i, value in enumerate(signals) if value in {"opposite", "broad", "material"}]
+    return ("other", usable[0]) if usable else None
 
 
 def _location(text: str) -> dict | None:
@@ -414,19 +482,22 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
             if len(lines) == 1:
                 mode = {"온라인": "online", "현장": "onsite", "온라인·현장 혼합": "mixed", "혼합": "mixed"}.get(lines[0])
                 put("delivery", mode, excerpt=lines[0])
-        targets = facts.get("target") or facts.get("target_raw") or "\n".join(_lines(body, "대상|참여 대상|주 대상"))
-        target_key = "target" if facts.get("target") else "target_raw" if facts.get("target_raw") else body_key
-        put("audience", _audience(targets), target_key, targets, "facts" if target_key != body_key else "payload")
+        materials = []
+        target_key = "target" if facts.get("target") else "target_raw" if facts.get("target_raw") else None
+        if target_key:
+            materials.append((target_key, facts[target_key], "facts", "target"))
+        else:
+            materials.extend((body_key, t, "payload", "target") for t in _lines(body, "대상|참여 대상|주 대상"))
         ages = facts.get("age") if source == "myseoul_program" else _lines(body, "연령|대상 연령")
-        if isinstance(ages, (list, tuple)) and len(ages) == 1 and type(ages[0]) is str:
-            age_audience = _audience(ages[0])
-            if age_audience == "children":
-                if d["audience"] == field("other"):
-                    d["audience"] = field()  # Conflicting all-age target needs review.
-                    evidence.pop("audience", None)
-                elif d["audience"]["status"] == "unknown":
-                    put("audience", "children", "age" if source == "myseoul_program" else body_key,
-                        ages[0], "facts" if source == "myseoul_program" else "payload")
+        if isinstance(ages, (list, tuple)):
+            materials.extend(("age" if source == "myseoul_program" else body_key, age,
+                              "facts" if source == "myseoul_program" else "payload", "age") for age in ages)
+        materials.append((body_key, body, "payload", "body"))
+        audience = _program_audience(materials)
+        if audience is not None:
+            value, index = audience
+            key, quote, prefix, _ = materials[index]
+            put("audience", value, key, quote[:1000], prefix)
         # Structured application dates have a server-authoritative reuse path.
         # Keep unknown here when no direct source excerpt exists; SQL fills it
         # from current confirmed facts without inventing a source quotation.

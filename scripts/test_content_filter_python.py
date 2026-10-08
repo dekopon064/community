@@ -139,8 +139,8 @@ class ExtractionTests(NoNetwork):
 
     def test_children_guardians_family_and_missing_age(self):
         for target, expected in (("어린이와 보호자 동반", "children"), ("만 6~12세", "children"),
-                ("가족, 어린이와 보호자", "other"), ("전 연령", "other"), ("성인, 어린이 참여 가능", None),
-                ("", None), ("2015년 출생자", None), ("어린이 제외", None), ("청년", "other")):
+                ("가족, 어린이와 보호자", "other"), ("전 연령", "other"), ("성인, 어린이 참여 가능", "other"),
+                ("", "other"), ("2015년 출생자", None), ("어린이 제외", "other"), ("청년", "other")):
             with self.subTest(target=target):
                 self.assertEqual(self.extract("공예 체험", facts={"target_raw": target})["audience"], field(expected))
 
@@ -240,6 +240,152 @@ class ExtractionTests(NoNetwork):
         b = normalize(CONTENT, content("주민 교류 활동 교육을 진행"))
         self.assertNotEqual(a.revision_hash, b.revision_hash)
         self.assertNotEqual(_v4_proposal_record(a, source_id=CONTENT).filter_facts, _v4_proposal_record(b, source_id=CONTENT).filter_facts)
+
+
+class AudienceDiscoveryTests(NoNetwork):
+    def metadata(self, target="", ages=(), body="외국인을 위한 한국어 교육을 진행합니다."):
+        return extract_filter_facts("myseoul_program", {"description": body},
+            {"public_category": "program", "target": target, "age": list(ages)})
+
+    def test_valid_general_programs_default_other_with_retained_evidence(self):
+        for target in ("", "외국인", "외국인·유학생", "성인", "청년", "청소년", "전 연령", "일반 가족", "누구나"):
+            with self.subTest(target=target):
+                m = self.metadata(target)
+                self.assertEqual(m["data"]["audience"], field("other"))
+                self.assertEqual(m["evidence"]["audience"], {"sourceField": "facts.target" if target else "payload.description",
+                    "excerpt": target or "외국인을 위한 한국어 교육을 진행합니다."})
+        volunteer = self.metadata("외국인·유학생", body="주민 교류 활동과 자원봉사를 진행합니다.")
+        self.assertEqual(volunteer["data"]["audience"], field("other"))
+
+    def test_primary_children_and_guardians_not_keyword_occurrences(self):
+        for target in ("어린이", "아동", "초등학생", "외국인 어린이", "어린이와 보호자 동반", "어린이와 성인 보호자 동반"):
+            with self.subTest(target=target):
+                self.assertEqual(self.metadata(target)["data"]["audience"], field("children"))
+        for body in ("주 대상: 어린이\n한국어 교육을 진행합니다.", "주 대상은 초등학생입니다. 한국어 교육을 진행합니다.",
+                     "아동을 위한 문화 체험 교육을 진행합니다."):
+            self.assertEqual(self.metadata(body=body)["data"]["audience"], field("children"))
+        m = self.metadata(body="성인 한국어 교육에서 어린이 관련 표현도 배웁니다.")
+        self.assertEqual(m["data"]["audience"], field("other"))
+        for target in ("어린이집 교사", "어린이 보호자", "초등학생 자녀를 둔 부모", "어린이 대상 아님"):
+            self.assertEqual(self.metadata(target)["data"]["audience"], field("other"))
+
+    def test_general_target_then_confirmed_child_age_is_not_a_fake_conflict(self):
+        for target in ("", "외국인", "외국인·유학생"):
+            for age in ("만 6~12세", "만 12세 이하", "만 5~10세"):
+                with self.subTest(target=target, age=age):
+                    m = self.metadata(target, (age,))
+                    self.assertEqual(m["data"]["audience"], field("children"))
+                    self.assertEqual(m["evidence"]["audience"], {"sourceField": "facts.age", "excerpt": age})
+        m = self.metadata("외국인", ("만 6~12세",), "장소: 용산가족공원\n한국어 교육을 진행합니다.")
+        self.assertEqual(m["data"]["audience"], field("children"))
+
+    def test_incidental_children_and_family_age_guidance_do_not_change_main_audience(self):
+        for target, ages in (("성인, 어린이 참여 가능", ()), ("가족, 어린이와 보호자", ()),
+                ("전 연령", ("어린이 참여 가능: 만 6~12세",)),
+                ("일반 가족", ("동반 자녀: 만 6~12세",)),
+                ("청년", ("어린이 참가자: 만 6~12세",))):
+            with self.subTest(target=target, ages=ages):
+                self.assertEqual(self.metadata(target, ages)["data"]["audience"], field("other"))
+
+    def test_birth_year_does_not_discard_primary_children_but_is_not_calculated(self):
+        for target in ("어린이", "주 대상: 초등학생", "아동과 보호자 동반"):
+            m = self.metadata(target, ("2015년 이후 출생자, 기준일 확인 필요",))
+            self.assertEqual(m["data"]["audience"], field("children"))
+            self.assertEqual(m["evidence"]["audience"]["sourceField"], "facts.target")
+        self.assertEqual(self.metadata("외국인", ("2015년 이후 출생자",))["data"]["audience"], field())
+
+    def test_absent_incomplete_and_actual_conflicting_material_remain_unknown(self):
+        for target, ages, body in (("", (), ""), ("", (), "본문 소실"), ("", (), "본문: 소실..."),
+                ("", (), "???"), ("", (), "정보 부족"), ({"invalid": True}, (), "문화 체험"),
+                ("외국인", (None,), "문화 체험"),
+                ("어린이 주 대상 여부 미확인, 2015년 출생자", (), "문화 체험"),
+                ("성인 전용", ("만 6~12세",), "문화 체험"),
+                ("어린이", ("만 19~25세",), "문화 체험"),
+                ("어린이", ("만 18세",), "문화 체험"),
+                ("외국인", ("만 12~6세",), "문화 체험"),
+                ("외국인", ("만 6~12세", "만 19~25세"), "문화 체험"),
+                ("전 연령", ("만 6~12세",), "문화 체험")):
+            with self.subTest(target=target, ages=ages, body=body):
+                m = self.metadata(target, ages, body)
+                self.assertEqual(m["data"]["audience"], field())
+                self.assertNotIn("audience", m["evidence"])
+
+    def test_title_only_and_other_unknown_filters_do_not_become_audience_facts(self):
+        for body, expected in (("", None), ("외국인 한국어 교육을 진행합니다.\n장소: 미정", "other")):
+            m = extract_filter_facts("seoul_reservation", {"program_text": body, "title": "어린이 교육"})
+            self.assertEqual(m["data"]["audience"], field(expected))
+            self.assertEqual(m["data"]["location"], field())
+            self.assertEqual(m["data"]["application"], field())
+            self.assertEqual(m["data"]["delivery"], field())
+            self.assertIn("location", missing_filters(m["data"]))
+            if expected: self.assertEqual(m["evidence"]["audience"]["sourceField"], "payload.program_text")
+        for text in ("현장 공연을 개최. 방문 가능.", "청년공간 소식. 방문 가능."):
+            m = extract_filter_facts(CONTENT, {"plain_text": text})
+            self.assertEqual(m["data"]["audience"], field(status="not_applicable"))
+            self.assertNotIn("audience", m["evidence"])
+
+    def test_other_filters_and_source_facts_do_not_change_when_only_audience_changes(self):
+        facts = {"public_category": "program", "target": "외국인", "age": [], "delivery_mode": "online"}
+        payload = {"description": "한국어 교육을 진행합니다. 장소: 확인 필요"}
+        original = copy.deepcopy((payload, facts))
+        a = extract_filter_facts("myseoul_program", payload, facts)
+        child = {**facts, "age": ["만 6~12세"]}
+        b = extract_filter_facts("myseoul_program", payload, child)
+        self.assertEqual((payload, facts), original)
+        for key in a["data"]:
+            if key != "audience": self.assertEqual(a["data"][key], b["data"][key])
+        self.assertEqual(a["data"]["audience"], field("other"))
+        self.assertEqual(b["data"]["audience"], field("children"))
+
+    def check_packet(self, packet, record, expected):
+        self.assertEqual(packet["filterContract"], SCHEMA)
+        self.assertEqual(packet["revision_hash"], record.revision_hash)
+        m = packet["filterFacts"]
+        self.assertEqual(m["data"]["audience"], field(expected))
+        proof = m["evidence"]["audience"]
+        prefix, key = proof["sourceField"].split(".", 1)
+        material = packet["normalized_payload"][key] if prefix == "payload" else packet.get("myseoul_facts", packet.get("program_facts"))[key]
+        material = material if type(material) is str else json.dumps(material, ensure_ascii=False)
+        self.assertIn(proof["excerpt"], material)
+        self.assertNotIn("filterFacts", packet["normalized_payload"])
+
+    def test_my_actual_observation_adapter_keeps_facts_review_and_revision(self):
+        from test_myseoul_db import sample
+        from ingest.myseoul_db import MySeoulObservationAdapter
+        record = sample(target="외국인·유학생", purpose="한국어 교육 수업을 진행합니다.", category="교육")
+        before = copy.deepcopy(record)
+        calls = []
+        def rpc(name, params):
+            calls.append((name, copy.deepcopy(params)))
+            return [{"id": ID, "outcome": "unchanged", "revision": record.revision_hash}]
+        MySeoulObservationAdapter(rpc).observe(ID, [record], None)
+        self.assertEqual([n for n, _ in calls], ["observe_myseoul_program"])
+        self.check_packet(calls[0][1]["p_items"][0], record, "other")
+        self.assertEqual(record, before)
+
+    def test_seoul_actual_observation_adapter_transmits_children_evidence(self):
+        from ingest.connectors.seoul_reservation import normalize_seoul_item
+        from ingest.program_db import ProgramObservationAdapter
+        from test_seoul_reservation import row
+        record = normalize_seoul_item(row(USETGTINFO="초등학생", DTLCONT="<p>어린이를 위한 공예 체험 수업입니다.</p>"))
+        before = copy.deepcopy(record); calls = []
+        ProgramObservationAdapter(lambda n, a: calls.append((n, copy.deepcopy(a)))).observe(ID, [record], None)
+        self.assertEqual([n for n, _ in calls], ["observe_seoul_program"])
+        self.check_packet(calls[0][1]["p_items"][0], record, "children")
+        self.assertEqual(record, before)
+
+    def test_youth_actual_v4_adapter_keeps_other_and_remaining_review(self):
+        record = normalize(CONTENT, content("한국어 교육을 진행합니다.\n대상: 외국인·유학생\n전국 거주자 신청 가능. 홈페이지에서 신청 가능."))
+        before = copy.deepcopy(record)
+        client = FakeClient({"upsert_source_observations_v4": lambda p: [{"input_index": 0,
+            "external_key": record.external_key, "outcome": "unchanged", "duplicate_in_batch": False}]})
+        SupabaseIngestStore(client).upsert_source_observations_v4(CONTENT, ID, [record], None)
+        self.assertEqual([n for n, _ in client.calls], ["upsert_source_observations_v4"])
+        packet = client.calls[0][1]["p_items"][0]
+        self.check_packet(packet, record, "other")
+        self.assertIn("location", missing_filters(packet["filterFacts"]["data"]))
+        self.assertEqual(record, before)
+
 
 
 class SchemaTests(NoNetwork):
