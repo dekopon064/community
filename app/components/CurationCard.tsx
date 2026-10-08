@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
@@ -15,10 +15,11 @@ export interface CurationCardProps {
   title: string; summary: string; imageUrl?: string | null; summaryLabel?: string;
   locale: string; deadlineKind: string | null; deadlineOn: string | null;
   eventStartOn: string | null; eventEndOn: string | null; todayKst: string;
+  periodOverride?: ReactNode;
 }
 
 export default function CurationCard({ slug, category, categoryLabel, title, summary, imageUrl,
-  summaryLabel, locale, deadlineKind, deadlineOn, eventStartOn, eventEndOn, todayKst }: CurationCardProps) {
+  summaryLabel, locale, deadlineKind, deadlineOn, eventStartOn, eventEndOn, todayKst, periodOverride }: CurationCardProps) {
   const src = sourceImageUrl(imageUrl), [failed, setFailed] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ left: number; top: number; imageMaxHeight: number } | null>(null);
   const thumb = useRef<HTMLAnchorElement>(null), panel = useRef<HTMLDivElement>(null);
@@ -69,8 +70,8 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
 
   const meta = <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-6">
     {categoryLabel && <span className="font-semibold text-primary-text">{categoryLabel}</span>}
-    <CurationPeriodText category={category} deadlineKind={deadlineKind} deadlineOn={deadlineOn} eventStartOn={eventStartOn}
-      eventEndOn={eventEndOn} todayKst={todayKst} locale={locale} />
+    {periodOverride ?? <CurationPeriodText category={category} deadlineKind={deadlineKind} deadlineOn={deadlineOn} eventStartOn={eventStartOn}
+      eventEndOn={eventEndOn} todayKst={todayKst} locale={locale} />}
   </div>;
   const text = <><h2 className="public-readable break-words text-xl font-bold leading-[1.35] tracking-[-0.025em] text-primary-text md:text-[1.45rem]">{title}</h2>
     <p className="public-readable mt-2 line-clamp-2 break-words text-sm leading-6 text-info-body md:text-[0.95rem] md:leading-7">

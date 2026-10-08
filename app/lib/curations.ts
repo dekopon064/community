@@ -1,6 +1,6 @@
 import { parseContentFilters } from './contentFilters';
 import { supabase } from "@/app/lib/supabase";
-import { isUserCategory } from "@/app/lib/userCategories";
+import { isUserCategory, type UserCategory } from "@/app/lib/userCategories";
 import { sourceImageUrl } from "@/app/lib/sourceImages";
 import type { Curation, LocalizedCuration } from "@/app/lib/types";
 import { routing } from "@/i18n/routing";
@@ -74,15 +74,22 @@ export function localizeCuration(
   };
 }
 
-async function fetchCurationRows(): Promise<Curation[]> {
-  const { data, error } = await supabase
+// Existing published fields only; wildcard reads would silently expose new columns.
+export const publicCurationColumns = 'id,slug,category,user_category,title_ko,title_ja,summary_ko,summary_ja,content_ko,content_ja,source,source_item_id,source_url,source_image_url,application_deadline_kind,application_deadline_on,event_start_on,event_end_on,created_at,updated_at,content_filters';
+async function fetchCurationRows(category?: UserCategory): Promise<Curation[]> {
+  let query = supabase
     .from("curations")
-    .select("*")
+    .select(publicCurationColumns, { count: 'exact' })
     .eq("is_published", true)
     .order("created_at", { ascending: false });
+  if (category) query = query.eq('user_category', category);
+  const { data, error, count } = await query;
 
   if (error) {
     throw new Error("Failed to load curations", { cause: error });
+  }
+  if (count === null || count !== (data ?? []).length) {
+    throw new Error('Published curation list was truncated');
   }
 
   return (data ?? []) as Curation[];
@@ -90,8 +97,9 @@ async function fetchCurationRows(): Promise<Curation[]> {
 
 export async function fetchLocalizedCurations(
   locale: string,
+  category?: UserCategory,
 ): Promise<LocalizedCuration[]> {
-  const rows = await fetchCurationRows();
+  const rows = await fetchCurationRows(category);
   return rows
     .map((row) => localizeCuration(row, locale))
     .filter((item): item is LocalizedCuration => item !== null);
@@ -103,7 +111,7 @@ export async function fetchLocalizedCurationBySlug(
 ): Promise<LocalizedCuration | null> {
   const { data, error } = await supabase
     .from("curations")
-    .select("*")
+    .select(publicCurationColumns)
     .eq("slug", slug)
     .eq("is_published", true)
     .maybeSingle();

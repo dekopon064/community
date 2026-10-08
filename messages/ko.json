@@ -74,7 +74,10 @@
     "emptyDescription": "준비된 정보부터 차례로 소개합니다.",
     "filteredEmptyTitle": "이 카테고리에는 정보가 없습니다.",
     "filteredEmptyDescription": "다른 카테고리를 선택해 보세요.",
-    "homeAction": "홈으로"
+    "homeAction": "홈으로",
+    "loading": "정보를 불러오는 중입니다.",
+    "searchEmptyTitle": "선택한 조건에 맞는 정보가 없습니다.",
+    "searchEmptyDescription": "조건을 줄이거나 초기화하면 다른 정보를 볼 수 있습니다."
   },
   "LocaleSwitcher": {
     "label": "언어 선택",
@@ -378,5 +381,113 @@
     "description": "저장한 정책·프로그램을 다시 볼 수 있습니다.",
     "emptyMore": "정책·프로그램 상세에서 필요한 정보를 저장해 보세요.",
     "explore": "생활정보 둘러보기"
+  },
+  "PublicFilters": {
+    "nextMonth": "다음 달",
+    "previousMonth": "이전 달",
+    "chooseDate": "날짜를 선택해 주세요",
+    "clearDate": "선택 해제",
+    "selectedDate": "선택한 날짜",
+    "dateHelp": "선택한 날짜에 열리는 행사를 보여드립니다.",
+    "childrenExcluded": "어린이 프로그램 제외",
+    "childrenIncluded": "어린이 프로그램 포함",
+    "audienceBoth": "어린이·이외 모두",
+    "audienceBothHint": "기존 주소에 어린이·이외가 함께 선택되어 있습니다. 대상 구분이 확인된 프로그램만 표시하며, 아래에서 하나를 선택하면 해당 조건으로 바뀝니다.",
+    "spaceBoth": "공간 소개·관련 소식",
+    "spaceBothHint": "기존 주소에 공간 소개·관련 소식이 함께 선택되어 있습니다. 두 구분이 확인된 글을 모두 표시합니다. 탭을 선택하면 해당 구분만 표시합니다.",
+    "exclude": "제외",
+    "include": "포함",
+    "provinceWhole": "{province} 전체",
+    "regionScopeNote": "시·도만 선택하면 해당 지역 전체의 정보를 보여드립니다.",
+    "closeFilters": "필터 닫기",
+    "resetHint": "필터 초기화",
+    "resetAll": "선택한 필터 모두 초기화",
+    "filterWithCount": "필터로 찾기 · {count}개 선택",
+    "filterButton": "필터로 찾기",
+    "selectionCount": "{count}개 선택",
+    "unrestricted": "전체",
+    "viewResults": "결과 보기",
+    "viewResultCount": "결과 {count}개 보기",
+    "all": "전체",
+    "instantUpdate": "필요한 조건만 펼쳐 선택하세요. 결과는 바로 반영됩니다.",
+    "chooseProvince": "서울·경기·인천을 선택하면 하위 지역을 고를 수 있습니다.",
+    "additional": "진행 방식·대상",
+    "help": "필터·정렬 안내",
+    "combinationNote": "같은 항목에서 여러 조건을 고르면 하나라도 맞는 정보를, 다른 항목을 함께 고르면 모두 맞는 정보를 표시합니다.",
+    "find": "조건으로 찾기",
+    "conditions": "필터 선택",
+    "sort": "정렬",
+    "deadlineSort": "마감 가까운순",
+    "eventSort": "개최일 가까운순",
+    "latestSort": "최신 게시순",
+    "spaceKind": "청년공간 구분",
+    "programTopic": "활동 분야",
+    "eventTopic": "행사 분야",
+    "delivery": "진행 방식",
+    "audience": "어린이 프로그램",
+    "applicationState": "접수 상태",
+    "region": "개최 지역",
+    "spaceRegion": "지역",
+    "district": "시·군·구",
+    "districtFor": "{province} 시·군·구 선택",
+    "date": "행사 날짜",
+    "selected": "선택한 조건",
+    "remove": "{label} 선택 해제",
+    "reset": "조건 초기화",
+    "allCategories": "다른 카테고리 보기",
+    "deadline": "마감",
+    "noDeadline": "마감일 없음",
+    "unknownDeadline": "마감일 미확인",
+    "audienceNote": "‘이외’는 성인 전용이나 연령 제한 없음을 뜻하지 않습니다.",
+    "programRegionNote": "온라인 전용·전국 이용 프로그램은 지역 선택과 관계없이 함께 표시합니다.",
+    "regionNote": "전국 이용으로 확인된 정보는 지역 선택과 관계없이 함께 표시합니다.",
+    "spaceRegionNote": "지역 조건은 공간 소개에만 적용합니다. 관련 소식에는 적용하지 않습니다.",
+    "programSortNote": "마감 전 → 마감일 없음·미확인 → 마감 순입니다. 마감된 정보는 최근 마감순입니다.",
+    "eventSortNote": "진행 중 → 예정 → 종료 순입니다. 일정 미확인은 마지막에 표시합니다.",
+    "unknownNote": "선택한 조건이 확인된 정보만 표시합니다.",
+    "programTopics": {
+      "language_learning": "언어·학습",
+      "culture_experience": "문화·취미·체험",
+      "employment_career": "취업·직무",
+      "daily_safety": "생활·안전",
+      "community_exchange": "교류·지역활동",
+      "other": "기타"
+    },
+    "eventTopics": {
+      "festival_exchange": "축제·교류",
+      "culture_arts": "문화·예술",
+      "lecture_commemoration": "강연·기념행사",
+      "other": "기타"
+    },
+    "provinces": {
+      "11": "서울",
+      "41": "경기",
+      "28": "인천"
+    },
+    "deliveries": {
+      "online": "온라인",
+      "onsite": "현장",
+      "mixed": "혼합"
+    },
+    "audiences": {
+      "children": "어린이 프로그램",
+      "other": "이외"
+    },
+    "states": {
+      "not_started": "신청 전",
+      "open": "접수 중",
+      "closed": "마감",
+      "unknown": "접수 상태 미확인"
+    },
+    "spaceKinds": {
+      "introduction": "공간 소개",
+      "news": "관련 소식"
+    },
+    "eventStates": {
+      "ongoing": "진행 중",
+      "upcoming": "예정",
+      "ended": "종료",
+      "unknown": "개최 일정 미확인"
+    }
   }
 }

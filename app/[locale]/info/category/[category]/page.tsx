@@ -16,14 +16,16 @@ export default async function CategoryPage({
   if (!isUserCategory(category)) notFound();
   setRequestLocale(locale);
 
-  const curations = await fetchLocalizedCurations(locale);
+  const curations = await fetchLocalizedCurations(locale, category);
+  const now = new Date();
 
   return (
     <div className="min-h-[60vh] bg-canvas px-5 pb-24 pt-8 md:px-8 md:pt-16 lg:px-10 lg:pt-20">
       <div className="mx-auto max-w-6xl">
         <CurationExplorer
           curations={curations}
-          todayKst={todayKst()}
+          todayKst={todayKst(now)}
+          nowIso={now.toISOString()}
           selectedCategory={category}
         />
       </div>

@@ -4,6 +4,7 @@ import { useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { usePathname, useRouter } from "@/i18n/navigation";
 import { loginUrl, safeReturnTo } from "@/app/lib/auth/urls";
+import { readExplorationQuery, supportsExploration, writeExplorationQuery } from '@/app/lib/publicContentFilters';
 
 const LOCALES = ["ko", "ja"] as const;
 
@@ -23,6 +24,12 @@ export default function LocaleSwitcher() {
       const notice = query.get("notice") || undefined;
       const allowedNotice = ["cancelled", "failed", "expired", "unavailable", "signed_out", "logout_failed"].includes(notice || "") ? notice : undefined;
       destination = loginUrl(nextLocale, safeReturnTo(query.get("next"), nextLocale), allowedNotice).slice(3);
+    } else if (pathname.startsWith('/info/category/')) {
+      const category=pathname.split('/')[3];
+      if (supportsExploration(category)) {
+        const query=writeExplorationQuery(new URLSearchParams(),readExplorationQuery(new URLSearchParams(window.location.search),category),category).toString();
+        if (query) destination=pathname+'?'+query;
+      }
     }
     startTransition(() => {
       router.replace(destination, { locale: nextLocale });

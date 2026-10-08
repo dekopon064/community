@@ -1,7 +1,8 @@
 import { useLocale, useTranslations } from "next-intl";
+import { Suspense } from 'react';
 import CategoryIcon from "@/app/components/CategoryIcon";
-import CurationCard from "@/app/components/CurationCard";
-import InfoStatePanel from "@/app/components/InfoStatePanel";
+import PublicCurationList from './PublicCurationList';
+import { publicCurationItem, supportsExploration } from '@/app/lib/publicContentFilters';
 import Link from "@/app/components/PublicNavigationLink";
 import type { LocalizedCuration } from "@/app/lib/types";
 import { USER_CATEGORIES, type UserCategory } from "@/app/lib/userCategories";
@@ -10,10 +11,12 @@ export default function CurationExplorer({
   curations,
   todayKst,
   selectedCategory,
+  nowIso,
 }: {
   curations: LocalizedCuration[];
   todayKst: string;
   selectedCategory?: UserCategory;
+  nowIso: string;
 }) {
   const locale = useLocale();
   const t = useTranslations("Info");
@@ -35,9 +38,6 @@ export default function CurationExplorer({
           <h1 className={`max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-primary-text md:text-5xl${locale === "ja" && selectedCategory === "youth_space" ? " lg:whitespace-nowrap lg:text-[clamp(2rem,3.3vw,2.625rem)]" : ""}`}>
             {selectedCategory ? categoriesT(selectedCategory) : t("title")}
           </h1>
-          <span aria-hidden="true" className="ml-auto whitespace-nowrap text-sm font-semibold leading-6 text-primary-text lg:hidden">
-            {t("resultCount", { count: filtered.length })}
-          </span>
         </div>
         <p className="public-readable mt-3 text-sm leading-6 text-info-muted lg:hidden">
           {selectedCategory ? intro : t("compactReviewNote")}
@@ -70,60 +70,9 @@ export default function CurationExplorer({
       </aside>
 
       <section aria-labelledby="curation-results-title" className="min-w-0">
-        <p
-          id="curation-results-title"
-          aria-live="polite"
-          className="sr-only text-sm font-bold text-primary-text lg:not-sr-only lg:mb-4"
-        >
-          {t("resultCount", { count: filtered.length })}
-        </p>
-
-        <div id="curation-results" className="flex min-w-0 flex-col border-t border-info-rule">
-          {filtered.length > 0 ? (
-            filtered.map((item) => (
-              <CurationCard
-                key={item.id}
-                slug={item.slug}
-                category={item.userCategory}
-                categoryLabel={item.userCategory ? categoriesT(item.userCategory) : null}
-                title={item.title}
-                summary={item.summary}
-                imageUrl={item.source_image_url}
-                summaryLabel={t("atAGlance")}
-                locale={locale}
-                deadlineKind={item.application_deadline_kind}
-                deadlineOn={item.application_deadline_on}
-                eventStartOn={item.event_start_on}
-                eventEndOn={item.event_end_on}
-                todayKst={todayKst}
-              />
-            ))
-          ) : (
-            <InfoStatePanel
-              title={
-                !selectedCategory && curations.length === 0
-                  ? t("emptyTitle")
-                  : t("filteredEmptyTitle")
-              }
-              description={
-                !selectedCategory && curations.length === 0
-                  ? t("emptyDescription")
-                  : t("filteredEmptyDescription")
-              }
-              role="status"
-              headingLevel={2}
-            >
-              {!selectedCategory && curations.length === 0 ? (
-                <Link
-                  href="/"
-                  className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white transition-colors hover:bg-action-hover"
-                >
-                  {t("homeAction")}
-                </Link>
-              ) : null}
-            </InfoStatePanel>
-          )}
-        </div>
+        <Suspense fallback={<p role="status" className="text-info-muted">{t('loading')}</p>}>
+          <PublicCurationList items={filtered.map(publicCurationItem)} category={supportsExploration(selectedCategory)?selectedCategory:undefined} todayKst={todayKst} nowIso={nowIso}/>
+        </Suspense>
       </section>
     </div>
   );
