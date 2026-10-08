@@ -18,6 +18,7 @@ export default function CurationExplorer({
   const locale = useLocale();
   const t = useTranslations("Info");
   const categoriesT = useTranslations("Categories");
+  const intro = selectedCategory ? t(`categoryIntros.${selectedCategory}`) : t("intro");
 
   const filtered =
     selectedCategory === undefined
@@ -31,7 +32,7 @@ export default function CurationExplorer({
           {selectedCategory && (
             <CategoryIcon category={selectedCategory} size={48} className="h-10 w-10 shrink-0 md:h-12 md:w-12" />
           )}
-          <h1 className="max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-primary-text md:text-5xl">
+          <h1 className={`max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-primary-text md:text-5xl${locale === "ja" && selectedCategory === "youth_space" ? " lg:whitespace-nowrap lg:text-[clamp(2rem,3.3vw,2.625rem)]" : ""}`}>
             {selectedCategory ? categoriesT(selectedCategory) : t("title")}
           </h1>
           <span aria-hidden="true" className="ml-auto whitespace-nowrap text-sm font-semibold leading-6 text-primary-text lg:hidden">
@@ -39,10 +40,10 @@ export default function CurationExplorer({
           </span>
         </div>
         <p className="public-readable mt-3 text-sm leading-6 text-info-muted lg:hidden">
-          {t("compactReviewNote")}
+          {selectedCategory ? intro : t("compactReviewNote")}
         </p>
         <p className="public-readable mt-5 hidden max-w-md text-base leading-7 text-info-body lg:block">
-          {t("intro")}
+          {intro}
         </p>
         <p className="mt-7 hidden border-t border-info-rule pt-5 text-sm leading-6 text-info-muted lg:block">
           {t("reviewNote")}

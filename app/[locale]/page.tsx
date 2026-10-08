@@ -38,24 +38,20 @@ export default async function Home({
           >
             {headlineParts.length > 1 ? (
               <span aria-hidden="true">
-                <span className="block whitespace-nowrap">
-                  {headlineParts[0]}
-                </span>
-                {isJapanese ? (
-                  headlineParts.slice(1).map((part) => (
-                    <span key={part} className="block whitespace-nowrap">
+                <span className="flex flex-wrap">
+                  {headlineParts.slice(0, isJapanese ? 2 : 1).map((part) => (
+                    <span key={part} className="whitespace-nowrap">
                       {part}
                     </span>
-                  ))
-                ) : (
-                  <span className="flex flex-wrap gap-x-[0.28em]">
-                    {headlineParts.slice(1).map((part) => (
-                      <span key={part} className="whitespace-nowrap">
-                        {part}
-                      </span>
-                    ))}
-                  </span>
-                )}
+                  ))}
+                </span>
+                <span className={isJapanese ? "flex flex-wrap" : "flex flex-wrap gap-x-[0.28em]"}>
+                  {headlineParts.slice(isJapanese ? 2 : 1).map((part) => (
+                    <span key={part} className="whitespace-nowrap">
+                      {part}
+                    </span>
+                  ))}
+                </span>
               </span>
             ) : (
               t("headline")
