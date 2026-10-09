@@ -9,6 +9,7 @@ import CurationBody from "@/app/components/CurationBody";
 import CurationDetailHeading from "@/app/components/CurationDetailHeading";
 import CurationMobileSourceLink from "@/app/components/CurationMobileSourceLink";
 import SaveControl from "@/app/components/auth/SaveControl";
+import ContentComments from "@/app/components/ContentComments";
 import { getCurationPeriodPresentation, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 import { isUserCategory } from "@/app/lib/userCategories";
@@ -82,6 +83,7 @@ export default async function InfoDetailPage({
           />
         </div>
       </div>
+      {canSave ? <ContentComments key={item.id} id={item.id} slug={id} locale={locale} /> : null}
     </div>
   );
 }
