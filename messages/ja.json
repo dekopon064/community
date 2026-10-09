@@ -617,6 +617,22 @@
     "ownComment": "自分のコメント",
     "cancel": "キャンセル",
     "confirmDeleteAction": "削除する",
-    "confirmHideAction": "非表示にする"
+    "confirmHideAction": "非表示にする",
+    "titleCount": "コメント ({count})",
+    "reply": "返信",
+    "postReply": "返信を投稿",
+    "replyComposer": "返信を書く",
+    "replyBodyLabel": "返信を入力してください",
+    "repliesTitle": "返信一覧",
+    "pagination": "コメントのページ",
+    "previousPage": "前へ",
+    "nextPage": "次へ",
+    "pageLabel": "コメント {page}ページ",
+    "moreReplies": "返信をもっと見る",
+    "deletedParent": "削除されたコメントです。",
+    "hiddenParent": "非表示になったコメントです。",
+    "parent_unavailable": "元のコメントを利用できないため、新しい返信は投稿できません。入力内容は保持されます。",
+    "count_failed": "コメントの総数を確認できませんでした。",
+    "reloadCount": "コメント数を再確認"
   }
 }

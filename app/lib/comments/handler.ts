@@ -3,7 +3,7 @@ import type { AdminAccess } from "../auth/admin-policy";
 import { privateResponse } from "../auth/http";
 import { verifiedAccount } from "../auth/profile";
 import { isSameOriginPost } from "../auth/urls";
-import { COMMENT_UUID, RESIDENT_CODE, EXPECTED_RESIDENT_CODE, commentPage, normalizeComment, validComment, validCursor } from "./contracts";
+import { COMMENT_REPLY_PAGE_SIZE, COMMENT_UUID, RESIDENT_CODE, EXPECTED_RESIDENT_CODE, threadPage, publicCommentCount, normalizeComment, validComment, validCursor } from "./contracts";
 
 type Dependencies = {
   client: () => Promise<SupabaseClient | null>;
@@ -13,7 +13,7 @@ type Dependencies = {
 };
 const reply = (data: unknown, status = 200) => privateResponse(Response.json(data, { status }));
 const failure = (code?: string) => {
-  const errors: Record<string, [string, number]> = { PT404: ["information_unavailable", 404], PT401: ["authentication_required", 401], PT403: ["forbidden", 403], PT409: ["request_conflict", 409], PT429: ["rate_limited", 429], PT428: ["identity_changed", 409], "22023": ["invalid_request", 400] };
+  const errors: Record<string, [string, number]> = { PT410: ["parent_unavailable", 409], PT404: ["information_unavailable", 404], PT401: ["authentication_required", 401], PT403: ["forbidden", 403], PT409: ["request_conflict", 409], PT429: ["rate_limited", 429], PT428: ["identity_changed", 409], "22023": ["invalid_request", 400] };
   const [error, status] = errors[code ?? ""] ?? ["unavailable", 503];
   return reply({ error }, status);
 };
@@ -22,7 +22,7 @@ export async function commentRequest(request: Request, dependencies: Dependencie
   if (!read && (request.method !== "POST" || !isSameOriginPost(request))) return reply({ error: "forbidden" }, 403);
   let input: Record<string, unknown>;
   if (read) {
-    if ([...url.searchParams.keys()].some(k => !["id", "at", "beforeId", "requestId"].includes(k)) || [...url.searchParams.keys()].some(k => url.searchParams.getAll(k).length !== 1)) return reply({ error: "invalid_request" }, 400);
+    if ([...url.searchParams.keys()].some(k => !["id", "at", "beforeId", "requestId", "parentId", "view"].includes(k)) || [...url.searchParams.keys()].some(k => url.searchParams.getAll(k).length !== 1)) return reply({ error: "invalid_request" }, 400);
     input = Object.fromEntries(url.searchParams);
   } else {
     if (url.search || !/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) return reply({ error: "invalid_request" }, 400);
@@ -38,23 +38,36 @@ export async function commentRequest(request: Request, dependencies: Dependencie
   }
   if (typeof input.id !== "string" || !COMMENT_UUID.test(input.id)) return reply({ error: "invalid_request" }, 400);
   const id = input.id.toLowerCase();
-  const action = read ? (input.requestId ? "status" : "list") : input.action;
-  const keys: Record<string, string[]> = { list: ["id", "at", "beforeId"], status: ["id", "requestId"], prepare: ["id", "action"], create: ["id", "action", "requestId", "body", "expectedCode"], remove: ["id", "action", "commentId"], hide: ["id", "action", "commentId"] };
+  const action = read ? (input.requestId ? "status" : input.view === "count" ? "count" : input.parentId ? "replies" : "list") : input.action;
+  const keys: Record<string, string[]> = { list: ["id", "at", "beforeId"], replies: ["id", "parentId", "at", "beforeId"], count: ["id", "view"], status: ["id", "requestId"], prepare: ["id", "action"], create: ["id", "action", "requestId", "body", "expectedCode", "parentId"], remove: ["id", "action", "commentId"], hide: ["id", "action", "commentId"] };
   if (typeof action !== "string" || !Object.hasOwn(keys, action) || Object.keys(input).some(k => !keys[action].includes(k))) return reply({ error: "invalid_request" }, 400);
-  if (action === "list" && ((input.at !== undefined || input.beforeId !== undefined) && !validCursor(input.at, input.beforeId))) return reply({ error: "invalid_request" }, 400);
+  if (["list", "replies"].includes(action) && ((input.at !== undefined || input.beforeId !== undefined) && !validCursor(input.at, input.beforeId))) return reply({ error: "invalid_request" }, 400);
   if (["status", "create"].includes(action) && (typeof input.requestId !== "string" || !COMMENT_UUID.test(input.requestId))) return reply({ error: "invalid_request" }, 400);
   if (["remove", "hide"].includes(action) && (typeof input.commentId !== "string" || !COMMENT_UUID.test(input.commentId))) return reply({ error: "invalid_request" }, 400);
   if (action === "create" && (!validComment(input.body) || typeof input.expectedCode !== "string" || !EXPECTED_RESIDENT_CODE.test(input.expectedCode))) return reply({ error: "invalid_request" }, 400);
+  if (input.parentId !== undefined && (typeof input.parentId !== "string" || !COMMENT_UUID.test(input.parentId))) return reply({ error: "invalid_request" }, 400);
   try {
     const client = await dependencies.client();
     const account = await verifiedAccount(client);
     if (!client || account.status === "unavailable") return reply({ error: "unavailable" }, 503);
-    if (action !== "list" && !account.user) return reply({ error: "authentication_required" }, 401);
-    if (action === "list") {
-      const { data, error } = await client.rpc("list_information_comments", { p_curation_id: id, p_before_at: input.at ?? null, p_before_id: input.beforeId ?? null });
+    if (!["list", "replies", "count"].includes(action) && !account.user) return reply({ error: "authentication_required" }, 401);
+    if (action === "count") {
+      const { data, error } = await client.rpc("count_information_comments", { p_curation_id: id });
+      return error ? failure(error.code) : reply({ count: publicCommentCount(data) });
+    }
+    if (action === "list" || action === "replies") {
+      const { data, error } = action === "replies"
+        ? await client.rpc("list_information_comment_replies", { p_curation_id: id, p_parent_id: (input.parentId as string).toLowerCase(), p_after_at: input.at ?? null, p_after_id: input.beforeId ?? null })
+        : await client.rpc("list_information_comment_threads", { p_curation_id: id, p_before_at: input.at ?? null, p_before_id: input.beforeId ?? null });
       if (error) return failure(error.code);
       const access = account.user ? await dependencies.admin() : null;
-      return reply(commentPage(data, !!account.user, access?.status === "admin" && access.userId === account.user?.id));
+      const page = threadPage(data, !!account.user, access?.status === "admin" && access.userId === account.user?.id, action === "replies");
+      if (action === "replies" && page.items.length > COMMENT_REPLY_PAGE_SIZE) {
+        page.items = page.items.slice(0, COMMENT_REPLY_PAGE_SIZE);
+        const last = page.items[page.items.length - 1];
+        page.next = { at: last.createdAt, id: last.id };
+      }
+      return reply(page);
     }
     let rpcClient: Pick<SupabaseClient, "rpc"> = client;
     let name: string, args: Record<string, unknown> = { p_curation_id: id };
@@ -64,7 +77,7 @@ export async function commentRequest(request: Request, dependencies: Dependencie
       rpcClient = dependencies.service(); name = "admin_hide_information_comment";
       args = { ...args, p_comment_id: input.commentId, p_actor: actor.userId };
     } else if (action === "prepare") name = "prepare_comment_resident";
-    else if (action === "create") { name = "create_information_comment"; args = { ...args, p_request_id: input.requestId, p_body: normalizeComment(input.body as string), p_expected_code: input.expectedCode }; }
+    else if (action === "create") { name = input.parentId ? "create_information_comment_reply" : "create_information_comment"; args = { ...args, p_request_id: input.requestId, p_body: normalizeComment(input.body as string), p_expected_code: input.expectedCode, ...(input.parentId ? { p_parent_id: (input.parentId as string).toLowerCase() } : {}) }; }
     else if (action === "remove") { name = "remove_information_comment"; args = { ...args, p_comment_id: input.commentId }; }
     else { name = "information_comment_request_state"; args = { ...args, p_request_id: input.requestId }; }
     const { data, error } = await rpcClient.rpc(name, args);

@@ -1,5 +1,6 @@
 export const COMMENT_LIMIT = 1000;
 export const COMMENT_PAGE_SIZE = 20;
+export const COMMENT_REPLY_PAGE_SIZE = 10;
 export const RESIDENT_CODE = /^[0-9]{5}(?![\s\S])/;
 // An old open composer may send its former code. SQL rejects it with the
 // existing identity fence; own accepted receipts remain readable by request ID.
@@ -31,4 +32,29 @@ export function commentPage(data: unknown, signedIn: boolean, moderator: boolean
   const next = row.next as CommentCursor | null;
   if (next !== null && (!next || !validCursor(next.at, next.id))) throw new Error("invalid_comment_response");
   return { items, next: next ? { at: next.at, id: next.id } : null, viewer: { signedIn, code: signedIn ? row.code as string | null : null, moderator: signedIn && moderator } };
+}
+
+export type CommentThread = Omit<CommentItem, "residentCode" | "body"> & { residentCode: string | null; body: string | null; state: "live" | "deleted" | "hidden"; replyCount: number };
+export type ThreadPage = Omit<CommentPage, "items"> & { items: CommentThread[]; parentState?: "live" | "deleted" | "hidden" };
+export function publicCommentCount(data: unknown): number {
+ const count = (data as { count?: unknown })?.count;
+ if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) throw new Error("invalid_comment_response");
+ return count;
+}
+export function threadPage(data: unknown, signedIn: boolean, moderator: boolean, replies = false): ThreadPage {
+ const row = data as { items?: unknown; next?: unknown; code?: unknown; parentState?: unknown };
+ if (!row || !Array.isArray(row.items) || row.items.length > COMMENT_PAGE_SIZE || (replies && !["live", "deleted", "hidden"].includes(row.parentState as string))) throw new Error("invalid_comment_response");
+ const items = row.items.map((raw): CommentThread => {
+  const item = raw as CommentThread;
+  if (!item || !["live", "deleted", "hidden"].includes(item.state) || !Number.isSafeInteger(item.replyCount) || item.replyCount < 0 || (replies && (item.state !== "live" || item.replyCount !== 0))) throw new Error("invalid_comment_response");
+  if (item.state === "live") {
+   const checked = commentPage({ items: [item], next: null, code: row.code }, signedIn, moderator).items[0];
+   return { ...checked, state: "live", replyCount: item.replyCount };
+  }
+  if (item.body !== null || item.residentCode !== null || item.canDelete !== false || item.replyCount < 1 || typeof item.id !== "string" || !COMMENT_UUID.test(item.id) || !validCursor(item.createdAt, item.id)) throw new Error("invalid_comment_response");
+  return { id: item.id, state: item.state, residentCode: null, body: null, createdAt: item.createdAt, canDelete: false, replyCount: item.replyCount };
+ });
+ const checked = commentPage({ items: [], next: row.next, code: row.code }, signedIn, moderator);
+ if (new Set(items.map(item => item.id)).size !== items.length) throw new Error("invalid_comment_response");
+ return { ...checked, items, ...(replies ? { parentState: row.parentState as "live" | "deleted" | "hidden" } : {}) };
 }
