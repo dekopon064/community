@@ -5,7 +5,7 @@ import { verifiedAccount } from "../auth/profile";
 import { authRedirect } from "../auth/http";
 import { matchesIntent, type IntentStore } from "./intent";
 type Factory = () => Promise<SupabaseClient | null>;
-export async function startWithSave(request: Request, factory: Factory, intents: IntentStore, origin?: string, kakao = false) {
+export async function startWithSave(request: Request, factory: Factory, intents: IntentStore, origin?: string, kakao = false, line = false) {
   if (!isSameOriginPost(request)) return startSocialLogin(request, factory);
   const form = await request.clone().formData().catch(() => null), intent = intents.read();
   const matched = intent?.phase === "pending" && matchesIntent(intent, form?.get("saveIntent"), form?.get("next"));
@@ -17,7 +17,7 @@ export async function startWithSave(request: Request, factory: Factory, intents:
       if (client) await client.rpc("cancel_saved_information_intent", { p_intent_id: intent.token }).then(() => {}, () => {});
     }
   }
-  const response = await startSocialLogin(request, factory, origin, kakao, matched ? intent!.token : undefined);
+  const response = await startSocialLogin(request, factory, origin, kakao, matched ? intent!.token : undefined, line);
   const target = response.headers.get("location");
   if (matched && (!target || new URL(target, request.url).origin === new URL(request.url).origin)) intents.clear();
   return response;

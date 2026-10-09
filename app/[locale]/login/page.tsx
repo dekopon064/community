@@ -7,7 +7,7 @@ import { hasLocale } from "next-intl";
 import { getTranslations } from "next-intl/server";
 import { cookies } from "next/headers";
 import { createAuthClient } from "@/app/lib/auth/server";
-import { kakaoLoginEnabled, publicAuthConfig } from "@/app/lib/auth/config";
+import { kakaoLoginEnabled, lineLoginEnabled, publicAuthConfig } from "@/app/lib/auth/config";
 import { authLocale, safeReturnTo, publicBrowseReturnTo } from "@/app/lib/auth/urls";
 import { routing } from "@/i18n/routing";
 import LoginForm from "@/app/components/auth/LoginForm";
@@ -30,6 +30,7 @@ export default async function LoginPage({ params, searchParams }: {
   const browseNext = publicBrowseReturnTo(next, locale);
   const t = await getTranslations({ locale, namespace: "Auth" });
   const kakaoEnabled = kakaoLoginEnabled();
+  const lineEnabled = lineLoginEnabled();
   const store = await cookies();
   const pendingIntent = readIntent(store.get(INTENT_COOKIE)?.value);
   const saveIntent = pendingIntent?.phase === "pending" && matchesIntent(pendingIntent, query.saveIntent, next) ? pendingIntent.token : undefined;
@@ -78,7 +79,7 @@ export default async function LoginPage({ params, searchParams }: {
             <button type="submit" className="min-h-11 py-2 text-ink underline underline-offset-4">{t("logout")}</button>
           </form>
         </div>
-      ) : <LoginForm locale={locale} next={next} ready={!unavailable} kakaoEnabled={kakaoEnabled} saveIntent={saveIntent} />}
+      ) : <LoginForm locale={locale} next={next} ready={!unavailable} kakaoEnabled={kakaoEnabled} lineEnabled={lineEnabled} saveIntent={saveIntent} />}
       {!signedIn && <form action="/api/saved/cancel" method="post" className={styles.exit}><input type="hidden" name="locale" value={locale} /><input type="hidden" name="next" value={browseNext} /><button type="submit" className={styles.link}>{t("browse")}<ArrowRight size={18} aria-hidden="true" /></button><p className={styles.publicNote}>{t("publicNote")}</p></form>}
     </section>
   );

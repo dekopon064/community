@@ -127,7 +127,7 @@ if (process.argv.includes("--serve")) {
     delete process.env.MACHIMOA_KAKAO_LOGIN_ENABLED;
     let unsupportedCalls = 0;
     const deniedFactory = async () => { unsupportedCalls++; throw new Error("must not reach Auth"); };
-    for (const provider of ["", "naver", "line", "custom:line", "service_role", "GOOGLE", "https://evil.test"]) {
+    for (const provider of ["", "naver", "custom:line", "service_role", "GOOGLE", "https://evil.test"]) {
       const denied = await startSocialLogin(post("/api/auth/start", "/ko/admin", site, provider), deniedFactory, undefined, true);
       assert.equal(denied.status, 400); noCache(denied);
     }

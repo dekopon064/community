@@ -5,7 +5,7 @@ import { authRedirect, privateResponse } from "./http";
 type AuthClient = { auth: Pick<SupabaseClient["auth"], "signInWithOAuth" | "exchangeCodeForSession" | "getClaims" | "signOut"> };
 type ClientFactory = () => Promise<AuthClient | null>;
 
-export async function startSocialLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string, kakaoEnabled = false, saveIntent?: string) {
+export async function startSocialLogin(request: Request, createClient: ClientFactory, configuredOrigin?: string, kakaoEnabled = false, saveIntent?: string, lineEnabled = false) {
   if (!isSameOriginPost(request)) return privateResponse(new Response(null, { status: 403 }));
   const form = await request.formData().catch(() => null);
   if (!form) return privateResponse(new Response(null, { status: 400 }));
@@ -14,10 +14,11 @@ export async function startSocialLogin(request: Request, createClient: ClientFac
   // Missing provider preserves existing Google-only forms and open browser tabs.
   const providers = form.getAll("provider");
   const provider = providers.length === 0 ? "google" : providers[0];
-  if (providers.length > 1 || (provider !== "google" && provider !== "kakao")) {
+  if (providers.length > 1 || (provider !== "google" && provider !== "kakao" && provider !== "line")) {
     return privateResponse(new Response(null, { status: 400 }));
   }
   if (provider === "kakao" && !kakaoEnabled) return authRedirect(request, loginUrl(locale, next, "unavailable"));
+  if (provider === "line" && !lineEnabled) return authRedirect(request, loginUrl(locale, next, "unavailable"));
   const origin = siteOrigin(request.url, configuredOrigin);
   if (!origin) return authRedirect(request, loginUrl(locale, next, "unavailable"));
   try {
@@ -28,12 +29,15 @@ export async function startSocialLogin(request: Request, createClient: ClientFac
     callback.searchParams.set("next", next);
     if (saveIntent) callback.searchParams.set("saveIntent", saveIntent);
     const { data, error } = await client.auth.signInWithOAuth({
-      provider, options: {
+      provider: provider === "line" ? "custom:line" : provider, options: {
         redirectTo: callback.href, skipBrowserRedirect: true,
         // Supabase's Kakao defaults include account_email even with email optional.
         // `scopes` only adds to those defaults; the provider's singular `scope`
         // replaces them. Keep this server-owned and independent of form input.
         ...(provider === "kakao" ? { queryParams: { scope: "profile_nickname,profile_image" } } : {}),
+        // Supabase owns the OAuth2 code exchange and userinfo lookup. Configure
+        // custom:line with email_optional:true and only openid/profile scopes.
+        ...(provider === "line" ? { scopes: "openid profile", queryParams: { ui_locales: locale } } : {}),
       },
     });
     if (error || !data.url) return authRedirect(request, loginUrl(locale, next, "failed"));

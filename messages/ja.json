@@ -310,6 +310,8 @@
     "socialDescription": "GoogleまたはKakaoアカウントでログインできます。生活情報はログインせずに閲覧できます。",
     "kakaoLogin": "Login with Kakao",
     "kakaoConnecting": "Kakaoに移動中…",
+    "lineLogin": "LINEでログイン",
+    "lineConnecting": "LINEに移動中…",
     "socialHint": "使用するアカウントを選んでください。選択したサービスのログイン画面に移動します。",
     "googleHint": "Googleのログイン画面でアカウントを選択してください。",
     "connecting": "Googleに移動中…",

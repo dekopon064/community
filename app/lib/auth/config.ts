@@ -8,3 +8,8 @@ export function publicAuthConfig() {
 export function kakaoLoginEnabled() {
   return process.env.MACHIMOA_KAKAO_LOGIN_ENABLED === "true";
 }
+
+// Enable only after custom:line is configured in Supabase Auth. No channel secret here.
+export function lineLoginEnabled() {
+  return process.env.MACHIMOA_LINE_LOGIN_ENABLED === "true";
+}

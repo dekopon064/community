@@ -24,6 +24,7 @@
 :global(html[data-theme="dark"]) .lightMark {display:none;}
 :global(html[data-theme="dark"]) .neutralMark {display:block;}
 .kakao {gap:12px;background:#fee500;color:rgb(0 0 0 / 85%);border-radius:12px;font-size:16px;font-weight:500;}
+.line {background:var(--color-ink);color:var(--color-canvas-white);border-radius:12px;font-size:16px;font-weight:600;}
 .provider:hover:enabled {filter:brightness(.97);}
 .provider:disabled {cursor:wait;opacity:.55;}
 .exit {border-top:1px solid var(--color-info-rule);margin-top:28px;padding-top:18px;}
