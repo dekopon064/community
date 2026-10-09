@@ -557,6 +557,17 @@
     "hiddenParent": "숨김 처리된 댓글입니다.",
     "parent_unavailable": "원댓글을 이용할 수 없어 새 답글을 등록할 수 없습니다. 입력한 내용은 유지됩니다.",
     "count_failed": "전체 댓글 수를 확인하지 못했습니다.",
-    "reloadCount": "댓글 수 다시 확인"
+    "reloadCount": "댓글 수 다시 확인",
+    "replyTo": "{name}에게 답글",
+    "replyCount": "답글 {count}개",
+    "expandReplies": "답글 {count}개 펼치기",
+    "collapseReplies": "접기",
+    "expandRepliesFor": "{name}의 답글 {count}개 펼치기",
+    "collapseRepliesFor": "{name}의 답글 접기",
+    "repliesFor": "{name}의 답글 목록",
+    "repliesLoaded": "답글 {count}개를 더 불러왔습니다.",
+    "replyAccepted": "답글이 등록되었습니다.",
+    "deletedReplyContext": "삭제된 댓글",
+    "hiddenReplyContext": "숨김 처리된 댓글"
   }
 }

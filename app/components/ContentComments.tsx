@@ -10,7 +10,7 @@ import styles from "./ContentComments.module.css";
 
 type Submission = { requestId: string; body: string; expectedCode: string; parentId?: string };
 type Notice = "parent_unavailable" | "read_failed" | "unavailable" | "authentication_required" | "forbidden" | "request_conflict" | "rate_limited" | "identity_changed" | "invalid_request" | "uncertain" | "accepted" | "deleted" | "hidden" | "absent" | null;
-type Mutation = { outcome?: string; code?: string; state?: string; error?: Notice };
+type Mutation = { outcome?: string; code?: string; state?: string; commentId?: string; error?: Notice };
 const knownErrors = new Set(["authentication_required", "forbidden", "request_conflict", "rate_limited", "identity_changed", "invalid_request", "information_unavailable", "parent_unavailable"]);
 
 export default function ContentComments({ id, slug, locale }: { id: string; slug: string; locale: string }) {
@@ -20,6 +20,7 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
   const loginHref = loginUrl(authLocale, `/${authLocale}/info/${encodeURIComponent(slug)}#comments`).slice(3);
   const [page, setPage] = useState<ThreadPage | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
+  const [pageCursors, setPageCursors] = useState<Array<CommentCursor | null>>([null]);
   const currentPage = useRef(1), pageStarts = useRef<Array<CommentCursor | null>>([null]);
   const [total, setTotal] = useState<number | null>(null), [countFailed, setCountFailed] = useState(false);
   const countSequence = useRef(0);
@@ -29,8 +30,21 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
   const [replyLoading, setReplyLoading] = useState<Record<string, boolean>>({});
   const [replyUnavailable, setReplyUnavailable] = useState<Record<string, boolean>>({});
   const [replyFailed, setReplyFailed] = useState<Record<string, boolean>>({});
+  const [collapsedReplies, setCollapsedReplies] = useState<Record<string, boolean>>({});
+  const [replyRecipients, setReplyRecipients] = useState<Record<string, string>>({});
+  const [replyAnnouncements, setReplyAnnouncements] = useState<Record<string, { count: number; sequence: number }>>({});
+  const [noticeParent, setNoticeParent] = useState<string | null>(null);
+  const replyTriggers = useRef<Record<string, HTMLButtonElement | null>>({});
+  const replyComposers = useRef<Record<string, HTMLDivElement | null>>({});
+  const replyInputs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const replyRows = useRef<Record<string, HTMLLIElement | null>>({});
+  const replyFeedback = useRef<Record<string, HTMLDivElement | null>>({});
+  const replyToggles = useRef<Record<string, HTMLButtonElement | null>>({});
+  const focusReply = useRef<string | null>(null);
+  const focusAcceptedReply = useRef<{ parentId: string; commentId?: string } | null>(null);
+  const focusAddedReply = useRef<{ parentId: string; commentId?: string; keyboard: boolean; final: boolean } | null>(null);
   const openReply = useRef<string | null>(null);
-  openReply.current = replyTarget;
+  useEffect(() => { openReply.current = replyTarget; }, [replyTarget]);
   const replySequence = useRef<Record<string, number>>({});
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false), [reading, setReading] = useState(true);
@@ -51,6 +65,32 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
   const code = page?.viewer.code;
   const publicName = code ? t("resident", { code }) : null;
   const count = [...normalizeComment(draft)].length;
+
+  function reveal(element: HTMLElement | null | undefined) {
+    if (!element) return;
+    element.focus({ preventScroll: true });
+    element.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  useEffect(() => {
+    if (focusReply.current !== replyTarget || !replyTarget || busy || reading) return;
+    const composer = replyComposers.current[replyTarget];
+    const element = code ? replyInputs.current[replyTarget] : composer?.querySelector<HTMLElement>("a, button");
+    if (element) { focusReply.current = null; reveal(element); }
+  }, [replyTarget, code, busy, reading]);
+  useEffect(() => {
+    const target = focusAcceptedReply.current;
+    if (!target || busy || reading || replyLoading[target.parentId]) return;
+    focusAcceptedReply.current = null;
+    reveal((target.commentId ? replyRows.current[target.commentId] : null) ?? replyFeedback.current[target.parentId] ?? replyTriggers.current[target.parentId] ?? listTitle.current);
+  }, [busy, reading, replyLoading, replyPages, page]);
+  useEffect(() => {
+    const target = focusAddedReply.current;
+    if (!target || replyLoading[target.parentId]) return;
+    focusAddedReply.current = null;
+    if (collapsedReplies[target.parentId]) replyToggles.current[target.parentId]?.focus({ preventScroll: true });
+    else if (target.keyboard) reveal((target.commentId ? replyRows.current[target.commentId] : null) ?? replyToggles.current[target.parentId]);
+    else if (target.final) replyToggles.current[target.parentId]?.focus({ preventScroll: true });
+  }, [replyAnnouncements, replyLoading, collapsedReplies]);
 
   useEffect(() => {
     if (code && !busy && focusComposer.current) {
@@ -91,6 +131,7 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
       setReplyPages(previous => ({ ...previous, [parentId]: { ...data, items: cursor && previous[parentId] && previous[parentId].viewer.code === data.viewer.code && previous[parentId].viewer.signedIn === data.viewer.signedIn ? [...new Map([...previous[parentId].items, ...data.items].map(item => [item.id, item])).values()] : data.items } }));
       setReplyFailed(previous => ({ ...previous, [parentId]: false }));
       setReplyUnavailable(previous => ({ ...previous, [parentId]: false }));
+      return data;
     } catch { if (mounted.current && epoch === requestSequence.current && sequence === replySequence.current[parentId]) { setReplyFailed(previous => ({ ...previous, [parentId]: !missing })); setReplyUnavailable(previous => ({ ...previous, [parentId]: missing })); } }
     finally { if (mounted.current && sequence === replySequence.current[parentId]) setReplyLoading(previous => ({ ...previous, [parentId]: false })); }
   }, [id]);
@@ -112,6 +153,7 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
       setReplyPages({}); setReplyFailed({}); setReplyUnavailable({});
       setPage(data);
       pageStarts.current = [...pageStarts.current.slice(0, number), ...(data.next ? [data.next] : [])];
+      setPageCursors(pageStarts.current);
       currentPage.current = number; setPageNumber(number);
       if (scroll) { setReplyTarget(null); scrollAfterPage.current = true; }
       for (const item of data.items) if (item.replyCount > 0) void loadReplies(item.id);
@@ -141,9 +183,9 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
     if (response.status === 404) { setUnavailable(true); setPage(null); return { error: "unavailable" }; }
     return data;
   }
-  async function prepare() {
+  async function prepare(parentId?: string) {
     if (writing.current) return;
-    writing.current = true; setBusy(true); setNotice(null);
+    writing.current = true; setBusy(true); setNotice(null); setNoticeParent(parentId ?? null);
     try {
       const data = await mutate("prepare", {});
       if (data.code) setPage(previous => previous ? { ...previous, viewer: { ...previous.viewer, code: data.code! } } : previous);
@@ -155,11 +197,12 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
     const body = parentId ? replyDrafts[parentId] ?? "" : draft;
     if (writing.current || !code || (!submission && !validComment(body))) return;
     const value = submission ?? { requestId: crypto.randomUUID(), body: normalizeComment(body), expectedCode: code, ...(parentId ? { parentId } : {}) };
+    setNoticeParent(value.parentId ?? null);
     if (value.expectedCode !== code) { setNotice("identity_changed"); return; }
     writing.current = true; setBusy(true); setNotice(null); setPending(value); setMayRetry(false);
     try {
       const result = await mutate("create", value);
-      if (result.outcome === "accepted") { clearAccepted(value); if (value.parentId) setReplyTarget(null); setPending(null); setNotice("accepted"); await load(value.parentId ? pageStarts.current[currentPage.current - 1] ?? undefined : undefined, value.parentId ? currentPage.current : 1); if (value.parentId) await loadReplies(value.parentId); }
+      if (result.outcome === "accepted") { clearAccepted(value); if (value.parentId) { setReplyTarget(null); setCollapsedReplies(previous => ({ ...previous, [value.parentId!]: false })); focusAcceptedReply.current = { parentId: value.parentId, commentId: result.commentId }; } setPending(null); setNotice("accepted"); await load(value.parentId ? pageStarts.current[currentPage.current - 1] ?? undefined : undefined, value.parentId ? currentPage.current : 1); if (value.parentId) await loadReplies(value.parentId); }
       else { setPending(null); setNotice(result.error ?? "uncertain"); if (result.error === "identity_changed" || result.error === "authentication_required" || result.error === "parent_unavailable") await load(pageStarts.current[currentPage.current - 1] ?? undefined, currentPage.current); }
     } catch { setNotice("uncertain"); }
     finally { writing.current = false; setBusy(false); }
@@ -170,13 +213,14 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
   }
   async function resolveSubmission() {
     if (writing.current || !pending) return;
+    setNoticeParent(pending.parentId ?? null);
     writing.current = true; setBusy(true); setMayRetry(false);
     try {
       const query = new URLSearchParams({ id, requestId: pending.requestId });
       const response = await fetch(`/api/comments?${query}`, { cache: "no-store", credentials: "same-origin" });
       const result = await response.json() as Mutation;
       if (!response.ok) { setNotice(result.error ?? "uncertain"); return; }
-      if (result.outcome === "accepted") { clearAccepted(pending); if (pending.parentId) setReplyTarget(null); setPending(null); setNotice("accepted"); await load(pending.parentId ? pageStarts.current[currentPage.current - 1] ?? undefined : undefined, pending.parentId ? currentPage.current : 1); if (pending.parentId) await loadReplies(pending.parentId); }
+      if (result.outcome === "accepted") { clearAccepted(pending); if (pending.parentId) { setReplyTarget(null); setCollapsedReplies(previous => ({ ...previous, [pending.parentId!]: false })); focusAcceptedReply.current = { parentId: pending.parentId, commentId: result.commentId }; } setPending(null); setNotice("accepted"); await load(pending.parentId ? pageStarts.current[currentPage.current - 1] ?? undefined : undefined, pending.parentId ? currentPage.current : 1); if (pending.parentId) await loadReplies(pending.parentId); }
       else if (result.outcome === "absent") { setMayRetry(true); setNotice("absent"); await load(pageStarts.current[currentPage.current - 1] ?? undefined, currentPage.current); }
       else setNotice("uncertain");
     } catch { setNotice("uncertain"); }
@@ -184,6 +228,7 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
   }
   async function remove(commentId: string, action: "remove" | "hide", parentId?: string) {
     if (writing.current) return;
+    setNoticeParent(null);
     writing.current = true; setBusy(true); setNotice(null);
     try {
       const result = await mutate(action, { commentId });
@@ -194,6 +239,60 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
     finally { writing.current = false; setBusy(false); }
   }
   const error = notice && !["accepted", "deleted", "hidden", "absent"].includes(notice);
+  const feedbackParent = pending?.parentId ?? noticeParent;
+  function reloadCurrentPage() { void load(pageStarts.current[currentPage.current - 1] ?? undefined, currentPage.current); }
+  function retryPending() { if (pending) void submit(pending); }
+  function reloadReply(parentId: string) { return () => { void loadReplies(parentId); }; }
+  function prepareReply(parentId: string) { return () => { focusReply.current = parentId; void prepare(parentId); }; }
+  function submissionFeedback(parentId: string | null = null) {
+    if (feedbackParent !== parentId) return null;
+    return <div ref={parentId ? element => { replyFeedback.current[parentId] = element; } : undefined} tabIndex={parentId ? -1 : undefined} className={styles.feedback}>
+      {notice && notice !== "read_failed" && <p role={error ? "alert" : "status"} className={`${styles.notice} ${error ? styles.error : ""}`}>{parentId && notice === "accepted" ? t("replyAccepted") : t(notice)}</p>}
+      {pending && <>
+        <p className={styles.draftHelp}>{t("preservedDraft")}</p>
+        <div className={styles.recovery}>
+          <button type="button" className={styles.secondary} disabled={busy} onClick={() => void resolveSubmission()}>{t("checkSubmission")}</button>
+          {mayRetry && code === pending.expectedCode && <button type="button" className={styles.secondary} disabled={busy} onClick={retryPending}>{t("retrySame")}</button>}
+          {mayRetry && code !== pending.expectedCode && <p role="status">{t("identity_changed")}</p>}
+          {mayRetry && code && code !== pending.expectedCode && <button type="button" className={styles.secondary} disabled={busy} onClick={() => { setPending(null); setMayRetry(false); setNotice(null); }}>{t("newAccountDraft")}</button>}
+        </div>
+      </>}
+      {(notice === "uncertain" || notice === "unavailable") && <div className={styles.recovery}><button type="button" className={styles.secondary} disabled={reading || busy} onClick={reloadCurrentPage}>{t("reload")}</button></div>}
+    </div>;
+  }
+  function dismissReply(parentId: string) {
+    setReplyTarget(null);
+    focusReply.current = null;
+    reveal(replyTriggers.current[parentId] ?? listTitle.current);
+  }
+  async function showMoreReplies(parentId: string, cursor: CommentCursor | null | undefined, keyboard: boolean) {
+    const known = new Set(replyPages[parentId]?.items.map(item => item.id) ?? []);
+    const data = await loadReplies(parentId, cursor ?? undefined);
+    if (!data) return;
+    const added = data.items.filter(item => !known.has(item.id));
+    focusAddedReply.current = { parentId, commentId: added[0]?.id, keyboard, final: !data.next };
+    setReplyAnnouncements(previous => ({ ...previous, [parentId]: { count: added.length, sequence: (previous[parentId]?.sequence ?? 0) + 1 } }));
+  }
+  function replyGroup(item: CommentThread) {
+    if (!item.replyCount && !replyPages[item.id] && !replyFailed[item.id] && !replyLoading[item.id]) return null;
+    const name = item.state === "live" ? t("resident", { code: item.residentCode! }) : t(item.state === "deleted" ? "deletedReplyContext" : "hiddenReplyContext");
+    const collapsed = collapsedReplies[item.id] === true;
+    return <div className={styles.replyGroup}>
+      <div className={styles.replyHeader}>
+        {!collapsed && <span>{t("replyCount", { count: item.replyCount })}</span>}
+        <button ref={element => { replyToggles.current[item.id] = element; }} type="button" className={styles.replyToggle} aria-label={t(collapsed ? "expandRepliesFor" : "collapseRepliesFor", { name, count: item.replyCount })} aria-expanded={!collapsed} aria-controls={`${inputId}-${item.id}-replies`} onClick={() => setCollapsedReplies(previous => ({ ...previous, [item.id]: !previous[item.id] }))}>{collapsed ? t("expandReplies", { count: item.replyCount }) : t("collapseReplies")}</button>
+      </div>
+      <div id={`${inputId}-${item.id}-replies`} hidden={collapsed}>
+        {replyPages[item.id] && <ul className={styles.replies} aria-label={t("repliesFor", { name })}>
+          {replyPages[item.id].items.map(child => <li key={child.id} ref={element => { replyRows.current[child.id] = element; }} tabIndex={-1} className={styles.comment}>{commentRow(child, item.id)}</li>)}
+        </ul>}
+        {replyFailed[item.id] && <p role="alert" className={styles.error}>{t("read_failed")}</p>}
+        {(replyPages[item.id]?.next || replyFailed[item.id]) && <button type="button" className={styles.replyMore} disabled={!!replyLoading[item.id] || busy} onClick={event => void showMoreReplies(item.id, replyFailed[item.id] ? undefined : replyPages[item.id]?.next, event.detail === 0)}>{t("moreReplies")}</button>}
+        {replyLoading[item.id] && <p role="status" className={styles.subtle}>{t("loading")}</p>}
+      </div>
+      <p role="status" aria-live="polite" aria-atomic="true" className={styles.srOnly}>{replyAnnouncements[item.id] && <span key={replyAnnouncements[item.id].sequence}>{t("repliesLoaded", { count: replyAnnouncements[item.id].count })}</span>}</p>
+    </div>;
+  }
   const preservedDraft = draft ? <div className={styles.preservedDraft}>
     <label htmlFor={inputId} className={styles.srOnly}>{t("bodyLabel")}</label>
     <textarea id={inputId} value={draft} readOnly rows={2} aria-describedby={`${inputId}-preserved`} />
@@ -204,7 +303,7 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
             <div className={styles.metadata}>
               <strong>{t("resident", { code: item.residentCode! })}</strong>
               <div className={styles.metaEnd}><time dateTime={item.createdAt}>{new Intl.DateTimeFormat(locale === "ja" ? "ja-JP" : "ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(item.createdAt))}</time>
-              {!parentId && <><span aria-hidden="true" className={styles.dateDivider}>·</span><button className={styles.replyButton} type="button" disabled={busy || !!pending} aria-expanded={replyTarget === item.id} aria-controls={`${inputId}-${item.id}-composer`} onClick={() => setReplyTarget(item.id)}>{t("reply")}</button></>}
+              {!parentId && <><span aria-hidden="true" className={styles.dateDivider}>·</span><button ref={element => { replyTriggers.current[item.id] = element; }} className={styles.replyButton} type="button" disabled={busy || !!pending} aria-label={t("replyTo", { name: t("resident", { code: item.residentCode! }) })} aria-expanded={replyTarget === item.id} aria-controls={`${inputId}-${item.id}-composer`} onClick={() => { setReplyRecipients(previous => ({ ...previous, [item.id]: t("resident", { code: item.residentCode! }) })); focusReply.current = item.id; setReplyTarget(item.id); }}>{t("reply")}</button></>}
               {(item.canDelete || page?.viewer.moderator) && <div className={styles.actions}>
                 {item.canDelete && <button type="button" disabled={busy} onClick={event => { removalTrigger.current = event.currentTarget; setRemoval({ id: item.id, action: "remove", parentId }); }}>{t("delete")}</button>}
                 {page?.viewer.moderator && <button type="button" disabled={busy} onClick={event => { removalTrigger.current = event.currentTarget; setRemoval({ id: item.id, action: "hide", parentId }); }}>{t("hide")}</button>}
@@ -222,18 +321,21 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
   }
   function replyComposer(parentId: string, live: boolean | null) {
     const value = replyDrafts[parentId] ?? "", length = [...normalizeComment(value)].length;
-    return <div className={styles.composer}>
-      <p className={styles.identity}>{t("replyComposer")}{publicName ? ` · ${publicName}` : ""}</p>
+    const recipient = replyRecipients[parentId];
+    return <div ref={element => { replyComposers.current[parentId] = element; }} className={styles.composer}>
+      <p id={`${inputId}-${parentId}-target`} className={styles.srOnly}>{recipient ? t("replyTo", { name: recipient }) : t("replyComposer")}</p>
+      {publicName && <p className={styles.identity}><span className={styles.srOnly}>{t("authorLabel")}: </span><strong>{publicName}</strong></p>}
       {live === false && !replyLoading[parentId] && <p role="status" className={styles.notice}>{t("parent_unavailable")}</p>}
-      {replyFailed[parentId] && <div className={styles.recovery}><p role="alert" className={styles.error}>{t("read_failed")}</p><button className={styles.secondary} type="button" disabled={busy || !!replyLoading[parentId]} onClick={() => void loadReplies(parentId)}>{t("reload")}</button></div>}
+      {replyFailed[parentId] && <div className={styles.recovery}><p role="alert" className={styles.error}>{t("read_failed")}</p><button className={styles.secondary} type="button" disabled={busy || !!replyLoading[parentId]} onClick={reloadReply(parentId)}>{t("reload")}</button></div>}
       {replyLoading[parentId] && <p role="status" className={styles.subtle}>{t("loading")}</p>}
-      {!page?.viewer.signedIn ? <div className={styles.loginPrompt}><p>{t("loginHelp")}</p><Link className={styles.secondary} href={loginHref}>{t("login")}</Link></div> : !code ? <button className={styles.secondary} type="button" disabled={busy} onClick={() => void prepare()}>{t("prepare")}</button> : null}
+      {!page?.viewer.signedIn ? <div className={styles.loginPrompt}><p>{t("loginHelp")}</p><Link className={styles.secondary} href={loginHref}>{t("login")}</Link></div> : !code ? <button className={styles.secondary} type="button" disabled={busy} onClick={prepareReply(parentId)}>{busy ? t("processing") : t("prepare")}</button> : null}
       <label className={styles.srOnly} htmlFor={`${inputId}-${parentId}`}>{t("replyBodyLabel")}</label>
-      <textarea id={`${inputId}-${parentId}`} rows={2} value={value} placeholder={t("replyBodyLabel")} readOnly={busy || !!pending || live === false || !code} onChange={event => setReplyDrafts(previous => ({ ...previous, [parentId]: event.target.value }))} aria-invalid={length > COMMENT_LIMIT || undefined} aria-describedby={`${inputId}-${parentId}-limit`} />
+      <textarea ref={element => { replyInputs.current[parentId] = element; }} id={`${inputId}-${parentId}`} rows={2} value={value} placeholder={t("replyBodyLabel")} readOnly={busy || !!pending || live === false || !code} onChange={event => setReplyDrafts(previous => ({ ...previous, [parentId]: event.target.value }))} aria-invalid={length > COMMENT_LIMIT || undefined} aria-describedby={`${inputId}-${parentId}-target ${inputId}-${parentId}-limit`} />
       <div className={styles.composerFooter}><p id={`${inputId}-${parentId}-limit`} className={length > COMMENT_LIMIT ? styles.error : styles.subtle}>{t("length", { count: length, limit: COMMENT_LIMIT })}</p><div className={styles.confirmActions}>
-        <button className={styles.secondary} type="button" disabled={busy || !!pending} onClick={() => { setReplyTarget(null); listTitle.current?.focus({ preventScroll: true }); }}>{t("cancel")}</button>
-        <button className={styles.primary} type="button" disabled={busy || !!pending || !live || !code || !validComment(value)} onClick={() => void submit(undefined, parentId)}>{t("postReply")}</button>
+        <button className={styles.secondary} type="button" disabled={busy || !!pending} onClick={() => dismissReply(parentId)}>{t("cancel")}</button>
+        <button className={styles.primary} type="button" disabled={busy || !!pending || !live || !code || !validComment(value)} onClick={() => void submit(undefined, parentId)}>{busy && feedbackParent === parentId ? t("processing") : t("postReply")}</button>
       </div></div>
+      {submissionFeedback(parentId)}
     </div>;
   }
   return (
@@ -253,20 +355,15 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
         <ul className={styles.list} aria-label={t("listTitle")}>
           {page?.items.map(item => <li key={item.id} className={styles.comment}>
             {commentRow(item)}
-            {replyPages[item.id] && <ul className={styles.replies} aria-label={t("repliesTitle")}>
-              {replyPages[item.id].items.map(child => <li key={child.id} className={styles.comment}>{commentRow(child, item.id)}</li>)}
-            </ul>}
-            {replyFailed[item.id] && <p role="alert" className={styles.error}>{t("read_failed")}</p>}
-            {(replyPages[item.id]?.next || replyFailed[item.id]) && <button className={styles.secondary} type="button" disabled={!!replyLoading[item.id] || busy} onClick={() => void loadReplies(item.id, replyFailed[item.id] ? undefined : replyPages[item.id]?.next ?? undefined)}>{t("moreReplies")}</button>}
-            {replyLoading[item.id] && <p role="status" className={styles.subtle}>{t("loading")}</p>}
             {replyTarget === item.id && <div id={`${inputId}-${item.id}-composer`} className={styles.replyComposer}>{replyComposer(item.id, item.state === "live")}</div>}
-
+            {replyTarget !== item.id && submissionFeedback(item.id)}
+            {replyGroup(item)}
           </li>)}
         </ul>
         <div className={styles.listFooter}>
-          {page && pageStarts.current.length > 1 && <nav className={styles.pagination} aria-label={t("pagination")}>
+          {page && pageCursors.length > 1 && <nav className={styles.pagination} aria-label={t("pagination")}>
             <button type="button" className={styles.secondary} disabled={reading || busy || !!pending || pageNumber === 1} onClick={() => void load(pageStarts.current[pageNumber - 2] ?? undefined, pageNumber - 1, true)}>{t("previousPage")}</button>
-            {pageStarts.current.map((cursor, index) => index === 0 || Math.abs(index + 1 - pageNumber) <= 1 ? <button key={index} type="button" className={styles.pageButton} aria-label={t("pageLabel", { page: index + 1 })} aria-current={index + 1 === pageNumber ? "page" : undefined} disabled={reading || busy || !!pending} onClick={() => void load(cursor ?? undefined, index + 1, true)}>{index + 1}</button> : null)}
+            {pageCursors.map((cursor, index) => index === 0 || Math.abs(index + 1 - pageNumber) <= 1 ? <button key={index} type="button" className={styles.pageButton} aria-label={t("pageLabel", { page: index + 1 })} aria-current={index + 1 === pageNumber ? "page" : undefined} disabled={reading || busy || !!pending} onClick={() => void load(cursor ?? undefined, index + 1, true)}>{index + 1}</button> : null)}
             <button type="button" className={styles.secondary} disabled={reading || busy || !!pending || !page.next} onClick={() => void load(page.next!, pageNumber + 1, true)}>{t("nextPage")}</button>
           </nav>}
           {notice === "read_failed" && <button type="button" className={styles.secondary} disabled={reading || busy} onClick={() => void load(pageStarts.current[currentPage.current - 1] ?? undefined, currentPage.current)}>{t("reload")}</button>}
@@ -280,7 +377,7 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
             {pending && <p id={`${inputId}-preserved`} className={styles.draftHelp}>{t("preservedDraft")}</p>}
             <div className={styles.composerFooter}>
               <p id={`${inputId}-limit`} className={count > COMMENT_LIMIT ? styles.error : styles.subtle}>{t("length", { count, limit: COMMENT_LIMIT })}</p>
-              <button type="button" className={styles.primary} disabled={busy || !!pending || !validComment(draft)} onClick={() => void submit()}>{busy ? t("processing") : t("post")}</button>
+              <button type="button" className={styles.primary} disabled={busy || !!pending || !validComment(draft)} onClick={() => void submit()}>{busy && !feedbackParent ? t("processing") : t("post")}</button>
             </div>
           </> : <>
             <div className={styles.prepareRow}>
@@ -293,14 +390,8 @@ export default function ContentComments({ id, slug, locale }: { id: string; slug
           <div className={styles.loginPrompt}><p>{t("loginHelp")}</p><Link className={styles.secondary} href={loginHref}>{t("login")}</Link></div>
           {preservedDraft}
         </div> : null}
-        {notice && notice !== "read_failed" && <p role={error ? "alert" : "status"} className={`${styles.notice} ${error ? styles.error : ""}`}>{t(notice)}</p>}
-        {pending && <div className={styles.recovery}>
-          <button type="button" className={styles.secondary} disabled={busy} onClick={() => void resolveSubmission()}>{t("checkSubmission")}</button>
-          {mayRetry && code === pending.expectedCode && <button type="button" className={styles.secondary} disabled={busy} onClick={() => void submit(pending)}>{t("retrySame")}</button>}
-          {mayRetry && code !== pending.expectedCode && <p role="status">{t("identity_changed")}</p>}
-          {mayRetry && code && code !== pending.expectedCode && <button type="button" className={styles.secondary} disabled={busy} onClick={() => { setPending(null); setMayRetry(false); setNotice(null); }}>{t("newAccountDraft")}</button>}
-        </div>}
-        {(notice === "uncertain" || notice === "unavailable") && <div className={styles.recovery}><button type="button" className={styles.secondary} disabled={reading || busy} onClick={() => void load(pageStarts.current[currentPage.current - 1] ?? undefined, currentPage.current)}>{t("reload")}</button></div>}
+        {submissionFeedback()}
+        {feedbackParent && replyTarget !== feedbackParent && !page?.items.some(item => item.id === feedbackParent) && submissionFeedback(feedbackParent)}
       </>}
     </section>
   );

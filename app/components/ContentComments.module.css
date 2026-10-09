@@ -50,7 +50,21 @@
 .pagination { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: .375rem; }
 .pageButton { min-width: 44px; min-height: 44px; font-size: .8125rem; border-radius: .5rem; cursor: pointer; }
 .pageButton[aria-current="page"] { background: var(--color-ink); color: var(--color-canvas-white); font-weight: 700; }
-.replyButton { min-height: 44px; padding: .25rem .375rem; color: var(--color-ink-sub); font-size: .8125rem; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.replies { list-style: none; margin-left: 1.25rem; padding: 0; }
+.replyButton { min-width: 44px; min-height: 44px; padding: .25rem .375rem; color: var(--color-ink-sub); font-size: .8125rem; text-decoration: none; text-underline-offset: 3px; cursor: pointer; }
+.replyMore { min-width: 44px; min-height: 44px; padding: .25rem 0; border: 0; background: transparent; color: var(--color-ink-sub); font-size: .8125rem; font-weight: 400; text-decoration: none; text-underline-offset: 3px; cursor: pointer; }
+@media (hover: hover) {
+  .replyButton:hover:not(:disabled), .replyMore:hover:not(:disabled) { color: var(--color-ink); text-decoration: underline; }
+}
+.replyButton:focus-visible, .replyMore:focus-visible { color: var(--color-ink); text-decoration: underline; }
+.replyGroup { margin-top: .75rem; margin-inline-start: .75rem; padding-inline-start: .75rem; border-inline-start: 1px solid var(--color-stone); }
+.replyHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .25rem .75rem; color: var(--color-ink-sub); font-size: .8125rem; }
+.replyToggle { min-width: 44px; min-height: 44px; text-align: start; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.replies { list-style: none; padding: 0; }
 .replyComposer { margin-left: 1.25rem; }
-@media (max-width: 480px) { .replies, .replyComposer { margin-left: .75rem; } }
+.replyComposer .composer { margin-top: .75rem; padding-top: .75rem; }
+.feedback:empty { display: none; }
+.comment, .replyButton, .replyMore, .replyToggle, .feedback, .composer textarea, .composer button, .composer a { scroll-margin-top: 8rem; scroll-margin-bottom: 6rem; }
+@media (max-width: 480px) {
+  .replyComposer { margin-left: .75rem; }
+  .replyGroup { margin-inline-start: .5rem; padding-inline-start: .5rem; }
+}

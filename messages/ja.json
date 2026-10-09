@@ -633,6 +633,17 @@
     "hiddenParent": "非表示になったコメントです。",
     "parent_unavailable": "元のコメントを利用できないため、新しい返信は投稿できません。入力内容は保持されます。",
     "count_failed": "コメントの総数を確認できませんでした。",
-    "reloadCount": "コメント数を再確認"
+    "reloadCount": "コメント数を再確認",
+    "replyTo": "{name}への返信",
+    "replyCount": "返信 {count}件",
+    "expandReplies": "返信 {count}件を表示",
+    "collapseReplies": "折りたたむ",
+    "expandRepliesFor": "{name}の返信 {count}件を表示",
+    "collapseRepliesFor": "{name}の返信を折りたたむ",
+    "repliesFor": "{name}の返信一覧",
+    "repliesLoaded": "返信を{count}件追加で読み込みました。",
+    "replyAccepted": "返信を投稿しました。",
+    "deletedReplyContext": "削除されたコメント",
+    "hiddenReplyContext": "非表示のコメント"
   }
 }
