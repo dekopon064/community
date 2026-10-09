@@ -3,7 +3,7 @@ import type { AdminAccess } from "../auth/admin-policy";
 import { privateResponse } from "../auth/http";
 import { verifiedAccount } from "../auth/profile";
 import { isSameOriginPost } from "../auth/urls";
-import { COMMENT_UUID, RESIDENT_CODE, commentPage, normalizeComment, validComment, validCursor } from "./contracts";
+import { COMMENT_UUID, RESIDENT_CODE, EXPECTED_RESIDENT_CODE, commentPage, normalizeComment, validComment, validCursor } from "./contracts";
 
 type Dependencies = {
   client: () => Promise<SupabaseClient | null>;
@@ -44,7 +44,7 @@ export async function commentRequest(request: Request, dependencies: Dependencie
   if (action === "list" && ((input.at !== undefined || input.beforeId !== undefined) && !validCursor(input.at, input.beforeId))) return reply({ error: "invalid_request" }, 400);
   if (["status", "create"].includes(action) && (typeof input.requestId !== "string" || !COMMENT_UUID.test(input.requestId))) return reply({ error: "invalid_request" }, 400);
   if (["remove", "hide"].includes(action) && (typeof input.commentId !== "string" || !COMMENT_UUID.test(input.commentId))) return reply({ error: "invalid_request" }, 400);
-  if (action === "create" && (!validComment(input.body) || typeof input.expectedCode !== "string" || !RESIDENT_CODE.test(input.expectedCode))) return reply({ error: "invalid_request" }, 400);
+  if (action === "create" && (!validComment(input.body) || typeof input.expectedCode !== "string" || !EXPECTED_RESIDENT_CODE.test(input.expectedCode))) return reply({ error: "invalid_request" }, 400);
   try {
     const client = await dependencies.client();
     const account = await verifiedAccount(client);

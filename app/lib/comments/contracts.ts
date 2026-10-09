@@ -1,6 +1,9 @@
 export const COMMENT_LIMIT = 1000;
 export const COMMENT_PAGE_SIZE = 20;
-export const RESIDENT_CODE = /^[A-HJKMNP-Z2-9]{6}$/;
+export const RESIDENT_CODE = /^[0-9]{5}(?![\s\S])/;
+// An old open composer may send its former code. SQL rejects it with the
+// existing identity fence; own accepted receipts remain readable by request ID.
+export const EXPECTED_RESIDENT_CODE = /^(?:[0-9]{5}|[A-HJKMNP-Z2-9]{6})(?![\s\S])/;
 export const COMMENT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type CommentItem = { id: string; residentCode: string; body: string; createdAt: string; canDelete: boolean };
 export type CommentCursor = { at: string; id: string };
