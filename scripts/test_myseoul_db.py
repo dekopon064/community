@@ -8,7 +8,8 @@ import json
 import sys
 import unittest
 from datetime import datetime
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from uuid import UUID
 
 from ingest.connectors.myseoul_program import normalize_detail, MySeoulProgramConnector
 from ingest.myseoul_db import SCHEMA, MySeoulObservationAdapter, evaluate_myseoul_facts, myseoul_facts, myseoul_rpc_item
@@ -21,6 +22,12 @@ def sample(**options):
     defaults = dict(application="2020-01-01 10:00 ~ 2099-10-15 18:00", operation="2026-10-03 ~ 2099-10-17")
     defaults.update(options)
     return normalize_detail(detail(**defaults), url())
+
+def observation_response(records, outcomes=None):
+    outcomes = outcomes or ["new"] * len(records)
+    return [{"id": str(UUID(int=i + 1)), "outcome": outcome, "revision": record.revision_hash}
+            for i, (record, outcome) in enumerate(zip(records, outcomes))]
+
 
 def fixtures():
     cases = {
@@ -63,9 +70,82 @@ class MySeoulStorageTests(unittest.TestCase):
         self.assertEqual(item["jobs"],[]);self.assertEqual(item["relationships"],[])
         self.assertEqual(item["disposition"],"observe_only")
         self.assertEqual(item["source_updated_at"],None)
-        rpc=Mock(return_value=[{"outcome":"new"}]);a=MySeoulObservationAdapter(rpc)
-        a.observe("synthetic-run",[sample()],None)
+        record=sample();rpc=Mock(return_value=observation_response([record]));a=MySeoulObservationAdapter(rpc)
+        a.observe("synthetic-run",[record],None)
         self.assertEqual(rpc.call_args.args[0],"observe_myseoul_program")
+
+    def test_observe_packages_existing_contract_and_returns_all_outcomes(self):
+        records = [normalize_detail(detail(title=f"합성 프로그램 {i}"), url(program=f"{i:032X}"))
+                   for i in range(1, 4)]
+        checkpoint = {"page_num": 2}
+        result = observation_response(records, ["new", "changed", "unchanged"])
+        before = copy.deepcopy((records, checkpoint, result))
+        expected = [myseoul_rpc_item(record, now=NOW) for record in records]
+        rpc = Mock(return_value=result)
+        with patch("ingest.myseoul_db.datetime") as clock:
+            clock.now.return_value = NOW
+            actual = MySeoulObservationAdapter(rpc).observe("synthetic-run", records, checkpoint)
+        rpc.assert_called_once_with("observe_myseoul_program", {
+            "p_run_id": "synthetic-run", "p_items": expected, "p_next_checkpoint": checkpoint})
+        self.assertIs(actual, result)
+        self.assertEqual((records, checkpoint, result), before)
+        for record, packet in zip(records, rpc.call_args.args[1]["p_items"]):
+            self.assertIsNot(packet["normalized_payload"], record.normalized_payload)
+            self.assertIsNot(packet["min_fields"], record.min_fields)
+            self.assertEqual(packet["jobs"], [])
+            self.assertEqual(packet["relationships"], [])
+
+    def test_observe_rejects_invalid_response_without_retry_or_mutation(self):
+        record = sample()
+        valid = observation_response([record])[0]
+        cases = [None, {}, (), [], [valid, valid], [None], ["row"], [[]], [{}]]
+        # Required values are limited to fields actually returned by the RPC.
+        cases += [[{key: value for key, value in valid.items() if key != missing}]
+                  for missing in ("id", "outcome", "revision")]
+        cases += [[{**valid, field: value}] for field, values in (
+            ("id", (None, 1, [], "", "not-a-uuid")),
+            ("outcome", (None, 1, [], {}, "", "unsupported")),
+            ("revision", (None, 1, [], "", "0" * 64)),
+        ) for value in values]
+        for response in cases:
+            with self.subTest(response=response):
+                before = copy.deepcopy((record, response))
+                rpc = Mock(return_value=response)
+                with self.assertRaisesRegex(RuntimeError, "^myseoul_observation_response_invalid$"):
+                    MySeoulObservationAdapter(rpc).observe("synthetic-run", [record], None)
+                rpc.assert_called_once()
+                self.assertEqual((record, response), before)
+
+    def test_observe_checks_each_batch_revision(self):
+        records = [sample(), normalize_detail(detail(title="다른 합성 프로그램"), url(program=f"{2:032X}"))]
+        response = observation_response(records)
+        self.assertNotEqual(records[0].revision_hash, records[1].revision_hash)
+        for result in (response[:1], response + response[:1], list(reversed(response))):
+            with self.subTest(result=result):
+                rpc = Mock(return_value=result)
+                with self.assertRaisesRegex(RuntimeError, "^myseoul_observation_response_invalid$"):
+                    MySeoulObservationAdapter(rpc).observe("synthetic-run", records, None)
+                rpc.assert_called_once()
+
+    def test_observe_timeout_is_unknown_and_never_retried(self):
+        rpc = Mock(side_effect=TimeoutError("PRIVATE_SENTINEL"))
+        with self.assertRaisesRegex(RuntimeError, "^myseoul_observation_failed$") as caught:
+            MySeoulObservationAdapter(rpc).observe("synthetic-run", [sample()], None)
+        rpc.assert_called_once()
+        self.assertIsNone(caught.exception.__cause__)
+
+    def test_rpc_input_copy_is_isolated_from_observation(self):
+        record = sample()
+        before = copy.deepcopy(record)
+        def rpc(name, args):
+            self.assertEqual(name, "observe_myseoul_program")
+            packet = args["p_items"][0]
+            packet["normalized_payload"]["description"] = "fake transport mutation"
+            packet["min_fields"].clear()
+            packet["myseoul_facts"].clear()
+            return observation_response([record])
+        MySeoulObservationAdapter(rpc).observe("synthetic-run", [record], None)
+        self.assertEqual(record, before)
 
     def test_source_and_parser_mismatch(self):
         for key,value in [("source_language","en"),("parser_version","different"),("revision_contract","other")]:

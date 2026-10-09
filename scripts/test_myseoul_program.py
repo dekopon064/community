@@ -265,13 +265,18 @@ class DiscoveryTests(unittest.TestCase):
             with self.subTest(href=href), self.assertRaises(MySeoulContractError):
                 discover_home(observed_home(href))
 
-    def test_local_source_not_registered_in_existing_runner(self):
-        from ingest.source_identity import canonical_source_id
+    def test_registered_identity_is_separate_from_youthcenter_runner(self):
+        from ingest.source_identity import canonical_source_id, curation_source_for_enqueue
         from ingest.run import build_youthcenter_connectors
+        self.assertEqual(canonical_source_id("myseoul_program"), "myseoul_program")
+        self.assertEqual(curation_source_for_enqueue("myseoul_program"), "myseoul_program")
         with self.assertRaises(ValueError):
-            canonical_source_id("myseoul_program")
+            canonical_source_id("unsupported_source")
+        with self.assertRaises(ValueError):
+            curation_source_for_enqueue("unsupported_source")
         with patch("requests.get", side_effect=AssertionError("network prohibited")):
-            self.assertNotIn("myseoul_program", [c.canonical_source_id for c in build_youthcenter_connectors()])
+            self.assertEqual([c.canonical_source_id for c in build_youthcenter_connectors()],
+                             ["youthcenter_policy", "youthcenter_content"])
 
     def test_only_education_section_and_ko_canonical(self):
         found = discover_home(home(url(language="en"), url(), outside=f'<a href="{url("A" * 32)}">뉴스</a>'))

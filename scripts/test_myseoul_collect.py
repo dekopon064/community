@@ -3,9 +3,11 @@ import contextlib
 import io
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from uuid import UUID
 from ingest.http_client import HttpClient
 from ingest.myseoul_collect import HTTP_LIMIT, ListPage, collect_myseoul, list_entries
+from ingest.myseoul_db import MySeoulObservationAdapter
 from test_myseoul_program import detail, url, Response
 from ingest.connectors.myseoul_program import detail_identity
 import run_myseoul_collect as cli
@@ -44,7 +46,7 @@ class FakeRPC:
             return [{"key":e["key"],"url":e["url"]} for e in self.selected]
         if name=="observe_myseoul_program":
             p=args["p_items"][0];self.sources.add(p["external_key"]);self.observed.append(p["external_key"])
-            return [{"revision":p["revision_hash"]}]
+            return [{"id":str(UUID(int=len(self.observed))),"outcome":"new","revision":p["revision_hash"]}]
         if name=="record_myseoul_detail_attempt":
             e=self.pending[args["p_key"]];e["attempts"]+=1
             if args["p_outcome"]=="detail_failed":self.failed+=1
@@ -76,6 +78,230 @@ def run(pages,rpc=None,fail_keys=()):
 
 
 class CollectionTests(unittest.TestCase):
+
+    def test_finish_response_unknown_is_not_repeated_or_reported_success(self):
+        for mode in ("invalid", "timeout_after"):
+            with self.subTest(mode=mode):
+                rpc = FakeRPC(); names = []
+                def wrapped(name, args):
+                    names.append(name)
+                    result = rpc(name, args)
+                    if name == "finish_myseoul_list_collection":
+                        if mode == "invalid": return None
+                        raise TimeoutError("PRIVATE_SENTINEL")
+                    return result
+                with self.assertRaisesRegex(RuntimeError, "^myseoul_finish_(response_invalid|failed)$") as caught:
+                    run({1: ListPage(1, 1, [item(1)], True)}, wrapped)
+                self.assertNotIn("PRIVATE_SENTINEL", str(caught.exception))
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertEqual(names.count("finish_myseoul_list_collection"), 1)
+                self.assertEqual(rpc.processed, 1)
+                self.assertEqual(rpc.observed, [key(1)])
+                self.assertFalse(rpc.calls[-1][1]["p_failed"])
+
+    def test_each_supported_outcome_acknowledged_before_processed(self):
+        for outcome in ("new", "changed", "unchanged"):
+            with self.subTest(outcome=outcome):
+                rpc = FakeRPC()
+                def wrapped(name, args):
+                    result = rpc(name, args)
+                    if name == "observe_myseoul_program":
+                        return [{**result[0], "outcome": outcome}]
+                    return result
+                result, _, _ = run({1: ListPage(1, 1, [item(1)], True)}, wrapped)
+                self.assertEqual(result["summary"]["processed"], 1)
+                names = [n for n, _ in rpc.calls]
+                self.assertLess(names.index("observe_myseoul_program"), names.index("record_myseoul_detail_attempt"))
+
+    def test_processed_failure_unknown_or_invalid_not_replayed_and_next_run_reconciles(self):
+        # Observation and attempt marking are distinct writes, not one transaction.
+        for mode in ("rejected", "timeout_before", "timeout_after", "invalid"):
+            with self.subTest(mode=mode):
+                rpc = FakeRPC(); names = []
+                def wrapped(name, args):
+                    names.append(name)
+                    if name == "record_myseoul_detail_attempt":
+                        if mode == "timeout_after": rpc(name, args)
+                        if mode == "invalid": return None
+                        raise TimeoutError("PRIVATE_SENTINEL") if mode.startswith("timeout") else RuntimeError("attempt_rejected")
+                    return rpc(name, args)
+                with self.assertRaisesRegex(RuntimeError, "^myseoul_collection_failed$"):
+                    run({1: ListPage(1, 2, [item(1), item(2)], True)}, wrapped)
+                self.assertEqual(names.count("observe_myseoul_program"), 1)
+                self.assertEqual(names.count("record_myseoul_detail_attempt"), 1)
+                self.assertEqual(rpc.observed, [key(1)])
+                self.assertEqual(rpc.processed, int(mode == "timeout_after"))
+                self.assertTrue(rpc.calls[-1][1]["p_failed"])
+                result, _, calls = run({1: ListPage(1, 2, [item(1), item(2)], True)}, rpc)
+                self.assertEqual(rpc.observed, [key(1), key(2)])
+                self.assertNotIn(detail_identity(item(1)["url"])[3], calls)
+                self.assertEqual(result["summary"]["processed"], 1)
+
+    def test_lease_loss_at_each_server_boundary_never_finishes_successfully(self):
+        stages = ("discover_myseoul_list_page", "myseoul_pending_details", "observe_myseoul_program",
+                  "record_myseoul_detail_attempt", "finish_myseoul_list_collection")
+        for stage in stages:
+            with self.subTest(stage=stage):
+                rpc = FakeRPC(); names = []
+                def wrapped(name, args):
+                    names.append(name)
+                    if name == stage or name == "finish_myseoul_list_collection":
+                        raise RuntimeError("myseoul_lease_lost")
+                    return rpc(name, args)
+                with self.assertRaises(RuntimeError):
+                    run({1: ListPage(1, 1, [item(1)], True)}, wrapped)
+                self.assertEqual(names.count(stage), 1)
+                self.assertEqual(names.count("finish_myseoul_list_collection"), 1)
+                self.assertEqual(len(rpc.observed), int(stage in {"record_myseoul_detail_attempt", "finish_myseoul_list_collection"}))
+                self.assertEqual(rpc.processed, int(stage == "finish_myseoul_list_collection"))
+
+    def test_late_observation_ack_cannot_bypass_server_lease_on_processed(self):
+        rpc = FakeRPC(); expired = False; names = []
+        def wrapped(name, args):
+            nonlocal expired
+            names.append(name)
+            if expired:
+                raise RuntimeError("myseoul_lease_lost")
+            result = rpc(name, args)
+            if name == "observe_myseoul_program": expired = True
+            return result
+        with self.assertRaisesRegex(RuntimeError, "^myseoul_collection_failed$"):
+            run({1: ListPage(1, 2, [item(1), item(2)], True)}, wrapped)
+        self.assertEqual(rpc.observed, [key(1)])
+        self.assertEqual(rpc.processed, 0)
+        self.assertEqual(names.count("observe_myseoul_program"), 1)
+        self.assertEqual(names.count("record_myseoul_detail_attempt"), 1)
+        self.assertEqual(names.count("finish_myseoul_list_collection"), 1)
+
+    def test_active_run_skip_and_duplicate_pending_do_not_replay(self):
+        transport = Mock(); reader = Mock()
+        rpc = Mock(return_value=[{"skipped": True, "skip_reason": "lease_held"}])
+        result = collect_myseoul(HttpClient(budget=12, max_attempts=1, transport=transport), rpc, read_page=reader)
+        self.assertEqual(result["reason"], "lease_held")
+        rpc.assert_called_once(); transport.assert_not_called(); reader.assert_not_called()
+        state = FakeRPC()
+        def duplicate(name, args):
+            result = state(name, args)
+            return result + result if name == "myseoul_pending_details" else result
+        with self.assertRaises(RuntimeError):
+            run({1: ListPage(1, 1, [item(1)], True)}, duplicate)
+        # The first validated entry may be committed; the duplicate is stopped.
+        self.assertEqual(state.observed, [key(1)])
+        self.assertEqual(state.processed, 1)
+        self.assertTrue(state.calls[-1][1]["p_failed"])
+
+    def test_detail_failure_is_carried_once_into_later_run(self):
+        rpc = FakeRPC()
+        first, _, calls = run({1: ListPage(1, 2, [item(1), item(2)], True)}, rpc, fail_keys=(key(1),))
+        self.assertEqual(first["status"], "incomplete")
+        self.assertEqual(calls.count(detail_identity(item(1)["url"])[3]), 1)
+        second, _, calls = run({1: ListPage(1, 2, [item(1), item(2)], True)}, rpc)
+        self.assertEqual(second["status"], "complete")
+        self.assertEqual(rpc.observed, [key(2), key(1)])
+        self.assertEqual(calls.count(detail_identity(item(1)["url"])[3]), 1)
+        self.assertNotIn(detail_identity(item(2)["url"])[3], calls)
+
+    def test_general_cli_list_detail_adapter_filters_only_with_fake_dependencies(self):
+        from types import SimpleNamespace
+        from test_myseoul_list import listing, LIST_DATA_URL
+        from ingest.content_filters import SCHEMA
+        rpc = FakeRPC(); calls = []
+        def sender(target, **kwargs):
+            calls.append(target)
+            return Response(listing(total=1)) if target == LIST_DATA_URL else Response(detail(target="외국인·유학생"))
+        http = HttpClient(budget=12, max_attempts=1, transport=sender)
+        client = SimpleNamespace(rpc=lambda n, p: SimpleNamespace(execute=lambda: SimpleNamespace(data=rpc(n, p))))
+        with patch.dict("os.environ", {"SUPABASE_URL": "https://abcdefghijklmnopqrst.supabase.co",
+                                      "SUPABASE_SERVICE_KEY": "synthetic"}, clear=True), \
+                patch("ingest.supabase_store.create_ingest_client", return_value=client), \
+                patch("ingest.http_client.HttpClient", return_value=http), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cli.main(["--project-ref", "abcdefghijklmnopqrst", "--execute"]), 0)
+        self.assertEqual(json.loads(out.getvalue())["summary"]["processed"], 1)
+        self.assertEqual(calls, [LIST_DATA_URL, detail_identity(item(1)["url"])[3]])
+        self.assertEqual(http.request_count, 2)
+        packet = next(p["p_items"][0] for n, p in rpc.calls if n == "observe_myseoul_program")
+        self.assertEqual(packet["filterContract"], SCHEMA)
+        self.assertEqual(packet["filterFacts"]["data"]["audience"], {"status": "known", "value": "other"})
+        for field, evidence in packet["filterFacts"]["evidence"].items():
+            prefix, key_ = evidence["sourceField"].split(".", 1)
+            material = packet["myseoul_facts" if prefix == "facts" else "normalized_payload"][key_]
+            if not isinstance(material, str): material = json.dumps(material, ensure_ascii=False)
+            self.assertIn(evidence["excerpt"], material)
+        self.assertEqual(packet["myseoul_facts"]["source_revision"], packet["revision_hash"])
+        self.assertEqual(packet["myseoul_facts"]["schema_version"], "myseoul-program-facts-v1-local")
+        self.assertEqual(packet["normalized_payload"]["parser_version"], "myseoul-html-v2-local")
+        self.assertNotIn("filterContract", packet["normalized_payload"])
+        self.assertNotIn("filterFacts", packet["myseoul_facts"])
+        self.assertEqual(packet["jobs"], [])
+        self.assertEqual([n for n, _ in rpc.calls], ["start_ingest_run", "discover_myseoul_list_page",
+            "myseoul_pending_details", "observe_myseoul_program", "record_myseoul_detail_attempt",
+            "finish_myseoul_list_collection"])
+
+    def test_general_collector_calls_real_store_adapter_before_processed(self):
+        with patch.object(MySeoulObservationAdapter, "observe", autospec=True,
+                          side_effect=MySeoulObservationAdapter.observe) as observe:
+            result, rpc, _ = run({1:ListPage(1,1,[item(1)],True)})
+        observe.assert_called_once()
+        store, run_id, records, checkpoint = observe.call_args.args
+        self.assertIs(store.rpc, rpc)
+        self.assertEqual(run_id, "1")
+        self.assertEqual(records[0].external_key, key(1))
+        self.assertIsNone(checkpoint)
+        self.assertEqual(result["summary"]["processed"], 1)
+        self.assertEqual([name for name, _ in rpc.calls], [
+            "start_ingest_run", "discover_myseoul_list_page", "myseoul_pending_details",
+            "observe_myseoul_program", "record_myseoul_detail_attempt", "finish_myseoul_list_collection"])
+
+    def test_invalid_observation_stops_without_processed_or_retry(self):
+        invalid_results = (
+            ("unknown", lambda rows: None), ("object", lambda rows: {}),
+            ("empty", lambda rows: []), ("row_type", lambda rows: [None]),
+            ("missing", lambda rows: [{}]), ("string", lambda rows: "response"),
+            ("quantity", lambda rows: rows + rows),
+            ("identity", lambda rows: [{**rows[0], "id":"invalid-id"}]),
+            ("outcome", lambda rows: [{**rows[0], "outcome":"unsupported"}]),
+            ("revision", lambda rows: [{**rows[0], "revision":"0" * 64}]),
+        )
+        for name, invalid in invalid_results:
+            with self.subTest(response=name):
+                rpc = FakeRPC()
+                def wrapped(name, args):
+                    result = rpc(name, args)
+                    if name == "observe_myseoul_program":
+                        return invalid(result)
+                    return result
+                with self.assertRaisesRegex(RuntimeError, "^myseoul_collection_failed$"):
+                    run({1:ListPage(1,2,[item(1),item(2)],True)}, wrapped)
+                self.assertEqual(rpc.observed, [key(1)])
+                self.assertEqual(rpc.processed, 0)
+                self.assertEqual(rpc.failed, 0)
+                self.assertEqual([name for name, _ in rpc.calls], [
+                    "start_ingest_run", "discover_myseoul_list_page", "myseoul_pending_details",
+                    "observe_myseoul_program", "finish_myseoul_list_collection"])
+                self.assertEqual(rpc.calls[-1][1], {"p_run_id":"1", "p_requests":2, "p_failed":True})
+
+    def test_detail_failure_remains_distinct_from_storage_failure(self):
+        rpc = FakeRPC()
+        def wrapped(name, args):
+            result = rpc(name, args)
+            return None if name == "observe_myseoul_program" else result
+        with self.assertRaisesRegex(RuntimeError, "^myseoul_collection_failed$"):
+            run({1:ListPage(1,3,[item(1),item(2),item(3)],True)}, wrapped, fail_keys=(key(1),))
+        attempts = [args for name, args in rpc.calls if name == "record_myseoul_detail_attempt"]
+        self.assertEqual(attempts, [{"p_run_id":"1", "p_key":key(1), "p_outcome":"detail_failed"}])
+        self.assertEqual(rpc.observed, [key(2)])
+        self.assertEqual(rpc.processed, 0)
+        self.assertEqual(rpc.calls[-1][1], {"p_run_id":"1", "p_requests":3, "p_failed":True})
+
+    def test_retry_or_request_budget_change_rejected_before_rpc(self):
+        for budget, attempts in ((HTTP_LIMIT - 1, 1), (HTTP_LIMIT + 1, 1), (HTTP_LIMIT, 2)):
+            with self.subTest(budget=budget, attempts=attempts):
+                rpc = Mock(); transport = Mock()
+                with self.assertRaisesRegex(ValueError, "^myseoul_budget_required$"):
+                    collect_myseoul(HttpClient(budget=budget, max_attempts=attempts, transport=transport), rpc)
+                rpc.assert_not_called(); transport.assert_not_called()
+
     def test_all_new_reads_two_pages_and_caps_ten_details(self):
         result,rpc,calls=run({1:ListPage(1,30,[item(n) for n in range(1,11)],True),2:ListPage(2,30,[item(n) for n in range(11,21)],True)})
         self.assertEqual(calls[:2],[1,2]);self.assertNotIn(3,calls)
@@ -137,12 +363,23 @@ class CollectionTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):run({1:ListPage(1,1,[{"url":href,"status":"신청중"}],True)})
 
     def test_unknown_write_not_replayed_and_secret_not_exposed(self):
-        rpc=FakeRPC()
-        def wrapped(name,args):
-            if name=="observe_myseoul_program":raise RuntimeError("PRIVATE_SENTINEL")
-            return rpc(name,args)
-        with self.assertRaisesRegex(RuntimeError,"^myseoul_collection_failed$") as caught:run({1:ListPage(1,1,[item(1)],True)},wrapped)
-        self.assertNotIn("PRIVATE_SENTINEL",str(caught.exception));self.assertEqual(len(rpc.pending),1)
+        for after_write in (False, True):
+            with self.subTest(after_write=after_write):
+                rpc=FakeRPC(); calls=[]
+                def wrapped(name,args):
+                    calls.append(name)
+                    if name=="observe_myseoul_program":
+                        if after_write: rpc(name,args)
+                        raise TimeoutError("PRIVATE_SENTINEL")
+                    return rpc(name,args)
+                with self.assertRaisesRegex(RuntimeError,"^myseoul_collection_failed$") as caught:
+                    run({1:ListPage(1,2,[item(1),item(2)],True)},wrapped)
+                self.assertNotIn("PRIVATE_SENTINEL",str(caught.exception))
+                self.assertEqual(calls.count("observe_myseoul_program"),1)
+                self.assertNotIn("record_myseoul_detail_attempt",calls)
+                self.assertEqual(rpc.processed,0)
+                self.assertEqual(len(rpc.pending),2)
+                self.assertEqual(rpc.calls[-1][1],{"p_run_id":"1","p_requests":2,"p_failed":True})
 
     def test_disabled_zero_requests(self):
         reader=Mock();http=HttpClient(budget=12,max_attempts=1,transport=Mock())

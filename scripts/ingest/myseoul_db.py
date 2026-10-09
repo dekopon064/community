@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 from datetime import datetime
 from typing import Any, Callable
+from uuid import UUID
 
 from ingest.connectors.myseoul_program import SOURCE, PARSER_VERSION, REVISION_CONTRACT
 from ingest.models import ObservationRecord
@@ -152,15 +153,29 @@ class MySeoulObservationAdapter:
     def __init__(self, rpc: Callable[[str, dict[str, Any]], Any]):
         self.rpc = rpc
 
-    def observe(self, run_id: str, records: list[ObservationRecord], checkpoint: dict[str, Any] | None):
+    def observe(self, run_id: str, records: list[ObservationRecord], checkpoint: dict[str, Any] | None) -> list[dict[str, Any]]:
         if not 1 <= len(records) <= 40:
             raise ValueError("myseoul_batch_size_invalid")
         items = [myseoul_rpc_item(r, now=datetime.now(KST)) for r in records]
         try:
-            return self.rpc("observe_myseoul_program", {"p_run_id": run_id, "p_items": items,
-                                                       "p_next_checkpoint": checkpoint})
+            result = self.rpc("observe_myseoul_program", {"p_run_id": run_id, "p_items": items,
+                                                         "p_next_checkpoint": checkpoint})
         except Exception:
             raise RuntimeError("myseoul_observation_failed") from None
+        # RPC returns id/outcome/revision only; external identity is checked server-side.
+        if not isinstance(result, list) or len(result) != len(items):
+            raise RuntimeError("myseoul_observation_response_invalid")
+        for row, record in zip(result, records):
+            if (not isinstance(row, dict) or not isinstance(row.get("id"), str)
+                    or not isinstance(row.get("outcome"), str)
+                    or row["outcome"] not in {"new", "changed", "unchanged"}
+                    or row.get("revision") != record.revision_hash):
+                raise RuntimeError("myseoul_observation_response_invalid")
+            try:
+                UUID(row["id"])
+            except ValueError:
+                raise RuntimeError("myseoul_observation_response_invalid") from None
+        return result
 
     def finish(self, run_id: str, summary: dict[str, Any], *, requests: int, batches: int):
         try:

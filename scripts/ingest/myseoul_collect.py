@@ -4,12 +4,10 @@ Public list transport is verified separately; tests can inject a fake reader.
 """
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Callable
 
 from ingest.connectors.myseoul_program import SOURCE, _read_html, detail_identity, normalize_detail
-from ingest.myseoul_db import myseoul_rpc_item
-from ingest.myseoul_scope import KST
+from ingest.myseoul_db import MySeoulObservationAdapter
 from ingest.myseoul_list import LIST_URL, ListPage, read_list_page
 
 LIST_LIMIT = 2
@@ -60,6 +58,7 @@ def collect_myseoul(http, rpc: Callable[[str, dict[str, Any]], Any], *, read_pag
     run = start[0].get("run_id")
     if not run:
         raise RuntimeError("myseoul_run_response_invalid")
+    store = MySeoulObservationAdapter(rpc)
     try:
         first = _read_page(read_page, http, 1)
         entries = list_entries(first, 1)
@@ -92,10 +91,7 @@ def collect_myseoul(http, rpc: Callable[[str, dict[str, Any]], Any], *, read_pag
                 if not isinstance(result, dict) or result.get("outcome") != "detail_failed":
                     raise RuntimeError("myseoul_attempt_response_invalid")
                 continue
-            packet = myseoul_rpc_item(record, now=datetime.now(KST))
-            outcome = rpc("observe_myseoul_program", {"p_run_id": run, "p_items": [packet], "p_next_checkpoint": None})
-            if not isinstance(outcome, list) or len(outcome) != 1 or outcome[0].get("revision") != record.revision_hash:
-                raise RuntimeError("myseoul_observation_response_invalid")
+            store.observe(run, [record], None)
             # Unknown writes are never replayed; a later run reconciles source_items.
             result = rpc("record_myseoul_detail_attempt", {"p_run_id": run, "p_key": key, "p_outcome": "processed"})
             if not isinstance(result, dict) or result.get("outcome") != "processed":
@@ -106,7 +102,11 @@ def collect_myseoul(http, rpc: Callable[[str, dict[str, Any]], Any], *, read_pag
         except Exception:
             pass  # Lease expires naturally; no forced reset/repeated observation.
         raise RuntimeError("myseoul_collection_failed") from None
-    result = rpc("finish_myseoul_list_collection", {"p_run_id": run, "p_requests": http.request_count, "p_failed": False})
+    try:
+        result = rpc("finish_myseoul_list_collection", {"p_run_id": run, "p_requests": http.request_count, "p_failed": False})
+    except Exception:
+        # The finish may have committed. Do not replay it or force a failed run.
+        raise RuntimeError("myseoul_finish_failed") from None
     if not isinstance(result, dict) or result.get("status") not in {"complete", "incomplete", "failed"}:
         raise RuntimeError("myseoul_finish_response_invalid")
     return {"status": result["status"], "requests": http.request_count, "summary": result.get("summary")}
