@@ -167,6 +167,16 @@ function latest(a:PublicCurationItem,b:PublicCurationItem) {
   const difference=(Number.isFinite(tb)?tb:0)-(Number.isFinite(ta)?ta:0);
   return difference || (a.id<b.id?-1:a.id>b.id?1:0);
 }
+const titleOrder = new Intl.Collator('ko', { sensitivity: 'base' });
+function timingDay(timing:ProgramTiming|EventTiming):number {
+  if('deadline' in timing) {
+    const date=timing.deadline?.value.slice(0,10);
+    return date?Date.parse(date)*(timing.state==='closed'?-1:1):Infinity;
+  }
+  const occurrence=timing.occurrence;
+  const date=(timing.state==='upcoming'?occurrence?.start:occurrence?.end)?.value.slice(0,10);
+  return date?Date.parse(date)*(timing.state==='ended'?-1:1):Infinity;
+}
 export function exploreCurations(items: readonly PublicCurationItem[], category: FilterCategory, q: ExplorationQuery, now: number) {
   const seen=new Set<string>();
   const selected=items.filter(item=>{
@@ -177,6 +187,9 @@ export function exploreCurations(items: readonly PublicCurationItem[], category:
   return selected.sort((a,b)=>{
     if (q.sort==='latest' || category==='youth_space') return latest(a,b);
     const ta=category==='program'?programTiming(a,now):eventTiming(a,now),tb=category==='program'?programTiming(b,now):eventTiming(b,now);
-    return ta.group-tb.group || (ta.order===tb.order?0:ta.order-tb.order) || latest(a,b);
+    const da=timingDay(ta),db=timingDay(tb);
+    // State groups stay intact; default ordering within a group uses calendar
+    // dates, then the displayed title. Exact times still decide reception state.
+    return ta.group-tb.group || (da===db?0:da-db) || titleOrder.compare(a.title,b.title) || latest(a,b);
   });
 }

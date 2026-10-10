@@ -49,6 +49,24 @@ function event(id='e',pairs=[['2026-10-10','2026-10-10']],patch={}){return item(
 function space(id='s',kind='introduction',patch={}){return item(id,'youth_space',{...filters.emptyContentFilters('youth_space'),spaceKind:known(kind),location:kind==='introduction'?location():na,...patch})}
 function item(id,category,data=null){return {id,slug:id,userCategory:category,title:'합성 콘텐츠 '+id,summary:'검증을 위한 합성 요약입니다.',source_image_url:null,application_deadline_kind:null,application_deadline_on:null,event_start_on:null,event_end_on:null,created_at:'2026-10-01T00:00:00Z',contentFilters:data}}
 const query=(s='',cat='program')=>f.readExplorationQuery(new URLSearchParams(s),cat), match=(i,s,cat=i.userCategory)=>f.matchesExploration(i,query(s,cat),now);
+test('date-title ordering ignores hours within a program deadline day but preserves exact closure',()=>{
+  const a={...program('a',{application:known({deadlineKind:'fixed',start:null,end:endpoint('2026-10-10T18:00:00+09:00','minute'),sourceStatus:'open'})}),title:'가나다'};
+  const b={...program('b',{application:known({deadlineKind:'fixed',start:null,end:endpoint('2026-10-10T09:00:00+09:00','minute'),sourceStatus:'open'})}),title:'나라마'};
+  assert.deepEqual(f.exploreCurations([b,a],'program',query(),now).map(i=>i.id),['a','b']);
+  assert.equal(f.programTiming(a,Date.parse('2026-10-10T18:00:01+09:00')).state,'closed');
+  assert.equal(f.programTiming(a,Date.parse('2026-10-10T17:59:59+09:00')).state,'open');
+});
+test('date-title ordering compares day-only and timed endpoints on the same day',()=>{
+  const a={...program('a'),title:'가나다'},b={...program('b',{application:known({deadlineKind:'fixed',start:null,end:endpoint('2026-10-10T09:00:00+09:00','minute'),sourceStatus:'open'})}),title:'나라마'};
+  assert.deepEqual(f.exploreCurations([b,a],'program',query(),now).map(i=>i.id),['a','b']);
+  assert.equal(f.programTiming(a,Date.parse('2026-10-10T23:59:59+09:00')).state,'open');
+  assert.equal(f.programTiming(a,Date.parse('2026-10-11T00:00:00+09:00')).state,'closed');
+});
+test('date-title ordering uses event calendar day and displayed language title',()=>{
+  const a={...event('a'),title:'가나다'},b={...event('b',[['2026-10-10T09:00:00+09:00','2026-10-10T18:00:00+09:00']]),title:'나라마'};
+  b.contentFilters.schedule.value.occurrences=b.contentFilters.schedule.value.occurrences.map(o=>({start:endpoint(o.start.value,'minute'),end:endpoint(o.end.value,'minute')}));
+  assert.deepEqual(f.exploreCurations([b,a],'event',query('','event'),now).map(i=>i.id),['a','b']);
+});
 test('known topics OR and different conditions AND',()=>{const i=program();assert(match(i,'topic=culture_experience&topic=language_learning&audience=other'));assert(!match(i,'topic=language_learning&audience=children'));});
 test('unknown, not_applicable and other stay distinct',()=>{assert(!match(program('p',{topic:unknown}),'topic=other'));assert(match(program('p',{topic:known('other')}),'topic=other'));assert(!match(program('p',{audience:unknown}),'audience=other'));});
 test('legacy remains unfiltered; only selected unknowns exclude',()=>{assert(match(item('old','program'),''));assert(!match(item('old','program'),'region=11'));assert(match(program('p',{audience:unknown}),'topic=language_learning'));});

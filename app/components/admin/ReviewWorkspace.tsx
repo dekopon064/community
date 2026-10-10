@@ -15,6 +15,7 @@ import AiQueuePanel from "./AiQueuePanel";
 import TrashPanel from "./TrashPanel";
 import { quickReasons } from "@/app/lib/review/trash";
 import type { QuickReason } from "@/app/lib/review/trash";
+import ClassificationPanel from "./ClassificationPanel";
 import FactsGuidance from "./FactsGuidance";
 import { programReasonText } from "@/app/lib/review/program-contract";
 import { reviewDetailPath } from "@/app/lib/review/program-ui";
@@ -49,7 +50,8 @@ export default function ReviewWorkspace() {
   const [loading, setLoading] = useState(true);
   const [filterBlocked, setFilterBlocked] = useState(false);
   const [operationBusy, setBusy] = useState(false);
-  const busy = operationBusy || filterBlocked;
+  const [classificationBlocked,setClassificationBlocked]=useState(false),[classificationActive,setClassificationActive]=useState(false);
+  const busy = operationBusy || filterBlocked || classificationBlocked;
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
@@ -190,7 +192,8 @@ export default function ReviewWorkspace() {
             <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>
             <p className="mt-3 text-sm leading-6 text-info-muted">{item.source.name}{item.kind === "candidates" ? ` · ${item.category ? categories[item.category] : "분류 확인 필요"} · ${item.period}` : ""}</p>
           </header>
-          {item.kind === "facts" && <FactsGuidance item={item} />}
+          {(item.kind==='facts'||item.kind==='candidates'&&item.status==='published')&&<ClassificationPanel key={item.id+item.version} id={item.id} disabled={operationBusy||fieldsDirty||Boolean(confirmation)} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const data=await call(`/api/admin/review/${item.kind}/${item.id}`);accept(data.item);setReload(n=>n+1);}}/>}
+          {item.kind==='facts'&&!classificationActive&&<FactsGuidance item={item}/>}
           <details className="my-6 border-b border-info-rule pb-6">
             <summary className="min-h-11 cursor-pointer py-2 font-semibold">원문 확인</summary>
             {source ? <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a> : <p className="mt-3 text-info-muted">원문 링크를 제공할 수 없습니다.</p>}
@@ -213,11 +216,11 @@ export default function ReviewWorkspace() {
             <p className="mt-2 text-sm leading-6 text-info-muted">수정한 경우 아래 한국어·일본어 편집값을 함께 저장합니다.{publicChange && " 현재 공개 글에 직접 반영됩니다."}</p>
             <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || imageDirty || Boolean(confirmation) || !changeNote.trim()} onClick={() => void submit({ ...preconditions(), action: "review_change", disposition: contentDirty ? "edited" : "no_impact", note: changeNote, ...(contentDirty && content ? { content } : {}) })}>{busy ? "처리 중…" : fieldsDirty ? publicChange ? "공개 내용 수정·변경 확인" : "수정 저장·변경 확인" : "내용 영향 없음·변경 확인"}</button>
           </section>}
-          {item.kind === 'facts' && item.filterInfo && !processed && <FilterReviewPanel key={item.filterInfo.filterVersion} id={item.id} version={item.version} info={item.filterInfo} disabled={operationBusy || fieldsDirty || Boolean(note) || Boolean(confirmation)} onBlocked={setFilterBlocked} onSaved={async () => { const data = await call(`/api/admin/review/facts/${item.id}`); setItem(data.item); setReload(n => n + 1); setNotice('탐색 정보를 확인·저장했습니다.'); }}/>}
+          {item.kind === 'facts' && item.filterInfo && !processed && !classificationActive && <FilterReviewPanel key={item.filterInfo.filterVersion} id={item.id} version={item.version} info={item.filterInfo} disabled={operationBusy || fieldsDirty || Boolean(note) || Boolean(confirmation)} onBlocked={setFilterBlocked} onSaved={async () => { const data = await call(`/api/admin/review/facts/${item.id}`); setItem(data.item); setReload(n => n + 1); setNotice('탐색 정보를 확인·저장했습니다.'); }}/>}
           {item.kind === 'candidates' && item.filterInfo && <CandidateFilterComparison info={item.filterInfo}/>}
           <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation || publicChange) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content && !invalidImage) void submit({ ...preconditions(), action: "save_candidate", content, ...(imageEditable && imageSelection ? { imageSelection } : {}) }); }}>
             {imageEditable && item.kind === "candidates" && item.image && imageSelection && <CandidateImageEditor key={item.id + item.version} saved={item.image} value={imageSelection} onChange={setImageSelection} disabled={locked} error={errors.imageUrl} title={content?.titleKo ?? item.content.titleKo} />}
-            {item.kind === "facts" && facts ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor value={content} onChange={setContent} errors={errors} disabled={locked} />}
+            {item.kind === "facts" && facts && !classificationActive ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor value={content} onChange={setContent} errors={errors} disabled={locked} />}
             {fieldsDirty && <p className="mt-6 leading-7 text-info-status">아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요.</p>}
             {!processed && <div className="my-7 flex flex-wrap gap-3">
               <button type="submit" disabled={publicChange || busy || Boolean(invalidImage) || Boolean(confirmation) || (!fieldsDirty && !(item.kind === "facts" && item.restoredReviewPending) && !(item.kind === "candidates" && item.filterInfo?.changed))} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>

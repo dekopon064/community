@@ -4,8 +4,8 @@ import type { MySeoulFacts, MySeoulField, MySeoulPeriod } from './myseoul-contra
 
 export const myseoulLabels: Record<MySeoulField, string> = {
   description: '프로그램 설명', target: '참여 대상', conditions: '명시된 참여 조건',
-  application_actor: '개인·기관 신청 여부', delivery_mode: '실제 진행 방식', activity_region: '실제 개최 지역',
-  venue: '개최 장소', activity_evidence: '개최지·진행 방식의 근거', residence_scope: '온라인 참여 대상 지역',
+  application_actor: '개인·기관 신청 여부', delivery_mode: '진행 방식', activity_region: '개최지의 수도권 여부',
+  venue: '원문에 확인된 개최 장소', activity_evidence: '개최지·진행 방식의 근거', residence_scope: '참가 자격의 서비스 대상 범위',
   residence: '거주 조건', residence_evidence: '거주 조건의 근거', public_category: '공개 카테고리',
   purpose: '활동 성격과 분류 근거', qualification_note: '명시 자격 확인 근거', periods: '신청·운영 기간',
   session_evidence: '회차·요일·시간·집결 안내', application_methods: '신청 방법', application_links: '신청 링크',
@@ -13,9 +13,9 @@ export const myseoulLabels: Record<MySeoulField, string> = {
 };
 export const myseoulChoices: Record<string, Record<string, string>> = {
   application_actor: { unknown: '확인 필요', individual: '개인 신청 가능', institution_only: '개인 신청 불가 · 기관 전용' },
-  delivery_mode: { offline: '오프라인', online: '온라인', mixed: '온·오프라인 혼합' },
-  activity_region: { capital: '서울·경기·인천' },
-  residence_scope: { unknown: '확인 필요', nationwide: '전국·지역 제한 없음', includes_capital: '수도권 포함', capital: '수도권 거주자', noncapital_only: '비수도권 거주자 전용' },
+  delivery_mode: { offline: '오프라인', online: '온라인', mixed: '혼합' },
+  activity_region: { capital: '수도권 개최가 확인됨' },
+  residence_scope: { unknown: '미확인 · 원문 미표기 포함', nationwide: '원문에 지역 제한 없음이 명시됨', includes_capital: '참가 대상에 수도권이 포함됨', capital: '수도권 내 거주 조건 있음', noncapital_only: '비수도권 주민만 참가 가능' },
   public_category: { unknown: '확인 필요', program: '프로그램', event: '행사' },
 };
 export const myseoulFeeLabels: Record<string, string> = { tuition: '수강료', admission: '입장료', materials: '재료비', extra_fee: '기타 비용' };

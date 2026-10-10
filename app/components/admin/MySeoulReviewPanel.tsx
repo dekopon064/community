@@ -1,6 +1,10 @@
 "use client";
+import {reviewOverview} from './ReviewStates';
 
-import FilterReviewPanel from './FilterReviewPanel';
+import { FilterInputs, filterSaveBody, saveFilterRequest, filterValueLabel, reviewFilterLabel, filterCategoryLabels, SavedFilterValues, confirmedFilterFields, changedFilterFields } from './FilterReviewPanel';
+import { filterLabels, parseContentFilters } from '@/app/lib/contentFilters';
+import type { ContentFilters, FilterKey } from '@/app/lib/contentFilters';
+import { assertMySeoulFilterContinuation, factsFromFilterSelection, mergeMySeoulFilters, myseoulFilterFields } from '@/app/lib/review/myseoul-filter-ui';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { myseoulItem } from '@/app/lib/review/myseoul-store';
@@ -11,6 +15,7 @@ import type { MySeoulFee, MySeoulPeriods } from '@/app/lib/review/myseoul-ui';
 import { failureText, sourceLink, statusText } from '@/app/lib/review/presentation';
 import { myseoulErrorMessage } from '@/app/lib/review/myseoul-errors';
 import { fieldClass, primaryButton, secondaryButton } from './ReviewEditors';
+import ClassificationPanel from './ClassificationPanel';
 import { RestoredMySeoulFacts } from './RestoredMySeoulFacts';
 
 type Item = ReturnType<typeof myseoulItem>;
@@ -59,15 +64,17 @@ function FeeEditor({ value, onChange }: { value: MySeoulFee[]; onChange: (next: 
     </div>)}<button type="button" className={secondaryButton} disabled={value.length >= 200} onClick={() => onChange([...value, { component: 'extra_fee', evidence: [''] }])}>확인한 비용 항목 추가</button>
   </div>;
 }
-function FactEditor({ value, editable, axes, onChange }: { value: MySeoulFacts; editable: string[]; axes: ('application' | 'operation')[]; onChange: (next: MySeoulFacts) => void }) {
+function FactEditor({ value, editable, axes, sharedFields = [], onChange }: { value: MySeoulFacts; editable: string[]; axes: ('application' | 'operation')[]; sharedFields?: string[]; onChange: (next: MySeoulFacts) => void }) {
   const set = (key: string, next: unknown) => onChange({ ...value, [key]: next });
   return <div className="space-y-6">{visibleMySeoulFields(editable, value).map(key => <div key={key}>
-    {key === 'fees' || key === 'periods' ? <fieldset><legend className="mb-3 font-semibold">{myseoulLabels[key]}</legend>{key === 'fees' ? <FeeEditor value={value.fees as MySeoulFee[]} onChange={v => set(key, v)}/> : <PeriodEditor axes={axes} value={value.periods as MySeoulPeriods} onChange={v => set(key, v)}/>}</fieldset> : <>
+    {sharedFields.includes(key) ? <p className="text-sm leading-6 text-info-body">{myseoulLabels[key]}: {myseoulChoices[key]?.[String(value[key])] ?? '미확인'} · {key === 'public_category' ? '분류 변경에서 필수값과 함께 확인합니다.' : '해당 입력과 원문 근거를 함께 확인합니다.'}</p> : key === 'fees' || key === 'periods' ? <fieldset><legend className="mb-3 font-semibold">{myseoulLabels[key]}</legend>{key === 'fees' ? <FeeEditor value={value.fees as MySeoulFee[]} onChange={v => set(key, v)}/> : <PeriodEditor axes={axes} value={value.periods as MySeoulPeriods} onChange={v => set(key, v)}/>}</fieldset> : <>
       <label htmlFor={`myseoul-${key}`} className="block font-semibold">{myseoulLabels[key]}</label>
-      {myseoulChoices[key] ? <select id={`myseoul-${key}`} className={fieldClass} value={Object.hasOwn(myseoulChoices[key], String(value[key])) ? String(value[key]) : ''} onChange={e => set(key, e.target.value)}>{['delivery_mode', 'activity_region'].includes(key) && <option value="" disabled>선택해 주세요</option>}{Object.entries(myseoulChoices[key]).map(([k, label]) => <option key={k} value={k}>{label}</option>)}</select> : <>
+      {myseoulChoices[key] ? <select id={`myseoul-${key}`} className={fieldClass} value={Object.hasOwn(myseoulChoices[key], String(value[key])) && value[key]!=='unknown' ? String(value[key]) : 'unknown'} onChange={e => set(key, e.target.value)}><option value="unknown" disabled>선택해 주세요</option>{Object.entries(myseoulChoices[key]).filter(([k])=>k!=='unknown').map(([k, label]) => <option key={k} value={k}>{label}</option>)}</select> : <>
         <textarea id={`myseoul-${key}`} className={fieldClass} rows={key === 'description' ? 6 : 3} maxLength={key === 'description' ? 60000 : 4000} value={myseoulArrayFields.has(key) ? (value[key] as string[]).join('\n') : String(value[key])} onChange={e => set(key, myseoulArrayFields.has(key) ? e.target.value.split('\n') : e.target.value)}/>
         {myseoulArrayFields.has(key) && <p className="mt-1 text-sm text-info-muted">한 줄에 하나씩 입력해 주세요.</p>}
       </>}
+      {key === 'residence_scope' && <p className="mt-2 text-sm leading-6 text-info-muted">참가 자격과 서비스 수용 여부를 확인하는 값입니다. 공개 개최 지역 필터에는 쓰이지 않습니다. 성남시 주민 전용 등 실제 조건은 아래 거주 조건과 원문 근거에 남겨 주세요. 미표기를 제한 없음으로 선택하지 마세요.</p>}
+      {key === 'venue' && <p className="mt-2 text-sm leading-6 text-info-muted">원문의 장소 안내를 보존합니다. 위 시·도·시·군·구 선택은 공개 필터에 사용되며 원문 인용을 대신하지 않습니다.</p>}
     </>}
   </div>)}</div>;
 }
@@ -93,62 +100,146 @@ function IssueEvidence({ item, code }: { item: Item; code: string }) {
 
 export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: string; onBlocked: (blocked: boolean) => void; onResult: (next: Item) => void }) {
   const [item, setItem] = useState<Item | null>(null), [draft, setDraft] = useState<MySeoulFacts | null>(null);
-  const [filterBlocked, setFilterBlocked] = useState(false);
+  const [filterDraft, setFilterDraft] = useState<ContentFilters | null>(null), [pendingRepeat, setPendingRepeat] = useState(false), [filterReset, setFilterReset] = useState(0);
+  const [filterError, setFilterError] = useState(''), [filterNotice, setFilterNotice] = useState('');
   const [operationBusy, setBusy] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [errorDetail, setErrorDetail] = useState('');
   const [excludeNote, setExcludeNote] = useState(''), [confirm, setConfirm] = useState(false);
+  const [classificationBlocked,setClassificationBlocked]=useState(false),[classificationActive,setClassificationActive]=useState(false);
+  const [editingFilter,setEditingFilter]=useState<FilterKey|null>(null);
+  const filterRegion = useRef<HTMLElement>(null);
   const sending = useRef(false), heading = useRef<HTMLHeadingElement>(null), message = useRef<HTMLDivElement>(null);
   const dirty = Boolean(item && draft && Object.keys(myseoulPatch(item.facts, draft, visibleMySeoulFields(item.editableFields, draft))).length);
-  const busy = operationBusy || filterBlocked;
-  const unsaved = dirty || Boolean(excludeNote);
+  const filterDirty = Boolean(item?.filterInfo && filterDraft && JSON.stringify(filterDraft) !== JSON.stringify(item.filterInfo.data)) || pendingRepeat;
+  const busy = operationBusy || classificationBlocked;
+  const unsaved = dirty || filterDirty || editingFilter!==null || Boolean(excludeNote);
   const processed = item?.status !== 'open';
+  const categoryChanged = Boolean(item && draft && item.facts.public_category !== draft.public_category);
   useEffect(() => { onBlocked(busy || unsaved || confirm); return () => onBlocked(false); }, [busy, unsaved, confirm, onBlocked]);
   useEffect(() => { if (!unsaved) return; const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [unsaved]);
-  function accept(next: Item) { setItem(next); setDraft(structuredClone(next.facts)); setExcludeNote(''); setConfirm(false); }
+  function accept(next: Item) { setItem(next); setDraft(structuredClone(next.facts)); setFilterDraft(next.filterInfo ? structuredClone(next.filterInfo.data) : null); setPendingRepeat(false); setFilterReset(k => k + 1); setEditingFilter(null); setFilterError(''); setFilterNotice(''); setExcludeNote(''); setConfirm(false); }
   function showFailure(e: unknown) { setError(e instanceof Error ? e.message : 'unavailable'); setErrorDetail(myseoulErrorMessage(e)); }
   useEffect(() => { const controller = new AbortController(); request(id, undefined, controller.signal).then(next => { accept(next); setError(''); }).catch(e => { if (!controller.signal.aborted) showFailure(e); }).finally(() => { if (!controller.signal.aborted) setBusy(false); }); return () => controller.abort(); }, [id]);
   const loadedId = item?.id;
   useEffect(() => { if (loadedId) focus(heading.current); }, [loadedId]);
   useEffect(() => { if (error || notice) focus(message.current); }, [error, notice]);
   async function submit(command: MySeoulCommand) {
-    if (sending.current) return; sending.current = true; setBusy(true); setError(''); setNotice('');
-    try { const next = await request(id, command); accept(next);
-      if (command.action === 'save_facts' && item && draft) { setDraft(mergeMySeoulDraft(item.facts, draft, next.facts, command.patch)); setExcludeNote(excludeNote); }
+    if (sending.current || editingFilter!==null) return; sending.current = true; setBusy(true); setError(''); setNotice('');
+    try { const next = await request(id, command);
+      if (command.action === 'save_facts' && item && draft) {
+        setItem(next); setConfirm(false); setDraft(mergeMySeoulDraft(item.facts, draft, next.facts, command.patch));
+        if (command.patch.public_category && next.filterInfo && next.filterInfo.data.category === command.patch.public_category) {
+          setFilterDraft(structuredClone(next.filterInfo.data)); setPendingRepeat(false); setFilterReset(k=>k+1);
+        } else if (item.filterInfo && filterDraft && next.filterInfo) setFilterDraft(mergeMySeoulFilters(item.filterInfo.data, filterDraft, next.filterInfo.data));
+        else if (next.filterInfo) setFilterDraft(structuredClone(next.filterInfo.data));
+      } else accept(next);
       onResult(next); setNotice(command.action === 'exclude' ? '제외 사유를 기록하고 휴지통으로 이동했습니다. 72시간 이내에 복원할 수 있습니다.' : '사실을 저장하고 다시 평가했습니다.'); }
     catch (e) { showFailure(e); setConfirm(false); }
     finally { sending.current = false; setBusy(false); }
   }
   async function reload() { if (sending.current) return; sending.current = true; setBusy(true); setError(''); try { const next = await request(id); accept(next); onResult(next); setNotice(''); } catch (e) { showFailure(e); } finally { sending.current = false; setBusy(false); } }
+  async function readLatestPreservingInput() {
+    if (sending.current || !item || !draft) return;
+    sending.current = true; setBusy(true);
+    try {
+      const next = await request(id);
+      // A changed source/category requires explicit discard, not an implicit
+      // rebase of operator confirmations onto different source evidence.
+      if (next.revision !== item.revision || next.filterInfo?.data.category !== item.filterInfo?.data.category) {
+        setFilterError('원문 버전 또는 공개 카테고리가 바뀌었습니다. 입력은 유지합니다. 입력을 버리고 최신 내용 불러오기로 새 원문을 확인해 주세요.');
+        return;
+      }
+      setItem(next); setDraft(mergeMySeoulDraft(item.facts, draft, next.facts, {}));
+      if (item.filterInfo && filterDraft && next.filterInfo) setFilterDraft(mergeMySeoulFilters(item.filterInfo.data, filterDraft, next.filterInfo.data));
+      onResult(next); setFilterError(''); setFilterNotice('최신 저장 상태를 읽기로 확인했습니다. 미저장 입력은 유지했으며 쓰기 요청은 보내지 않았습니다.');
+    } catch { setFilterError('최신 저장 상태를 읽지 못했습니다. 입력은 유지하며 쓰기는 재시도하지 않습니다.'); }
+    finally { sending.current = false; setBusy(false); }
+  }
+  const filterFields = item?.filterInfo ? [...new Set([...myseoulFilterFields(item.filterInfo, item.editableFields),...(filterDraft?changedFilterFields(item.filterInfo.data,filterDraft):[])])] : [];
+  const neededFilters=[...(item?.filterInfo?.missing??[]),...(item?.result.reasons.includes('activity_region_unknown')?['location']:[]),...(item?.result.reasons.includes('delivery_mode_unknown')?['delivery']:[])];
+  const displayedFilterFields=filterFields.filter(k=>!item?.filterInfo||!confirmedFilterFields(item.filterInfo).includes(k)||neededFilters.includes(k)||(filterDraft&&changedFilterFields(item.filterInfo.data,filterDraft).includes(k)));
+  const sharedFields = [...(item?.editableFields.includes('public_category') ? ['public_category'] : []), ...(item?.filterInfo ? [...(filterFields.includes('delivery') ? ['delivery_mode'] : []), ...(filterFields.includes('location') ? ['activity_region'] : [])] : [])];
+  function selectFilters(next: ContentFilters) {
+    if (!item || !draft || !filterDraft) return;
+    setDraft(factsFromFilterSelection(draft, filterDraft, next, item.editableFields)); setFilterDraft(next); setFilterError(''); setFilterNotice('');
+  }
+  async function saveSelections() {
+    if (sending.current || !item?.filterInfo || !draft || !filterDraft || pendingRepeat || editingFilter!==null) return;
+    if (categoryChanged) { setFilterError('카테고리 변경을 사실 저장으로 먼저 확인해 주세요. 기존 분류의 필터는 저장하지 않습니다.'); return; }
+    const invalid = filterRegion.current?.querySelector<HTMLInputElement>('input:invalid,select:invalid');
+    if (invalid) { invalid.reportValidity(); setFilterError('선택한 추가 입력을 완료해 주세요. 입력은 유지하며 저장하지 않습니다.'); return; }
+    // Validate the second request before any write. The two RPCs remain separate.
+    let selected: ContentFilters;
+    try { selected = parseContentFilters(filterDraft); filterSaveBody(item.filterInfo, item.version, selected, filterFields); }
+    catch { setFilterError('선택값·지역·날짜 형식을 확인해 주세요. 아무 값도 저장하지 않았으며 입력을 유지합니다.'); return; }
+    sending.current = true; setBusy(true); setFilterError(''); setFilterNotice(''); setError(''); setNotice('');
+    let current = item, desired = selected, factsSaved = false, filtersSaved = false;
+    try {
+      if (dirty) {
+        const command = buildMySeoulSave(item, draft);
+        current = await request(id, command); factsSaved = true;
+        setItem(current); setDraft(command.action === 'save_facts' ? mergeMySeoulDraft(item.facts, draft, current.facts, command.patch) : structuredClone(current.facts)); onResult(current);
+        if (current.filterInfo) { desired = mergeMySeoulFilters(item.filterInfo.data, selected, current.filterInfo.data); setFilterDraft(desired); }
+        setFilterNotice('사실 저장 완료 · 공개 필터는 아직 저장하지 않았습니다.');
+      }
+      assertMySeoulFilterContinuation({ revision: item.revision, category: selected.category }, current);
+      const info = current.filterInfo!;
+      const saved = await saveFilterRequest(id, filterSaveBody(info, current.version, desired, filterFields));
+      filtersSaved = true; setItem({ ...current, version: saved.version, filterInfo: saved }); setFilterDraft(structuredClone(saved.data)); setPendingRepeat(false);
+      setFilterNotice('공개 필터 저장 완료 · 남은 확인사항을 다시 읽는 중입니다.');
+      const next = await request(id); setItem(next); setDraft(mergeMySeoulDraft(current.facts, dirty ? current.facts : draft, next.facts, {}));
+      if (next.filterInfo) setFilterDraft(structuredClone(next.filterInfo.data)); onResult(next);
+      setFilterNotice(factsSaved ? '사실 저장과 공개 필터 저장을 각각 완료하고 남은 확인사항을 다시 읽었습니다.' : '공개 필터를 저장하고 남은 확인사항을 다시 읽었습니다.');
+    } catch (e) {
+      setFilterError(`${filtersSaved ? '공개 필터 저장은 완료됐지만 이후 조회에 실패했습니다.' : factsSaved ? '사실 저장은 완료됐지만 공개 필터 저장을 완료 확인하지 못했습니다.' : '저장 완료를 확인하지 못했습니다.'} ${e instanceof Failure ? myseoulErrorMessage(e) : e instanceof Error ? e.message : ''} 입력은 유지하며 자동 재시도하지 않습니다.`);
+    } finally { sending.current = false; setBusy(false); }
+  }
   const link = item ? sourceLink(item.source.url) : null;
   return <section aria-label="마이서울플러스 사실 검토" aria-busy={busy}>
     {(error || notice) && <div ref={message} tabIndex={-1} role={error ? 'alert' : 'status'} className="mb-6 scroll-mt-36 border-y border-info-rule py-4 leading-7"><p className={error ? 'text-info-status' : 'text-info-body'}>{error ? errorDetail || failureText.unavailable : notice}</p>
       {error && <div className="mt-3 flex flex-wrap gap-3"><button type="button" className={secondaryButton} disabled={busy} onClick={() => void reload()}>{unsaved ? '입력을 버리고 최신 내용 불러오기' : '최신 내용 다시 확인'}</button>{['signed_out', 'forbidden'].includes(error) && <Link prefetch={false} href="/ko/login?next=%2Fko%2Fadmin" className={secondaryButton}>로그인 상태 확인</Link>}</div>}</div>}
     {!item || !draft ? <p role="status" className="py-6 text-info-muted">{busy ? '마이서울플러스 항목을 불러오는 중입니다.' : '항목을 불러오지 못했습니다.'}</p> : <>
       <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">마이서울플러스 · {statusText[item.status]}</p></header>
+      <ClassificationPanel key={id+item.version} id={id} disabled={operationBusy||unsaved||confirm} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const next=await request(id);accept(next);onResult(next);}}/>
+      {!classificationActive&&<section className={reviewOverview} aria-label="이번에 확인할 사항"><h3 className="font-bold">이번에 확인할 사항 · {item.result.reasons.length}개</h3><ul className="mt-3 space-y-2">{item.reasonGuidance.map(r=>{const filterKey=r.code.startsWith('content_filter:')?r.code.slice(15):r.code==='activity_region_unknown'?'location':r.code==='delivery_mode_unknown'?'delivery':null;return <li key={r.code}><button type="button" className="min-h-11 py-2 text-left font-semibold underline underline-offset-4" onClick={()=>{const node=filterKey?document.querySelector<HTMLElement>(`[data-filter-key="${filterKey}"]`):document.getElementById(`myseoul-issue-${r.code}`);(node?.querySelector<HTMLElement>('input,select,textarea')??node)?.focus();node?.scrollIntoView({block:'center'});}}>{r.code==='activity_region_unknown'?'개최지의 수도권 여부':filterKey&&filterDraft?reviewFilterLabel(filterDraft,filterKey as keyof typeof filterLabels):r.text} · 확인 필요</button></li>;})}</ul></section>}
       {item.restoredReviewPending && !processed && <section className="my-6 border-b border-info-rule pb-5" aria-label="복원한 사실 확인"><h3 className="font-semibold">휴지통에서 복원한 항목입니다.</h3><p className="mt-2 text-info-body">현재 사실과 원문을 확인해 주세요. 복원만으로 AI를 실행하거나 게시하지 않습니다.</p><RestoredMySeoulFacts facts={item.facts}/><button type="button" className={`${secondaryButton} mt-3`} disabled={busy || confirm || unsaved} onClick={() => void submit({ action: 'save_facts', revision: item.revision, version: item.version, patch: {}, confirmRestored: true })}>저장된 사실로 확인·저장</button></section>}
       <details className="my-6 border-b border-info-rule pb-5"><summary className="cursor-pointer py-3 font-semibold">원문 확인 · 읽기 전용</summary>{link && <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a>}<p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || '저장된 본문이 없습니다.'}</p></details>
       {['closed', 'ended', 'not_started'].includes(item.result.application) && <p className="mb-6 text-info-status">{item.result.application === 'not_started' ? '아직 접수 전입니다.' : '접수 또는 운영이 종료된 항목입니다.'}</p>}
+      {item.filterInfo && filterDraft && !processed && !classificationActive && <section ref={filterRegion} className="my-6 border-y border-info-rule py-6" aria-label="공개 필터 확인">
+        <h3 className="text-lg font-bold">{filterCategoryLabels[item.filterInfo.data.category]} 필터 확인</h3>
+        <p className="my-3 text-sm leading-6 text-info-muted">원문을 확인하고 공개 필터와 같은 선택값으로 입력합니다. 진행 방식·개최지 선택은 수정 가능한 사실의 수도권 판정에도 연결합니다. 참가 거주 조건은 아래 사실·근거에서 확인합니다.</p>
+        {filterDraft.delivery.status === 'known' && !filterFields.includes('delivery') && <p className="mb-3 text-sm text-info-body">확인된 진행 방식: {filterValueLabel(filterDraft, 'delivery')} · 현재 사실 확인 대상이 아니므로 변경하지 않습니다.</p>}
+        {filterDraft.delivery.status === 'known' && filterDraft.delivery.value === 'online' && <p className="mb-4 text-sm leading-6 text-info-body">온라인 진행 · 실제 개최 지역은 해당 없음입니다. 참가 자격의 거주 조건과는 구분합니다.</p>}
+        <FilterInputs key={filterReset} data={filterDraft} fields={displayedFilterFields.filter(k=>k!==editingFilter)} onChange={selectFilters} disabled={busy || confirm || categoryChanged || editingFilter!==null} onPending={setPendingRepeat} missing={neededFilters} saved={item.filterInfo.data} confirmed={confirmedFilterFields(item.filterInfo)}/>
+        <SavedFilterValues key={`saved-${filterReset}`} saved={item.filterInfo.data} data={filterDraft} onChange={selectFilters} disabled={busy||confirm||categoryChanged} missing={neededFilters} confirmed={confirmedFilterFields(item.filterInfo)} version={item.version} onEditing={setEditingFilter}/>
+        {dirty && <p className="mt-3 text-sm leading-6 text-info-status">먼저 저장할 사실: {Object.keys(myseoulPatch(item.facts, draft, visibleMySeoulFields(item.editableFields, draft))).map(k => myseoulLabels[k as keyof typeof myseoulLabels]).join(' · ')}</p>}
+        <p className="mt-3 text-sm leading-6 text-info-muted">사실과 공개 필터는 별도 저장입니다. 사실 저장 후 반환된 최신 버전으로 필터를 저장하며, 두 번째 저장이 실패하면 첫 저장을 취소하지 않습니다. 요약·번역·AI 실행 요청은 보내지 않습니다.</p>
+        {(filterError || filterNotice) && <p role={filterError ? 'alert' : 'status'} className="mt-4 leading-7 text-info-status">{filterError || filterNotice}</p>}
+        {filterError && <div className="mt-3 flex flex-wrap gap-3"><button type="button" className={secondaryButton} disabled={busy} onClick={() => void readLatestPreservingInput()}>입력을 유지하고 저장 상태 확인</button><button type="button" className={secondaryButton} disabled={busy} onClick={() => void reload()}>입력을 버리고 최신 내용 불러오기</button></div>}
+        {filterDraft.category !== item.filterInfo.data.category && <p role="alert" className="mt-3 text-info-status">공개 카테고리가 바뀌었습니다. 입력을 보존했습니다. 아래 취소로 최신 분류의 입력을 다시 확인해 주세요.</p>}
+        {pendingRepeat && <p role="status" className="mt-3 text-info-status">편집한 반복 조건으로 회차를 만든 뒤 저장해 주세요.</p>}
+        {filterFields.length > 0 && <div className="mt-5 flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={busy || confirm || pendingRepeat || editingFilter!==null || categoryChanged || filterDraft.category !== item.filterInfo.data.category} onClick={() => void saveSelections()}>{classificationBlocked ? '분류 검토 중…' : busy ? '저장 중…' : dirty ? '사실 저장 후 공개 필터 저장' : '공개 필터 확인·저장'}</button>{filterDirty && <button type="button" className={secondaryButton} disabled={busy||editingFilter!==null} onClick={() => { setFilterDraft(structuredClone(item.filterInfo!.data)); setDraft({ ...draft, ...Object.fromEntries(sharedFields.map(k => [k, item.facts[k]])) }); setPendingRepeat(false); setFilterReset(k => k + 1); setFilterError(''); setFilterNotice(''); }}>공개 필터 입력 취소</button>}</div>}
+      </section>}
       <form onSubmit={e => { e.preventDefault(); try { void submit(buildMySeoulSave(item, draft)); } catch (e) { showFailure(e); } }}>
-        <h3 className="mb-3 text-lg font-bold">남은 확인 사유 {item.result.reasons.length}개</h3>
-        <div className="divide-y divide-info-rule">{reviewGroups(item).map(group => {
+
+        <div className="divide-y divide-info-rule">{reviewGroups(item).filter(group=>!group.reasons.every(r=>r.code.startsWith('content_filter:'))).map(group => {
           const fields = visibleMySeoulFields(group.fields, draft);
-          return <section key={group.key} className="py-6" aria-label={group.reasons.map(r => r.text).join(' ')}>
-            {group.reasons.map(reason => <div key={reason.code} className="mb-4"><p className="font-semibold leading-7">{reason.code === 'restored_review_pending' ? '복원한 사실을 다시 확인해 주세요.' : reason.text}</p>{!reason.supported && reason.code !== 'restored_review_pending' && <p className="text-sm text-info-muted">현재 입력으로 해결할 수 없는 사유입니다.</p>}
-              {!group.fields.includes('periods') && <IssueEvidence item={item} code={reason.code}/>}</div>)}
+          return <section key={group.key}  tabIndex={-1} className="py-6 scroll-mt-36" aria-label={group.reasons.map(r => { const key = r.code.slice('content_filter:'.length) as keyof typeof filterLabels; return r.code.startsWith('content_filter:') && Object.hasOwn(filterLabels, key) ? `공개 필터: ${filterDraft ? reviewFilterLabel(filterDraft,key) : filterLabels[key]}` : r.text; }).join(' ')}>
+            {group.reasons.map(reason => { const filterKey = reason.code.startsWith('content_filter:') ? reason.code.slice('content_filter:'.length) as keyof typeof filterLabels : null; const filterReason = filterKey && Object.hasOwn(filterLabels, filterKey); return <div key={reason.code} id={`myseoul-issue-${reason.code}`} tabIndex={-1} className="mb-4 scroll-mt-36"><p className="font-semibold leading-7">{reason.code === 'restored_review_pending' ? '복원한 사실을 다시 확인해 주세요.' : filterReason ? `공개 필터의 ${filterDraft ? reviewFilterLabel(filterDraft,filterKey!) : filterLabels[filterKey!]} 항목을 확인해 주세요.` : reason.text}</p>{!reason.supported && reason.code !== 'restored_review_pending' && !filterReason && <p className="text-sm text-info-muted">현재 입력으로 해결할 수 없는 사유입니다.</p>}
+              {!group.fields.includes('periods') && <IssueEvidence item={item} code={reason.code}/>}</div>; })}
             {!processed && fields.length > 0 && <>
-              <fieldset disabled={busy || confirm}><legend className="sr-only">확인한 사실 입력</legend><FactEditor value={draft} editable={fields} axes={reviewPeriodAxes(group.reasons.map(r => r.code))} onChange={setDraft}/></fieldset>
-              <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || confirm} onClick={() => { try { void submit(buildMySeoulSave(item, draft, fields, reviewPeriodAxes(group.reasons.map(r => r.code)))); } catch (e) { showFailure(e); } }}>이 값으로 확인·저장</button>
+              <fieldset disabled={busy || confirm || editingFilter!==null}><legend className="sr-only">확인한 사실 입력</legend><FactEditor value={draft} editable={fields} axes={reviewPeriodAxes(group.reasons.map(r => r.code))} sharedFields={sharedFields} onChange={setDraft}/></fieldset>
+              <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || confirm || editingFilter!==null} onClick={() => { try { void submit(buildMySeoulSave(item, draft, fields, reviewPeriodAxes(group.reasons.map(r => r.code)))); } catch (e) { showFailure(e); } }}>이 값으로 확인·저장</button>
             </>}
           </section>;
         })}</div>
         {!processed && <>
           {dirty && <p className="mt-4 text-info-status">아직 저장하지 않은 입력이 있습니다.</p>}
-          <div className="my-6 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={busy || confirm || !dirty}>{busy ? '저장 중…' : '변경한 사실 저장'}</button>{dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(''); }}>수정 취소</button>}</div>
+          <div className="my-6 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={busy || confirm || editingFilter!==null || !dirty}>{classificationBlocked ? '분류 검토 중…' : busy ? '저장 중…' : '변경한 사실 저장'}</button>{dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(''); }}>사실·공개 필터 입력 취소</button>}</div>
           <p className="text-sm text-info-muted">저장 후 남은 사유를 다시 판단합니다. 요약·번역은 실행하지 않습니다.</p>
         </>}
       </form>
-      {item.filterInfo && !processed && <FilterReviewPanel key={item.filterInfo.filterVersion} id={id} version={item.version} info={item.filterInfo} disabled={operationBusy || unsaved || confirm} onBlocked={setFilterBlocked} onSaved={async () => { const next = await request(id); setItem(next); onResult(next); setNotice('탐색 정보를 확인·저장했습니다.'); }}/>}
-      {!processed && <section className="mt-6 border-t border-info-rule pt-5"><h3 className="font-bold">서비스 범위에서 제외</h3><label htmlFor="myseoul-exclude" className="mt-3 block font-semibold">제외 사유</label><textarea id="myseoul-exclude" className={fieldClass} rows={3} maxLength={4000} disabled={busy || confirm} value={excludeNote} onChange={e => setExcludeNote(e.target.value)}/><button type="button" className={`${secondaryButton} mt-4`} disabled={busy || dirty || !excludeNote.trim() || confirm} onClick={() => setConfirm(true)}>사유를 남기고 제외</button>{confirm && <div role="group" aria-label="제외 최종 확인" className="mt-4 border-y border-info-rule py-4"><p className="whitespace-pre-wrap break-words">이 항목을 서비스 범위에서 제외할까요? 기록할 사유: {excludeNote}</p><div className="mt-3 flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={busy} onClick={() => void submit({ action: 'exclude', revision: item.revision, version: item.version, note: excludeNote })}>확인하고 제외</button><button type="button" className={secondaryButton} disabled={busy} onClick={() => setConfirm(false)}>돌아가기</button></div></div>}</section>}
+      {!processed && <section className="mt-6 border-t border-info-rule pt-5"><h3 className="font-bold">서비스 범위에서 제외</h3><label htmlFor="myseoul-exclude" className="mt-3 block font-semibold">제외 사유</label><textarea id="myseoul-exclude" className={fieldClass} rows={3} maxLength={4000} disabled={busy || confirm} value={excludeNote} onChange={e => setExcludeNote(e.target.value)}/><button type="button" className={`${secondaryButton} mt-4`} disabled={busy || editingFilter!==null || dirty || filterDirty || !excludeNote.trim() || confirm} onClick={() => setConfirm(true)}>사유를 남기고 제외</button>{confirm && <div role="group" aria-label="제외 최종 확인" className="mt-4 border-y border-info-rule py-4"><p className="whitespace-pre-wrap break-words">이 항목을 서비스 범위에서 제외할까요? 기록할 사유: {excludeNote}</p><div className="mt-3 flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={busy} onClick={() => void submit({ action: 'exclude', revision: item.revision, version: item.version, note: excludeNote })}>확인하고 제외</button><button type="button" className={secondaryButton} disabled={busy} onClick={() => setConfirm(false)}>돌아가기</button></div></div>}</section>}
 
     </>}
   </section>;
