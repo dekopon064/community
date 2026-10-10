@@ -30,13 +30,13 @@ let checks = 0;
 const eq = (a, b) => { assert.deepEqual(a, b); checks++; };
 const ok = a => { assert.ok(a); checks++; };
 
-const {SavedFilterValues,confirmedFilterFields,changedFilterFields,FilterInputs}=load('app/components/admin/FilterReviewPanel.tsx');
+const {SavedFilterValues,confirmedFilterFields,changedFilterFields,FilterInputs,filterValueLabel,filterEndpointLabel}=load('app/components/admin/FilterReviewPanel.tsx');
 const {ReviewStatus}=load('app/components/admin/ReviewStates.tsx');
 const known=value=>({status:'known',value}),na={status:'not_applicable',value:null};
 const saved={schema:'content-filters-v1',category:'program',topic:known('culture_experience'),location:known({scope:'specific',venues:[{province:'11',district:'강서구',facility:'',address:''}]}),delivery:known('onsite'),audience:known('other'),spaceKind:na,application:known({deadlineKind:'none',start:null,end:null,sourceStatus:'unknown'}),schedule:na};
 const info={schema:saved.schema,revision:'a'.repeat(64),filterVersion:1,data:saved,missing:[],origins:{topic:'operator',location:'confirmed_facts',delivery:'automatic',audience:'source_change'}};
-const nodes = tree => !tree || typeof tree !== 'object' ? [] : [tree,...React.Children.toArray(tree.props?.children).flatMap(nodes)];
-const text = tree => typeof tree === 'string' || typeof tree === 'number' ? String(tree) : React.Children.toArray(tree?.props?.children).map(text).join('');
+const nodes = tree => !tree || typeof tree !== 'object' ? [] : tree.type?.name==='ReviewValueRow'?nodes(tree.type(tree.props)):[tree,...React.Children.toArray(tree.props?.children).flatMap(nodes)];
+const text = tree => typeof tree === 'string' || typeof tree === 'number' ? String(tree) : tree?.type?.name==='ReviewValueRow'?text(tree.type(tree.props)):React.Children.toArray(tree?.props?.children).map(text).join('');
 let writes=0,applied=[],active=null,data,version;
 globalThis.fetch=async()=>{writes++;throw Error('Network forbidden');};
 const render=()=>{cursor=0;refCursor=0;return SavedFilterValues({saved,data,onChange:v=>{applied.push(v);data=v;},disabled:false,missing:[],confirmed:confirmedFilterFields(info),version,onEditing:v=>{active=v;}});};
@@ -49,26 +49,38 @@ eq(confirmedFilterFields({...info,missing:['location']}),['topic']);
 ok(text(ReviewStatus({needed:false,confirmed:true,changed:false})).includes('확인됨'));
 ok(!text(ReviewStatus({needed:false,confirmed:true,changed:true})).includes('확인됨'));
 ok(text(ReviewStatus({needed:true,confirmed:true,changed:false})).includes('확인 필요'));
-reset();ok(nodes(render()).some(n=>n.type==='summary'&&text(n)==='현재 저장값 확인·수정'));
+reset();ok(nodes(render()).some(n=>n.type==='summary'&&text(n)==='저장된 필터값 확인·수정'));
 // Values are shown once until changed. Opening and editing do not mutate the parent or perform writes.
-eq(nodes(render()).filter(n=>n.type==='p'&&text(n).startsWith('변경할 값:')).length,0);
+eq(nodes(render()).filter(n=>n.type==='p'&&text(n).startsWith('변경할 값 →')).length,0);
 button('대표 분야 수정').props.onClick();eq(active,'topic');eq(nodes(render()).filter(n=>n.type===FilterInputs).length,1);
 edit({...saved,topic:known('language_learning')});eq(data,saved);eq(applied.length,0);
 button('취소').props.onClick();eq(data,saved);eq(active,null);eq(applied.length,0);
-button('대표 분야 수정').props.onClick();edit({...saved,topic:known('language_learning')});button('변경 적용').props.onClick();eq(applied.length,1);eq(data.topic,known('language_learning'));eq(active,null);eq(changedFilterFields(saved,data),['topic']);
-eq(nodes(render()).filter(n=>n.type==='p'&&text(n).startsWith('변경할 값:')).length,1);
+button('대표 분야 수정').props.onClick();edit({...saved,topic:known('language_learning')});button('초안에 적용').props.onClick();eq(applied.length,1);eq(data.topic,known('language_learning'));eq(active,null);eq(changedFilterFields(saved,data),['topic']);
+eq(nodes(render()).filter(n=>n.type==='p'&&text(n).startsWith('변경할 값 →')).length,1);
 // Cancel preserves a previously applied unsaved draft rather than resetting to the server value.
 button('대표 분야 수정').props.onClick();edit({...data,topic:known('employment_job')});button('취소').props.onClick();eq(data.topic,known('language_learning'));
 // Coupled delivery/location changes are both submitted in the existing save contract.
-reset();button('진행 방식 수정').props.onClick();edit({...saved,delivery:known('online'),location:na});button('변경 적용').props.onClick();eq(changedFilterFields(saved,data),['delivery','location']);eq(data.location,na);
+reset();button('진행 방식 수정').props.onClick();edit({...saved,delivery:known('online'),location:na});button('초안에 적용').props.onClick();eq(changedFilterFields(saved,data),['delivery','location']);eq(data.location,na);
 // Invalid partial input is retained and never copied to the parent.
-reset();button('개최 지역 수정').props.onClick();edit({...saved,location:known({scope:'specific',venues:[{province:'',district:null,facility:'',address:''}]})});button('변경 적용').props.onClick();eq(applied.length,0);eq(active,'location');ok(nodes(render()).some(n=>n.props?.role==='alert'));eq(states[1].location.value.venues[0].province,'');
+reset();button('개최 지역 수정').props.onClick();edit({...saved,location:known({scope:'specific',venues:[{province:'',district:null,facility:'',address:''}]})});button('초안에 적용').props.onClick();eq(applied.length,0);eq(active,'location');ok(nodes(render()).some(n=>n.props?.role==='alert'));eq(states[1].location.value.venues[0].province,'');
 // Version changes and unfinished recurrence prevent applying an old edit.
-reset();button('대표 분야 수정').props.onClick();edit({...saved,topic:known('language_learning')});version='c'.repeat(64);eq(button('변경 적용').props.disabled,true);eq(applied.length,0);ok(nodes(render()).some(n=>n.props?.role==='alert'&&text(n).includes('저장 버전')));
-reset();button('신청 기간·마감 수정').props.onClick();nodes(render()).find(n=>n.type===FilterInputs).props.onPending(true);eq(button('변경 적용').props.disabled,true);
+reset();button('대표 분야 수정').props.onClick();edit({...saved,topic:known('language_learning')});version='c'.repeat(64);eq(button('초안에 적용').props.disabled,true);eq(applied.length,0);ok(nodes(render()).some(n=>n.props?.role==='alert'&&text(n).includes('저장 버전')));
+reset();button('신청 기간·마감 수정').props.onClick();nodes(render()).find(n=>n.type===FilterInputs).props.onPending(true);eq(button('초안에 적용').props.disabled,true);
 reset();button('대표 분야 수정').props.onClick();let stopped=false;nodes(render()).find(n=>n.props?.role==='group').props.onKeyDown({key:'Escape',preventDefault(){},stopPropagation(){stopped=true;}});eq(active,null);ok(stopped);eq(applied.length,0);
 // The warning heading is wholly inside a flat strip; its actual legend is screen-reader only.
 const input=FilterInputs({data:saved,fields:['location'],onChange(){},disabled:false,missing:['location']});
 eq(nodes(input).find(n=>n.type==='legend').props.className,'sr-only');ok(nodes(input).some(n=>n.type==='div'&&String(n.props.className).includes('bg-[#fff3c4]')));ok(!String(nodes(input).find(n=>n.type==='fieldset').props.className).includes('bg-'));
+// Display dates preserve precision and the existing +09:00 wall clock, without changing the DTO.
+eq(filterEndpointLabel({value:'2026-10-10',precision:'day'}),'2026.10.10');
+eq(filterEndpointLabel({value:'2026-10-10T18:00:00+09:00',precision:'minute'}),'2026.10.10 18:00');
+eq(filterEndpointLabel({value:'2026-10-10T18:00:31+09:00',precision:'second'}),'2026.10.10 18:00:31');
+const dated={...saved,application:known({deadlineKind:'fixed',start:{value:'2026-10-01',precision:'day'},end:{value:'2026-10-10T18:00:00+09:00',precision:'minute'},sourceStatus:'unknown'})};
+eq(filterValueLabel(dated,'application'),'신청 시작 2026.10.01\n신청 마감 2026.10.10 18:00');
+eq(filterValueLabel({...dated,application:known({...dated.application.value,sourceStatus:'closed'})},'application'),'신청 시작 2026.10.01\n신청 마감 2026.10.10 18:00\n접수 상태: 마감');
+ok(!text(ReviewStatus({needed:false,confirmed:false,changed:false})).includes('현재 입력값'));
+reset();data={...saved,topic:{status:'unknown',value:null}};
+const emptyTree=SavedFilterValues({saved:data,data,onChange(){},disabled:false,missing:['topic'],confirmed:[],version,onEditing(){}});
+ok(text(emptyTree).includes('저장된 값 없음'));ok(nodes(emptyTree).some(n=>n.props?.['aria-label']==='대표 분야 입력하기'));
+eq(filterValueLabel(saved,'spaceKind'),'해당 없음');
 eq(writes,0);
 console.log(JSON.stringify({checks,result:'passed',syntheticOnly:true,externalConnections:0}));

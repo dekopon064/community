@@ -38,7 +38,7 @@ const { myseoulReasonFields } = load('app/lib/review/myseoul-contract.ts');
 const { filterSaveBody, saveFilterRequest, FilterInputs, filterReviewFields, reviewFilterLabel } = load('app/components/admin/FilterReviewPanel.tsx');
 const Panel = load('app/components/admin/MySeoulReviewPanel.tsx').default;
 const unknown = { status: 'unknown', value: null }, na = { status: 'not_applicable', value: null }, known = value => ({ status: 'known', value });
-const data = { schema: contentFilterSchema, category: 'program', topic: unknown, location: unknown, delivery: known('onsite'), audience: unknown, spaceKind: na, application: known({ deadlineKind: 'none', start: null, end: null, sourceStatus: 'unknown' }), schedule: na };
+const data = { schema: contentFilterSchema, category: 'program', topic: unknown, location: unknown, delivery: known('onsite'), audience: unknown, spaceKind: na, application: known({ deadlineKind: 'fixed', start: {value:'2020-01-01T10:00:00+09:00',precision:'minute'}, end: {value:'2099-10-15T18:00:00+09:00',precision:'minute'}, sourceStatus: 'unknown' }), schedule: na };
 const selected = structuredClone(data); selected.topic = known('culture_experience'); selected.audience = known('other'); selected.location = known({ scope: 'specific', venues: [{ province: '41', district: '성남시', facility: '합성 교육장', address: '' }] });
 eq(parseContentFilters(selected), selected);
 const facts = { delivery_mode: 'offline', activity_region: 'unknown', venue: '원문 장소 안내', activity_evidence: ['원문 실제 근거'], residence: '성남시 주민', residence_scope: 'capital', residence_evidence: ['원문 참가 자격'] };
@@ -57,8 +57,8 @@ eq(factsFromFilterSelection(facts, online, { ...selected, delivery: known('mixed
 eq(factsFromFilterSelection(facts, online, selected, ['delivery_mode']).delivery_mode, 'offline');
 eq(factsFromFilterSelection(facts, data, { ...data, delivery: unknown }, ['delivery_mode']).delivery_mode, 'unknown');
 const info = { schema: contentFilterSchema, revision: 'a'.repeat(64), filterVersion: 1, data, missing: ['topic', 'location', 'audience'], origins: {} };
-eq(myseoulFilterFields(info, ['activity_region']), ['topic', 'audience', 'location', 'application']);
-eq(myseoulFilterFields(info, ['delivery_mode']), ['topic', 'delivery', 'audience', 'location', 'application']);
+eq(myseoulFilterFields(info, ['activity_region']), ['topic', 'audience', 'location']);
+eq(myseoulFilterFields(info, ['delivery_mode']), ['topic', 'delivery', 'audience', 'location']);
 const event = { ...data, category: 'event', delivery: na, audience: na, application: na, schedule: unknown };
 eq(myseoulFilterFields({ ...info, data: event, missing: ['topic', 'location', 'schedule'] }, []), ['topic', 'location', 'schedule']);
 const derived = { ...data, delivery: known('mixed') };
@@ -128,7 +128,7 @@ try {
   const sparse={...selected,location:known({scope:'specific',venues:[{province:'41',district:null,facility:'',address:''}]})};
   eq(parseContentFilters(sparse),sparse);
   const sparseTree=inputs(sparse,['location'],d=>changed=d);
-  const optional=nodes(sparseTree).filter(n=>n?.type==='input');eq(optional.length,2);for(const input of optional)ok(!input.props.required);
+  const optional=nodes(sparseTree).filter(n=>n?.type==='input');eq(optional.length,0);for(const input of optional)ok(!input.props.required);
   const deliveryTree=inputs(data,['delivery']);ok(text(deliveryTree).includes('오프라인'));ok(!text(deliveryTree).includes('현장'));
   let appTree=inputs(data,['application'],d=>changed=d);
   const statusNode=nodes(appTree).find(n=>n?.type?.name==='ReceptionStatus');
@@ -138,19 +138,19 @@ try {
   nodes(statusTree).find(n=>n?.type==='select').props.onChange({target:{value:'closed'}});eq(changed.application.value.sourceStatus,'closed');
   appTree=inputs(changed,['application'],d=>changed=d);const savedStatus=nodes(appTree).find(n=>n?.type?.name==='ReceptionStatus');
   states=[];cursor=0;statusTree=savedStatus.type(savedStatus.props);eq(nodes(statusTree).find(n=>n?.type==='input').props.checked,true);
-  nodes(statusTree).find(n=>n?.type==='input').props.onChange({target:{checked:false}});eq(changed.application.value.sourceStatus,'unknown');eq(changed.application.value.deadlineKind,'none');
-  const dated={...selected,application:known({deadlineKind:'fixed',start:null,end:{value:'2026-10-10',precision:'day'},sourceStatus:'unknown'})};
-  const endNode=nodes(inputs(dated,['application'],d=>changed=d)).find(n=>n?.type?.name==='EndpointInput'&&n.props.label==='신청 마감');
+  nodes(statusTree).find(n=>n?.type==='input').props.onChange({target:{checked:false}});eq(changed.application.value.sourceStatus,'unknown');eq(changed.application.value.deadlineKind,'fixed');
+  const dated={...selected,application:known({deadlineKind:'fixed',start:{value:'2026-10-01',precision:'day'},end:{value:'2026-10-10',precision:'day'},sourceStatus:'unknown'})};
+  const endNode=nodes(inputs(dated,['application'],d=>changed=d)).find(n=>n?.type?.name==='EndpointInput'&&n.props.label==='신청 마감일 (필수)');
   let endTree=endNode.type(endNode.props);ok(!text(endTree).includes('정밀도'));
   nodes(endTree).find(n=>n?.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:true}});
   fails(()=>parseContentFilters(changed)); // no invented midnight/time
-  const incomplete=nodes(inputs(changed,['application'],d=>changed=d)).find(n=>n?.type?.name==='EndpointInput'&&n.props.label==='신청 마감');
+  const incomplete=nodes(inputs(changed,['application'],d=>changed=d)).find(n=>n?.type?.name==='EndpointInput'&&n.props.label==='신청 마감일 (필수)');
   endTree=incomplete.type(incomplete.props);nodes(endTree).find(n=>n?.type==='input'&&n.props.type==='time').props.onChange({target:{value:'18:00'}});
   eq(changed.application.value.end,{value:'2026-10-10T18:00:00+09:00',precision:'minute'});eq(parseContentFilters(changed),changed);
-  const timed=nodes(inputs(changed,['application'],d=>changed=d)).find(n=>n?.type?.name==='EndpointInput'&&n.props.label==='신청 마감');
+  const timed=nodes(inputs(changed,['application'],d=>changed=d)).find(n=>n?.type?.name==='EndpointInput'&&n.props.label==='신청 마감일 (필수)');
   nodes(timed.type(timed.props)).find(n=>n?.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:false}});eq(changed.application.value.end,dated.application.value.end);
   const seconds={...dated,application:known({...dated.application.value,end:{value:'2026-10-10T18:00:31+09:00',precision:'second'}})};
-  const secondNode=nodes(inputs(seconds,['application'],d=>changed=d)).find(n=>n?.type?.name==='EndpointInput'&&n.props.label==='신청 마감');
+  const secondNode=nodes(inputs(seconds,['application'],d=>changed=d)).find(n=>n?.type?.name==='EndpointInput'&&n.props.label==='신청 마감일 (필수)');
   eq(nodes(secondNode.type(secondNode.props)).find(n=>n?.type==='input'&&n.props.type==='time').props.value,'18:00:31');
   reset();mode='ok';fakeServer();states[0].editableFields.push('public_category');states[1].public_category='event';
   button('사실 저장 후 공개 필터 저장').props.onClick();await settle();eq(calls.length,0);ok(states[5].includes('카테고리'));
@@ -161,6 +161,10 @@ try {
   button('사실 저장 후 공개 필터 저장').props.onClick(); await settle();
   eq(calls.map(c => c.body?.action ?? (c.body ? 'filters' : 'read')), ['save_facts', 'filters', 'read']);
   ok(states[6].includes('각각 완료')); eq(states[2], server.filterInfo.data);
+  // Explicit unchanged venue confirmation must still submit the protected trio.
+  reset(); mode='ok'; fakeServer();states[0].facts.activity_region='capital';states[1].activity_region='capital';states[0].filterInfo.data=structuredClone(selected);states[2]=structuredClone(selected);
+  button('공개 필터 확인·저장').props.onClick();await settle();eq(calls.map(c=>c.body?.action??(c.body?'filters':'read')),['save_facts','filters','read']);
+  eq(Object.keys(calls[0].body.patch).sort(),['activity_region','delivery_mode','venue']);eq(calls[0].body.patch.venue,initial.facts.venue);
   for (mode of ['facts_fail', 'facts_unknown', 'revision_changed', 'category_changed', 'conflict', 'filter_unknown']) {
     reset(); fakeServer(); choose(selected); button('사실 저장 후 공개 필터 저장').props.onClick(); await settle();
     eq(calls.length, ['conflict', 'filter_unknown'].includes(mode) ? 2 : 1);
@@ -186,5 +190,20 @@ try {
   const body = filterSaveBody(initial.filterInfo, initial.version, selected, ['location']);
   await assert.rejects(saveFilterRequest(id, body, async () => response({ item: { ...initial.filterInfo, id, version: initial.version, editable: true } }))); checks++;
   eq(calls.filter(c => /ai|candidate|claim|publish/.test(c.url)).length, 0);
+  // The actual parent supplies one stable source slot before either editor flow.
+  reset();const categoryPanel=nodes(render()).find(n=>n?.type?.name==='ClassificationPanel');
+  ok(text(categoryPanel.props.reference).includes(initial.source.body));ok(text(categoryPanel.props.overview).includes('이번에 확인할 사항'));
+  eq(nodes(render()).filter(n=>n?.type==='details'&&text(n).includes('원문 확인 · 읽기 전용')).length,0);
+  // Only the affected reservation UI composition is exercised; its server suite is unchanged.
+  const programSamples=JSON.parse(execFileSync(python,['-X','utf8','test_program_db.py','--fixtures'],{cwd:path.join(root,'scripts'),encoding:'utf8'}));
+  const programFacts=programSamples.fixtures[0].item.program_facts;
+  const {programItem}=load('app/lib/review/program-store.ts');
+  const reservation=programItem({id,revision:'a'.repeat(64),version:'b'.repeat(64),schema:'program-scope-v1-local',profile:'program_capital_v1_local',factsVersion:1,source:{name:'seoul_reservation',title:'합성 예약',url:programFacts.official_url,body:'합성 예약 원문'},facts:programFacts,observedFacts:programFacts,result:{decision:'review_required',disposition:'observe_only',reasons:['activity_location_unknown']},status:'open',aiStatus:'blocked',editableFields:['activity_region'],history:[]},id);
+  const ReservationPanel=load('app/components/admin/ProgramReviewPanel.tsx').default;
+  states=[reservation,structuredClone(reservation.facts)];refs=[];cursor=0;refCursor=0;
+  const reservationTree=ReservationPanel({id,onBlocked(){},onResult(){}});
+  const reservationCategory=nodes(reservationTree).find(n=>n?.type?.name==='ClassificationPanel');
+  ok(text(reservationCategory.props.reference).includes('합성 예약 원문'));ok(text(reservationCategory.props.overview).includes('이번에 확인할 사항'));
+  eq(nodes(reservationTree).filter(n=>n?.type==='details'&&text(n).includes('원문 확인 · 읽기 전용')).length,0);
   console.log(JSON.stringify({ syntheticOnly: true, actualPostgreSQL: false, checks, result: 'passed', externalConnections: 0 }));
 } finally { globalThis.fetch = originalFetch; }

@@ -13,6 +13,7 @@ export type ClassificationDetail = {
   id: string; revision: string; version: string; classificationVersion: number; active: boolean;
   category: Category; facts: Facts; filters: ContentFilters | null; note: string;
   editable: boolean; ready: boolean; reasons: string[]; sourceReasons: string[];
+  drafts?: Partial<Record<Category, {facts: Facts; filters: ContentFilters | null}>>;
   publication?: {version:string; category:Category; content:CandidateContent; applied:boolean} | null;
 };
 const comparable=(v:unknown):unknown=>Array.isArray(v)?v.map(comparable):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>[k,comparable(x)])):v;
@@ -28,20 +29,52 @@ const object = (v: unknown): Record<string, unknown> => {
 };
 export function classificationDraft(current: Facts, category: Category): Facts {
   // Preserve the saved snapshot; date meanings must be confirmed independently.
-  return { ...structuredClone(current), category,
+  return { ...structuredClone(current), category, productType: category === current.category ? current.productType : category === 'living' ? 'living_guide' : category === 'policy' ? 'policy_reference' : 'event_program',
     deadlineKind: ['policy','program'].includes(category) && ['policy','program'].includes(current.category) ? current.deadlineKind : '',
     deadlineOn: ['policy','program'].includes(category) && ['policy','program'].includes(current.category) ? current.deadlineOn : '',
     eventStart: category === 'event' && current.category === 'event' ? current.eventStart : '',
     eventEnd: category === 'event' && current.category === 'event' ? current.eventEnd : '' };
 }
-export function classificationFilters(category: Category, previous: ContentFilters | null): ContentFilters | null {
+export function classificationFilters(category: Category, previous: ContentFilters | null, facts?: Facts): ContentFilters | null {
   if (!['program','event','youth_space'].includes(category)) return null;
   if (previous?.category === category) return structuredClone(previous);
   const next=emptyContentFilters(category as ContentFilters['category']);
   // Confirmed actual venues retain their meaning; schedules and category-specific
   // topics do not. Online/not-applicable is not an offline event venue.
   if(previous?.location.status==='known')next.location=structuredClone(previous.location);
+  if (previous?.topic.status === 'known' && next.topic.status === 'unknown') {
+    const candidate = {...next, topic: structuredClone(previous.topic)};
+    try { parseContentFilters(candidate); next.topic = candidate.topic; } catch { /* Different vocabularies require a new selection. */ }
+  }
+  if (category === 'program' && facts && facts.delivery !== 'unknown') {
+    next.delivery = {status: 'known', value: ({offline:'onsite', online:'online', hybrid:'mixed'} as const)[facts.delivery]};
+    if (facts.delivery === 'online') next.location = {status:'not_applicable', value:null};
+  }
   return next;
+}
+export function classificationSelection(item: ClassificationDetail, current: Facts, previous: ContentFilters | null, category: Category) {
+  const facts = classificationDraft(current, category);
+  const seed = item.drafts?.[category];
+  const filters = classificationFilters(category, previous, facts);
+  if (seed) {
+    if (facts.scope === 'unknown') {
+      facts.scope = seed.facts.scope;
+      facts.regions = structuredClone(seed.facts.regions);
+      if (!facts.evidence) facts.evidence = seed.facts.evidence;
+    }
+    for (const key of ['foreignEligibility','deadlineKind','deadlineOn','eventStart','eventEnd'] as const) {
+      const empty = facts[key] === '' || facts[key] === 'unknown' || Array.isArray(facts[key]) && !facts[key].length;
+      if (empty) Object.assign(facts, {[key]: structuredClone(seed.facts[key])});
+    }
+    if (filters && seed.filters) {
+      for (const key of classificationFields(category)) if (filters[key].status === 'unknown' && seed.filters[key].status !== 'unknown') Object.assign(filters, {[key]: structuredClone(seed.filters[key])});
+    }
+  }
+  return {facts: filters ? classificationFilterFacts(facts, filters) : facts, filters};
+}
+export function classificationConfirmationNote(category: Category, previous: string) {
+  const names = {policy:'정책',program:'프로그램',event:'행사',youth_space:'청년공간',living:'생활'};
+  return previous.trim().length >= 10 ? previous.trim() : `운영자 확인: 원문을 대조하여 ${names[category as keyof typeof names] ?? category} 분류와 입력한 필수값을 확인했습니다.`;
 }
 export function classificationPublicContent(raw:unknown):CandidateContent {
   const o=object(raw),limits={titleKo:300,titleJa:300,summaryKo:1000,summaryJa:1000,contentKo:200000,contentJa:200000};
@@ -58,7 +91,7 @@ export function classificationFilterFacts(current: Facts, filters: ContentFilter
   // Participant eligibility is independent of venue and never inferred here.
   const next = { ...current };
   if (current.category === 'program') {
-    next.delivery = filters.delivery.status === 'known' ? ({online:'online',onsite:'offline',mixed:'hybrid'} as const)[filters.delivery.value] : 'unknown';
+    if (filters.delivery.status === 'known') next.delivery = ({online:'online',onsite:'offline',mixed:'hybrid'} as const)[filters.delivery.value];
     if (filters.application.status === 'known') {
       next.deadlineKind = filters.application.value.sourceStatus === 'closed' && filters.application.value.deadlineKind === 'none' ? 'closed' : filters.application.value.deadlineKind;
       next.deadlineOn = next.deadlineKind === 'fixed' ? filters.application.value.end?.value.slice(0,10) ?? '' : '';
@@ -82,6 +115,7 @@ export function classificationMissing(f: Facts, filters: ContentFilters | null):
   }
   if (f.productType === 'policy_reference' && f.foreignEligibility === 'unknown') missing.push('foreignEligibility');
   if (['policy','program'].includes(f.category) && !f.deadlineKind) missing.push('deadlineKind');
+  if (['policy','program'].includes(f.category) && f.deadlineKind === 'fixed' && !/^\d{4}-\d{2}-\d{2}$/.test(f.deadlineOn)) missing.push('deadlineOn');
   if (f.category === 'program' && f.deadlineKind !== 'fixed') missing.push('deadlineKind');
   if (f.category === 'event' && (!f.eventStart || !f.eventEnd)) missing.push('eventStart','eventEnd');
   if (classificationFields(f.category).length) {
@@ -121,7 +155,17 @@ export function classificationDetail(raw: unknown, id: string): ClassificationDe
     if (o.category !== facts.category || filters && filters.category !== facts.category || o.active && Number(o.classificationVersion) < 1) throw Error();
     let publication:ClassificationDetail['publication'];
     if(o.publication!=null){const p=object(o.publication);if(!hash(p.version)||!classificationCategories.includes(p.category as typeof classificationCategories[number])||typeof p.applied!=='boolean')throw Error();publication={version:p.version,category:p.category as Category,content:classificationPublicContent(p.content),applied:p.applied};}
+    let drafts: ClassificationDetail['drafts'];
+    if (o.drafts != null) {
+      const source = object(o.drafts); drafts = {};
+      for (const [category, rawDraft] of Object.entries(source)) {
+        if (!classificationCategories.includes(category as typeof classificationCategories[number])) throw Error();
+        const d = object(rawDraft), f = validateFacts(d.facts), v = d.filters === null ? null : parseContentFilters(d.filters);
+        if (f.category !== category || v && v.category !== category) throw Error();
+        drafts[category as Category] = {facts:f, filters:v};
+      }
+    }
     return { id, revision:o.revision, version:o.version, classificationVersion:Number(o.classificationVersion), active:o.active,
-      category:facts.category, facts, filters, note:o.note, editable:o.editable, ready:o.ready, reasons:o.reasons as string[], sourceReasons:o.sourceReasons as string[],...(publication?{publication}:{}) };
+      category:facts.category, facts, filters, note:o.note, editable:o.editable, ready:o.ready, reasons:o.reasons as string[], sourceReasons:o.sourceReasons as string[],...(publication?{publication}:{}), ...(drafts?{drafts}:{}) };
   } catch { throw new ReviewFailure('unavailable'); }
 }

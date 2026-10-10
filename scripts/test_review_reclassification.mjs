@@ -11,10 +11,9 @@ const fakeReact={...React,useState(initial){const i=cursor++;if(!(i in states))s
 const cache=new Map();
 function load(name){const file=path.resolve(root,name);if(cache.has(file))return cache.get(file);const out={};cache.set(file,out);new Function('require','exports',ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText)(s=>{if(s==='react')return fakeReact;if(s==='next/link')return{default:()=>null};if(s.startsWith('@/')||s.startsWith('.')){const t=s.startsWith('@/')?path.join(root,s.slice(2)):path.resolve(path.dirname(file),s);for(const x of ['.ts','.tsx',''])if(fs.existsSync(t+x))return load(path.relative(root,t+x));}return require(s);},out);return out;}
 let checks=0;const ok=v=>{assert.ok(v);checks++;},eq=(a,b)=>{assert.deepEqual(a,b);checks++;},fails=fn=>{assert.throws(fn);checks++;};
-const {classificationCommand,classificationDraft,classificationDetail,classificationMissing,classificationFilters,classificationFilterFacts,classificationMatches,classificationApplyCommand}=load('app/lib/review/classification.ts');
+const {classificationCommand,classificationDraft,classificationDetail,classificationMissing,classificationFilters,classificationFilterFacts,classificationMatches,classificationApplyCommand,classificationSelection,classificationConfirmationNote}=load('app/lib/review/classification.ts');
 const {classificationRequest}=load('app/lib/review/classification-handler.ts');
 const {ClassificationStore}=load('app/lib/review/classification-store.ts');
-const {ReviewFailure}=load('app/lib/review/contracts.ts');
 const {AdminAccessError}=load('app/lib/auth/admin-policy.ts');
 const Panel=load('app/components/admin/ClassificationPanel.tsx').default;
 const id='40000000-0000-4000-8000-000000000901',revision='a'.repeat(64),version='b'.repeat(64);
@@ -41,21 +40,21 @@ let res=await classificationRequest(new Request(url),id,deps);eq(res.status,200)
 res=await classificationRequest(req(),id,deps);eq(res.status,200);eq(saves,1);
 for(const request of [req(command,{Origin:'http://evil.invalid','Content-Type':'application/json'}),req(command,{'Content-Type':'application/json'}),req({...command,actor:id}),new Request(url,{method:'PUT',headers:{Origin:'http://localhost:3227'}}),new Request(url,{method:'POST',headers:{Origin:'http://localhost:3227','Content-Type':'application/json'},body:'"'+ 'a'.repeat(160001)+'"'})]){res=await classificationRequest(request,id,deps);ok(res.status>=400);ok(res.headers.get('cache-control').includes('no-store'));}eq(saves,1);
 for(const status of ['signed_out','forbidden']){res=await classificationRequest(req(),id,{...deps,authorize:async()=>{throw new AdminAccessError(status);}});ok(res.status===401||res.status===403);}eq(saves,1);ok(authorized>0);
-const nodes=t=>[t,...React.Children.toArray(t?.props?.children).flatMap(c=>typeof c==='object'?nodes(c):[])];
+const nodes=t=>t?.type?.name==='ReviewValueRow'?nodes(t.type(t.props)):[t,...React.Children.toArray(t?.props?.children).flatMap(c=>typeof c==='object'?nodes(c):[])];
 const text=t=>typeof t==='string'?t:React.Children.toArray(t?.props?.children).map(text).join('');
-const props={id,disabled:false,onBlocked(){},onActive(){},onSaved:async()=>{}};
+const props={id,disabled:false,onBlocked(){},onActive(){},onSaved:async()=>{},reference:React.createElement('details',{'data-test-reference':true},'합성 원문'),overview:React.createElement('section',{'data-test-overview':true},'합성 확인사항')};
 const render=()=>{cursor=0;rc=0;effects=[];return Panel(props);};
 const button=label=>{const n=nodes(render()).find(n=>n?.type==='button'&&text(n)===label);assert.ok(n,label);return n;};
 const response=(item,status=200)=>new Response(JSON.stringify(status===200?{item}:{code:item}),{status});
 const originalFetch=globalThis.fetch;let fetches=[],mode='success',stored=null;
-globalThis.fetch=async(u,o={})=>{assert.equal(u,'/api/admin/review-classification/'+id);fetches.push(o.body?JSON.parse(o.body):null);eq(o.cache,'no-store');eq(o.credentials,'same-origin');if(o.body&&mode==='unknown')throw Error('synthetic timeout');if(o.body&&mode==='unknown_completed'){stored={...base,classificationVersion:1,version:'c'.repeat(64),active:true,ready:true,note:command.note};return response('unavailable',503);}if(!o.body&&mode==='unknown_completed'&&stored)return response(stored);if(o.body&&mode==='conflict')return response('conflict',409);return response(o.body?{...base,classificationVersion:1,version:'c'.repeat(64),active:true,ready:true,note:command.note}:base);};
+globalThis.fetch=async(u,o={})=>{assert.equal(u,'/api/admin/review-classification/'+id);fetches.push(o.body?JSON.parse(o.body):null);eq(o.cache,'no-store');eq(o.credentials,'same-origin');if(o.body&&mode==='unknown')throw Error('synthetic timeout');if(o.body&&mode==='unknown_completed'){stored={...base,classificationVersion:1,version:'c'.repeat(64),active:true,ready:true,note:JSON.parse(o.body).note};return response('unavailable',503);}if(!o.body&&mode==='unknown_completed'&&stored)return response(stored);if(o.body&&mode==='conflict')return response('conflict',409);return response(o.body?{...base,classificationVersion:1,version:'c'.repeat(64),active:true,ready:true,note:JSON.parse(o.body).note}:base);};
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-async function prepare(){states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();const t=render();nodes(t).find(n=>n?.type==='textarea').props.onChange({target:{value:command.note}});nodes(render()).find(n=>n?.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:true}});}
+async function prepare(){states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();nodes(render()).find(n=>n?.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:true}});}
 try{
- await prepare();ok(text(render()).includes('미저장 변경'));eq(button('분류 변경 닫기').props.disabled,true);
+ await prepare();ok(!text(render()).includes('미저장 변경'));eq(button('분류 변경 닫기').props.disabled,false);
  const form=nodes(render()).find(n=>n?.type==='form');form.props.onSubmit({preventDefault(){}});form.props.onSubmit({preventDefault(){}});await settle();eq(fetches.filter(Boolean).length,1);eq(states[0].active,true);eq(states[3],false);
- for(mode of ['conflict','unknown']){fetches=[];await prepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[7],command.note);eq(states[3],true);eq(fetches.filter(Boolean).length,1);if(mode==='unknown'){eq(button('분류·필수값 저장·재판정').props.disabled,true);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(fetches.filter(Boolean).length,1);eq(states[7],command.note);eq(button('분류·필수값 저장·재판정').props.disabled,true);}}
- fetches=[];stored=null;mode='unknown_completed';await prepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[3],true);eq(states[7],command.note);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[3],false);eq(fetches.filter(Boolean).length,1);eq(states[0].classificationVersion,1);
+ for(mode of ['conflict','unknown']){fetches=[];await prepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[7],base.note);eq(states[3],true);eq(fetches.filter(Boolean).length,1);if(mode==='unknown'){eq(button('분류·필수값 저장·재판정').props.disabled,true);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(fetches.filter(Boolean).length,1);eq(states[7],base.note);eq(button('분류·필수값 저장·재판정').props.disabled,true);}}
+ fetches=[];stored=null;mode='unknown_completed';await prepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[3],true);eq(states[7],base.note);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[3],false);eq(fetches.filter(Boolean).length,1);eq(states[0].classificationVersion,1);
  // Unresolved native reasons are read-back state, not client-confirmed completion.
  fails(()=>classificationDetail({...base,id:'another'},id));fails(()=>classificationDetail({...base,active:true},id));
  const sourceFilters=classificationFilters('program',null);sourceFilters.delivery={status:'known',value:'onsite'};sourceFilters.location={status:'known',value:{scope:'specific',venues:[{province:'11',district:null,facility:'',address:''}]}};sourceFilters.application={status:'known',value:{deadlineKind:'none',start:null,end:null,sourceStatus:'unknown'}};
@@ -66,6 +65,48 @@ try{
  nodes(render()).find(n=>n?.type==='select').props.onChange({target:{value:'program'}});eq(states[2],sourceFilters);eq(states[1],programItem.facts);
  const filterNode=nodes(render()).find(n=>n?.props?.prefix==='classification');filterNode.props.onChange({...states[2],topic:{status:'known',value:'language_learning'}});
  nodes(render()).find(n=>n?.type==='select').props.onChange({target:{value:'event'}});nodes(render()).find(n=>n?.type==='select').props.onChange({target:{value:'program'}});eq(states[2].topic.value,'language_learning');eq(states[2].application,sourceFilters.application);
+ // Preserve populated drafts, dependent editors, and optional legacy place metadata.
+ const seedFilters=structuredClone(sourceFilters);seedFilters.topic={status:'known',value:'language_learning'};seedFilters.audience={status:'known',value:'other'};seedFilters.application={status:'known',value:{deadlineKind:'fixed',start:{value:'2099-10-01',precision:'day'},end:{value:'2099-10-15',precision:'day'},sourceStatus:'unknown'}};
+ const seeded={...base,category:'',facts:{...facts,category:'',productType:'event_program',delivery:'offline'},drafts:{program:{facts:{...facts,category:'program',productType:'event_program',delivery:'offline',scope:'nationwide',evidence:'합성 원문: 전국 대상',deadlineKind:'fixed',deadlineOn:'2099-10-15'},filters:seedFilters}}};
+ eq(classificationDetail(seeded,id).drafts.program.filters,seedFilters);
+ const chosen=classificationSelection(seeded,seeded.facts,null,'program');eq(chosen.filters,seedFilters);eq(chosen.facts.delivery,'offline');eq(classificationMissing(chosen.facts,chosen.filters),[]);
+ eq(classificationSelection(seeded,{...seeded.facts,scope:'specific',regions:['41'],evidence:'합성 직접 입력'},null,'program').facts.regions,['41']);
+ eq(classificationFilters('program',null,{...facts,delivery:'offline'}).delivery.value,'onsite');eq(classificationFilterFacts({...facts,delivery:'offline'},classificationFilters('program',null)).delivery,'offline');
+ ok(classificationMissing({...facts,category:'policy',productType:'policy_reference',scope:'nationwide',evidence:'근거',foreignEligibility:'eligible',deadlineKind:'fixed'},null).includes('deadlineOn'));
+ ok(classificationConfirmationNote('program','').startsWith('운영자 확인:'));ok(!classificationConfirmationNote('program','').includes('program'));
+ globalThis.fetch=async()=>response(seeded);states=[];refs=[];render();effects[0]();await settle();ok(nodes(render()).some(n=>n?.props?.id==='classification-category'));
+ nodes(render()).find(n=>n?.props?.id==='classification-category').props.onChange({target:{value:'program'}});eq(states[2],seedFilters);eq(states[1].scope,'nationwide');
+ let editFilters=nodes(render()).find(n=>n?.props?.prefix==='classification');eq(editFilters.props.fields,[]);
+ globalThis.fetch=async()=>response({...seeded,category:'program',facts:{...seeded.facts,category:'program'},filters:classificationFilters('program',null)});states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();eq(states[2],seedFilters);eq(nodes(render()).find(n=>n?.props?.prefix==='classification').props.fields,[]);
+ // Reference precedes editors, while the same slot remains present in ordinary review.
+ let display=nodes(render());ok(display.findIndex(n=>n?.props?.['data-test-reference'])<display.findIndex(n=>n?.type==='form'));
+ eq(display.filter(n=>n?.props?.['data-test-reference']).length,1);
+ // Maintained rows edit a local working copy; applying never submits the classification.
+ let rowWrites=0;const priorRowFetch=globalThis.fetch;globalThis.fetch=async(...args)=>{if(args[1]?.body)rowWrites++;return priorRowFetch(...args);};
+ let rowButton=display.find(n=>n?.props?.['data-classification-edit']==='filter:topic');rowButton.props.onClick();
+ let local=nodes(render()).find(n=>n?.props?.prefix==='classification-row');ok(local);eq(button('분류 변경 닫기').props.disabled,true);eq(states[2].topic,seedFilters.topic);
+ local.props.onChange({...states[2],topic:{status:'known',value:'other'}});
+ eq(states[2].topic,seedFilters.topic);button('취소').props.onClick();eq(states[2].topic,seedFilters.topic);
+ rowButton=nodes(render()).find(n=>n?.props?.['data-classification-edit']==='filter:topic');rowButton.props.onClick();
+ local=nodes(render()).find(n=>n?.props?.prefix==='classification-row');local.props.onChange({...states[2],topic:{status:'known',value:'other'}});
+ button('초안에 적용').props.onClick();eq(states[2].topic.value,'other');eq(states[18],null);
+ ok(nodes(render()).some(n=>n?.type==='p'&&text(n)==='변경할 값 → 기타'));
+ nodes(render()).find(n=>n?.props?.['data-classification-edit']==='filter:topic').props.onClick();
+ let stopped=false;nodes(render()).find(n=>n?.props?.['data-classification-row']).props.onKeyDown({key:'Escape',preventDefault(){},stopPropagation(){stopped=true;}});ok(stopped);eq(states[2].topic.value,'other');
+ // A new read-back version keeps the row input but prevents applying it.
+ nodes(render()).find(n=>n?.props?.['data-classification-edit']==='filter:topic').props.onClick();
+ states[0]={...states[0],version:'e'.repeat(64)};eq(button('초안에 적용').props.disabled,true);ok(nodes(render()).some(n=>n?.props?.role==='alert'&&text(n).includes('저장 버전')));
+ button('취소').props.onClick();button('입력 취소').props.onClick();eq(rowWrites,0);
+ display=nodes(render());ok(display.findIndex(n=>n?.props?.['data-test-overview'])<display.findIndex(n=>n?.props?.['data-test-reference']));
+ const missingProgram={...seeded,drafts:{},category:'program',facts:{...chosen.facts,scope:'unknown',regions:[],evidence:''},filters:{...seedFilters,location:{status:'unknown',value:null}}};
+ globalThis.fetch=async()=>response(missingProgram);states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();
+ editFilters=nodes(render()).find(n=>n?.props?.prefix==='classification');editFilters.props.onChange({...missingProgram.filters,location:sourceFilters.location});
+ ok(nodes(render()).find(n=>n?.props?.prefix==='classification').props.fields.includes('location'));
+ let factsEditor=nodes(render()).find(n=>n?.props?.idPrefix==='classification-');ok(factsEditor.props.editableFields.includes('regions'));factsEditor.props.onChange({...states[1],evidence:'첫'});
+ ok(nodes(render()).find(n=>n?.props?.idPrefix==='classification-').props.editableFields.includes('evidence'));
+ const FilterInputs=load('app/components/admin/FilterReviewPanel.tsx').FilterInputs;const legacy=structuredClone(seedFilters);legacy.location.value.venues[0].facility='합성 시설';legacy.location.value.venues[0].address='합성 주소';
+ cursor=0;rc=0;const inputTree=FilterInputs({data:legacy,fields:['location'],onChange(){},disabled:false});
+ ok(!text(inputTree).includes('시설명 (선택)'));ok(!text(inputTree).includes('상세 주소 (선택)'));eq(classificationFilters('event',legacy).location.value.venues[0].facility,'합성 시설');
  const body={titleKo:'합성 제목',titleJa:'合成題名',summaryKo:'합성 요약',summaryJa:'合成概要',contentKo:'합성 본문',contentJa:'合成本文'};
  const pub={...base,active:true,ready:true,classificationVersion:1,version:'c'.repeat(64),publication:{version:'d'.repeat(64),category:'program',content:body,applied:false}};
  eq(classificationDetail(pub,id).publication.content,body);eq(classificationDetail({...pub,publication:{...pub.publication,content:{...body,titleJa:null,summaryJa:null,contentJa:null}}},id).publication.content.contentJa,'');
@@ -75,8 +116,8 @@ try{
  let current=pub,transport='success',writes=0;const completed={...pub,publication:{...pub.publication,category:'living',applied:true}};
  globalThis.fetch=async(u,o={})=>{if(o.body){writes++;if(transport==='unknown'){current=completed;return response('unavailable',503);}if(transport==='conflict')return response('conflict',409);return response(completed);}return response(current);};
  async function publicPrepare(){states=[];refs=[];current=pub;render();effects[0]();await settle();button('공개 본문 확인·재분류 적용').props.onClick();let t=render();nodes(t).find(n=>n?.type==='textarea').props.onChange({target:{value:command.note}});nodes(render()).find(n=>n?.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:true}});}
- await publicPrepare();props.onSaved=async()=>{throw Error('synthetic refresh failed');};await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[13],false);eq(states[10],false);ok(text(render()).includes('적용은 완료했지만'));props.onSaved=async()=>{};
- transport='unknown';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[10],true);eq(states[13],true);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[10],false);eq(states[13],false);eq(writes,1);
- transport='conflict';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});current={...pub,version:'e'.repeat(64),publication:{...pub.publication,version:'f'.repeat(64),content:{...body,contentKo:'다른 검토자가 수정한 합성 본문'}}};button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[15],false);eq(states[14].contentKo,body.contentKo);eq(states[0].publication.content.contentKo,current.publication.content.contentKo);eq(button('재분류 적용').props.disabled,true);eq(writes,1);
+ await publicPrepare();props.onSaved=async()=>{throw Error('synthetic refresh failed');};await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[14],false);eq(states[10],false);ok(text(render()).includes('적용은 완료했지만'));props.onSaved=async()=>{};
+ transport='unknown';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[10],true);eq(states[14],true);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[10],false);eq(states[14],false);eq(writes,1);
+ transport='conflict';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});current={...pub,version:'e'.repeat(64),publication:{...pub.publication,version:'f'.repeat(64),content:{...body,contentKo:'다른 검토자가 수정한 합성 본문'}}};button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[16],false);eq(states[15].contentKo,body.contentKo);eq(states[0].publication.content.contentKo,current.publication.content.contentKo);eq(button('재분류 적용').props.disabled,true);eq(writes,1);
  console.log(JSON.stringify({checks,syntheticOnly:true,externalConnections:0,result:'passed'}));
 }finally{globalThis.fetch=originalFetch;}
