@@ -85,8 +85,8 @@ const reset = () => { states = [structuredClone(initial), structuredClone(initia
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const settle = () => new Promise(resolve => setImmediate(resolve));
 let calls = [], mode = 'ok', server;
-function fakeServer() {
-  server = structuredClone(initial); calls = [];
+function fakeServer(seed=initial) {
+  server = structuredClone(seed); calls = [];
   globalThis.fetch = async (url, options = {}) => {
     assert.ok(url === `/api/admin/myseoul-review/${id}` || url === `/api/admin/review-filters/${id}`);
     eq(options.cache, 'no-store'); eq(options.credentials, 'same-origin');
@@ -101,7 +101,24 @@ function fakeServer() {
     if (body) {
       if (mode === 'facts_fail') return response({ code: 'conflict' }, 409);
       if (mode === 'facts_unknown') throw Error('Synthetic response unknown');
-      eq(body.action, 'save_facts'); eq(body.version, server.version);
+      ok(['save_facts','confirm_activity','confirm_body'].includes(body.action)); eq(body.version, server.version);
+      if(body.action==='confirm_activity'){
+        if(mode==='conflict')return response({code:'conflict'},409);
+        if(mode==='filter_unknown')throw Error('Synthetic response unknown');
+        eq(body.filterVersion,server.filterInfo.filterVersion);
+        server.facts={...server.facts,...body.patch,delivery_mode:body.data.delivery.value==='mixed'?'mixed':'offline',activity_region:'capital'};
+        server.version='c'.repeat(64);server.factsVersion++;server.filterInfo={...server.filterInfo,data:body.data,filterVersion:server.filterInfo.filterVersion+1,missing:[]};
+        server.activityReview={confirmed:true};server.result.reasons=server.result.reasons.filter(r=>r!=='activity_region_unknown');server.reasonGuidance=server.reasonGuidance.filter(r=>r.code!=='activity_region_unknown');
+        if(mode==='revision_changed'){server.revision='e'.repeat(64);server.facts.source_revision=server.revision;server.observedFacts.source_revision=server.revision;server.filterInfo.revision=server.revision;}
+        if(mode==='category_changed')server.filterInfo.data=event;
+        if(mode==='double_submit')await new Promise(resolve=>setImmediate(resolve));
+        return response({mode:'database',item:server});
+      }
+      if(body.action==='confirm_body'){
+        server.facts.description=body.description;server.version='c'.repeat(64);server.factsVersion++;
+        server.bodyReview={required:true,confirmed:true,imageUrl:null};server.result.reasons=server.result.reasons.filter(r=>!['attachment_dependent','description_missing'].includes(r));
+        return response({mode:'database',item:server});
+      }
       server.facts = { ...server.facts, ...body.patch }; server.version = 'c'.repeat(64); server.factsVersion++;
       if(body.patch.public_category==='event') server.filterInfo={...server.filterInfo,data:event,missing:['topic','location','schedule']};
       if (mode === 'revision_changed') { server.revision = 'e'.repeat(64); server.facts.source_revision = server.revision; server.observedFacts.source_revision = server.revision; server.filterInfo.revision = server.revision; }
@@ -159,27 +176,47 @@ try {
   reset(); fakeServer(); choose(selected);
   eq(states[1].activity_region, 'capital'); eq(states[1].activity_evidence, initial.facts.activity_evidence);
   button('사실 저장 후 공개 필터 저장').props.onClick(); await settle();
-  eq(calls.map(c => c.body?.action ?? (c.body ? 'filters' : 'read')), ['save_facts', 'filters', 'read']);
-  ok(states[6].includes('각각 완료')); eq(states[2], server.filterInfo.data);
-  // Explicit unchanged venue confirmation must still submit the protected trio.
+  eq(calls.map(c => c.body?.action ?? (c.body ? 'filters' : 'read')), ['confirm_activity']);
+  ok(states[6].includes('함께 완료')); eq(states[2], server.filterInfo.data);
+  // Unchanged values still explicitly confirm the region, without venue input.
   reset(); mode='ok'; fakeServer();states[0].facts.activity_region='capital';states[1].activity_region='capital';states[0].filterInfo.data=structuredClone(selected);states[2]=structuredClone(selected);
-  button('공개 필터 확인·저장').props.onClick();await settle();eq(calls.map(c=>c.body?.action??(c.body?'filters':'read')),['save_facts','filters','read']);
-  eq(Object.keys(calls[0].body.patch).sort(),['activity_region','delivery_mode','venue']);eq(calls[0].body.patch.venue,initial.facts.venue);
+  button('공개 필터 확인·저장').props.onClick();await settle();eq(calls.map(c=>c.body?.action??(c.body?'filters':'read')),['confirm_activity']);
+  eq(calls[0].body.patch,{});eq(calls[0].body.data.location,selected.location);
   for (mode of ['facts_fail', 'facts_unknown', 'revision_changed', 'category_changed', 'conflict', 'filter_unknown']) {
     reset(); fakeServer(); choose(selected); button('사실 저장 후 공개 필터 저장').props.onClick(); await settle();
-    eq(calls.length, ['conflict', 'filter_unknown'].includes(mode) ? 2 : 1);
+    eq(calls.length, 1);
     ok(states[5].includes('입력')); eq(states[2].location, selected.location);
-    eq(states[0].factsVersion, ['facts_fail', 'facts_unknown'].includes(mode) ? 1 : 2);
+    eq(states[0].factsVersion, 1);
     const writes = calls.length;
     mode = 'ok'; button('입력을 유지하고 저장 상태 확인').props.onClick(); await settle();
     eq(calls.length, writes + 1); eq(calls.at(-1).body, null); eq(states[2].location, selected.location);
   }
   reset(); mode = 'ok'; fakeServer(); choose({ ...selected, location: known({ scope: 'specific', venues: [{ province: '', district: null, facility: '', address: '' }] }) });
   button('공개 필터 확인·저장').props.onClick(); await settle(); eq(calls.length, 0); ok(states[5].includes('아무 값도 저장하지'));
-  reset(); mode = 'double_submit'; fakeServer(); choose(selected); const submit = button('사실 저장 후 공개 필터 저장'); submit.props.onClick(); submit.props.onClick(); await settle(); await settle(); eq(calls.filter(c => c.body?.action === 'save_facts').length, 1);
-  reset(); mode = 'read_fail'; fakeServer(); choose(selected); button('사실 저장 후 공개 필터 저장').props.onClick(); await settle();
+  reset(); mode = 'double_submit'; fakeServer(); choose(selected); const submit = button('사실 저장 후 공개 필터 저장'); submit.props.onClick(); submit.props.onClick(); await settle(); await settle(); eq(calls.filter(c => c.body?.action === 'confirm_activity').length, 1);
+  reset(); mode = 'read_fail'; fakeServer(); states[0].result.reasons=['online_residence_unknown'];choose(selected); button('사실 저장 후 공개 필터 저장').props.onClick(); await settle();
   ok(states[5].includes('공개 필터 저장은 완료')); eq(states[0].filterInfo.filterVersion, 2); eq(states[2], selected);
   mode = 'ok'; button('입력을 유지하고 저장 상태 확인').props.onClick(); await settle(); eq(calls.filter(c => c.url.includes('review-filters')).length, 1);
+  // Image confirmation requires both a description and explicit verification.
+  for(mode of ['ok','facts_fail','facts_unknown']) {
+    reset();states[0]=myseoulItem({...initial,result:{...initial.result,reasons:['attachment_dependent','description_missing']},editableFields:['description'],bodyReview:{required:true,confirmed:false,imageUrl:'https://global.seoul.go.kr/contents/commoneditor/synthetic.png'}},id);
+    states[0].facts.description='';states[1]=structuredClone(states[0].facts);fakeServer(states[0]);
+    eq(button('설명·이미지 원문 확인 저장').props.disabled,true);
+    ok(!text(render()).includes('지원하지 않는 사유입니다'));
+    const supplied='합성 이미지 원문에서 확인한 설명입니다. 부모와 자녀가 함께 참여하는 활동입니다.';
+    states[1].description=supplied;eq(button('설명·이미지 원문 확인 저장').props.disabled,true);
+    const label=nodes(render()).find(n=>n?.type==='label'&&text(n).includes('이미지 원문을 확인하고'));
+    nodes(label).find(n=>n?.type==='input').props.onChange({target:{checked:true}});
+    eq(button('설명·이미지 원문 확인 저장').props.disabled,false);
+    eq(button('서비스에 적합하지 않음 · 제외').props.disabled,true);
+    eq(button('대상 지역이 아님 · 제외').props.disabled,true);
+    states[1].target='다른 항목의 미저장 입력';
+    button('설명·이미지 원문 확인 저장').props.onClick();await settle();
+    eq(calls.length,1);eq(calls[0].body.action,'confirm_body');eq(calls[0].body.confirmed,true);eq(calls[0].body.description,supplied);
+    eq(states[1].target,'다른 항목의 미저장 입력');eq(states[1].description,supplied);
+    if(mode==='ok'){eq(states[0].bodyReview.confirmed,true);ok(!states[0].result.reasons.includes('attachment_dependent'));}
+    else{eq(states[0].bodyReview.confirmed,false);eq(button('설명·이미지 원문 확인 저장').props.disabled,false);}
+  }
   reset(); choose(selected); states[1].residence = '다른 항목의 미저장 조건'; button('공개 필터 입력 취소').props.onClick(); eq(states[1].activity_region, initial.facts.activity_region); eq(states[1].residence, '다른 항목의 미저장 조건'); eq(states[2], data);
   reset(); mode = 'ok'; fakeServer(); choose(online); eq(states[2].location, na); eq(states[1].residence, initial.facts.residence); ok(!JSON.stringify(states[2]).includes('residence'));
   // Scoped fact confirmation preserves independent selections and the repeat editor instance.
