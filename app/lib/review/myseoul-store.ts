@@ -19,10 +19,18 @@ export function myseoulItem(raw: unknown, id: string) {
     return { id, filterInfo: filterInfo(o.filterInfo, String(o.revision)), revision: myText(o.revision), version: myText(o.version), schema: myseoulSchema, profile: myseoulProfile, factsVersion: o.factsVersion,
       source: { name: "myseoul_program", title: myText(source.title, 500), url: myseoulOfficialUrl(source.url), body: myText(source.body) },
       facts, observedFacts, status: myText(o.status), aiStatus: myText(o.aiStatus, 20), editableFields, restoredReviewPending: o.restoredReviewPending === true,
+      residenceReview: residenceReview(o.residenceReview),
       result: { decision: myText(result.decision), disposition: myText(result.disposition), scope: myText(result.scope), application: myText(result.application), quality: myText(result.quality), public_category: myText(result.public_category), reasons },
       reasonGuidance: reasons.map(code => ({ code, text: myseoulGuidance(code), supported: myseoulReasonFields(code).length > 0 })),
       history: o.history.map(raw => { const h = myObject(raw); return { action: myText(h.action, 30), actor: myText(h.actor, 36), at: myText(h.at, 100), note: myText(h.note, 4000), fields: myStrings(h.fields) }; }) };
   } catch { throw new ReviewFailure("unavailable"); }
+}
+
+function residenceReview(raw: unknown) {
+  if (raw === undefined) return {confirmed:false,basis:'unconfirmed'};
+  const v = myObject(raw);
+  if (typeof v.confirmed !== 'boolean' || !['operator_no_restriction','source_evidence','unconfirmed'].includes(String(v.basis))) throw new ReviewFailure('unavailable');
+  return {confirmed:v.confirmed,basis:String(v.basis)};
 }
 
 export class MySeoulReviewStore {
@@ -38,6 +46,7 @@ export class MySeoulReviewStore {
   }
   async get(id: string) { return myseoulItem(await this.invoke("admin_myseoul_program_detail", { p_id: id }), id); }
   async execute(id: string, c: MySeoulCommand, actor: string) {
+    if (c.action === 'confirm_residence') return myseoulItem(await this.invoke('admin_myseoul_residence_confirm', {p_id:id,p_revision:c.revision,p_version:c.version,p_restricted:c.restricted,p_scope:c.scope,p_condition:c.condition,p_evidence:c.evidence,p_actor:actor,p_request:c.requestId}),id);
     const args: Record<string, unknown> = { p_id: id, p_revision: c.revision, p_version: c.version, p_actor: actor };
     if (c.action === "save_facts") args.p_patch = c.patch;
     else args.p_note = c.note;

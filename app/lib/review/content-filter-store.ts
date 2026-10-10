@@ -1,4 +1,4 @@
-import { filterKeys, parseContentFilters, contentFilterSchema } from '../contentFilters';
+import { filterKeys, parseContentFilters, contentFilterSchema, programApplicationComplete } from '../contentFilters';
 import type { ContentFilters, FilterKey } from '../contentFilters';
 import { ReviewFailure } from './contracts';
 import type { RpcClient } from './database-store';
@@ -33,7 +33,9 @@ export function filterCommand(raw: unknown) {
   try {
     const o=obj(raw);
     if(Object.keys(o).sort().join(',')!=='data,fields,filterVersion,revision,version' || !Array.isArray(o.fields) || !o.fields.length || o.fields.some(k=>!filterKeys.includes(k)) || new Set(o.fields).size!==o.fields.length) throw Error();
-    return {revision:hash(o.revision),version:hash(o.version),filterVersion:version(o.filterVersion),fields:o.fields as FilterKey[],data:parseContentFilters(o.data)};
+    const data=parseContentFilters(o.data);
+    if(o.fields.includes('application')&&!programApplicationComplete(data)) throw Error();
+    return {revision:hash(o.revision),version:hash(o.version),filterVersion:version(o.filterVersion),fields:o.fields as FilterKey[],data};
   } catch {throw new ReviewFailure('invalid_input',{filters:'분류·지역·날짜의 선택값과 형식을 확인해 주세요.'});}
 }
 export class ContentFilterStore {

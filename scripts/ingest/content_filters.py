@@ -175,11 +175,18 @@ def validate_filters(d: Any) -> dict:
     return copy.deepcopy(d)
 
 
+def program_application_complete(d: dict) -> bool:
+    a = d['application']
+    return d['category'] != 'program' or (a['status'] == 'known' and
+        a['value']['deadlineKind'] == 'fixed' and a['value']['start'] is not None and
+        a['value']['end'] is not None)
+
+
 def missing_filters(d: dict) -> list[str]:
     missing = [k for k in KEYS if d[k]["status"] == "unknown"]
     if d["location"]["status"] == "known" and any(v["district"] is None for v in d["location"]["value"]["venues"]):
         missing.append("location")
-    if d["application"]["status"] == "known" and d["application"]["value"]["deadlineKind"] == "none":
+    if not program_application_complete(d):
         missing.append("application")
     return list(dict.fromkeys(missing))
 

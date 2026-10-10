@@ -65,7 +65,7 @@ def run_cases(sql, root, only="all"):
     na={'status':'not_applicable','value':None}
     def content(cat):
         d={'schema':'content-filters-v1','category':cat,**{k:copy.deepcopy(na) for k in ['topic','location','delivery','audience','spaceKind','application','schedule']}}
-        if cat=='program':d.update(topic=known('culture_experience'),delivery=known('online'),audience=known('other'),application=known({'deadlineKind':'fixed','start':None,'end':{'value':'2099-10-15','precision':'day'},'sourceStatus':'unknown'}))
+        if cat=='program':d.update(topic=known('culture_experience'),delivery=known('online'),audience=known('other'),application=known({'deadlineKind':'fixed','start':{'value':'2099-10-01','precision':'day'},'end':{'value':'2099-10-15','precision':'day'},'sourceStatus':'unknown'}))
         if cat=='event':d.update(topic=known('festival_exchange'),location=known({'scope':'specific','venues':[{'province':'11','district':None,'facility':'','address':''}]}),schedule=known({'kind':'continuous','occurrences':[{'start':{'value':'2099-10-09','precision':'day'},'end':{'value':'2099-10-09','precision':'day'}}],'recurrence':None}))
         if cat=='youth_space':d.update(spaceKind=known('introduction'),location=known({'scope':'specific','venues':[{'province':'41','district':'성남시','facility':'','address':''}]}))
         return d if cat in ('program','event','youth_space') else None

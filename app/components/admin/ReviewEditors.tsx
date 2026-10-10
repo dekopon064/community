@@ -69,10 +69,10 @@ export function FactsEditor({ value, onChange, errors, disabled, editableFields,
       <select {...attrs("delivery")} value={value.delivery} onChange={(e) => set("delivery", e.target.value)}><option value="unknown" disabled>선택해 주세요</option><option value="online">온라인</option><option value="offline">오프라인</option><option value="hybrid">온·오프라인 병행</option></select>
     </Field>
     {deadline && <div className="grid gap-6 sm:grid-cols-2">
-      <Field name="deadlineKind" label="신청 마감" help="행사 개최일과 구분해 주세요." error={errors.deadlineKind}>
+      {value.category === "policy" && <Field name="deadlineKind" label="신청 마감" help="행사 개최일과 구분해 주세요." error={errors.deadlineKind}>
         <select {...attrs("deadlineKind")} value={value.deadlineKind} onChange={(e) => onChange({ ...value, deadlineKind: e.target.value as Facts["deadlineKind"], ...(!editableFields || editableFields.includes("deadlineOn") ? { deadlineOn: "" } : {}) })}><option value="" disabled>선택해 주세요</option><option value="fixed">마감일 있음</option><option value="none">정해진 마감 없음</option><option value="closed">이미 접수 종료</option></select>
-      </Field>
-      {value.deadlineKind === "fixed" && <Field name="deadlineOn" label="신청 마감일" help="한국 날짜를 기준으로 입력합니다." error={errors.deadlineOn}><input {...attrs("deadlineOn")} type="date" value={value.deadlineOn} onChange={(e) => set("deadlineOn", e.target.value)} /></Field>}
+      </Field>}
+      {(value.category === "program" || value.deadlineKind === "fixed") && <Field name="deadlineOn" label="신청 마감일" help="한국 날짜를 기준으로 입력합니다." error={errors.deadlineOn}><input {...attrs("deadlineOn")} required={value.category === "program"} type="date" value={value.deadlineOn} onChange={(e) => onChange({...value,deadlineKind:"fixed",deadlineOn:e.target.value})} /></Field>}
     </div>}
     {value.category === "event" && <div className="grid gap-6 sm:grid-cols-2">
       <Field name="eventStart" label="행사 시작일" help="접수 기간이 아닌 실제 개최 기간입니다." error={errors.eventStart}><input {...attrs("eventStart")} type="date" value={value.eventStart} onChange={(e) => set("eventStart", e.target.value)} /></Field>

@@ -14,11 +14,11 @@ ID='40000000-0000-4000-8000-000000000901';REV='a'*64
 def context(cat='living',source='myseoul_program'):
     k=lambda v:{'status':'known','value':v};na={'status':'not_applicable','value':None}
     filters={'schema':'content-filters-v1','category':cat,**{name:copy.deepcopy(na) for name in ['topic','location','delivery','audience','spaceKind','application','schedule']}}
-    if cat=='program':filters.update(topic=k('culture_experience'),delivery=k('online'),audience=k('other'),application=k({'deadlineKind':'none','start':None,'end':None,'sourceStatus':'unknown'}))
+    if cat=='program':filters.update(topic=k('culture_experience'),delivery=k('online'),audience=k('other'),application=k({'deadlineKind':'fixed','start':{'value':'2099-10-01','precision':'day'},'end':{'value':'2099-10-15','precision':'day'},'sourceStatus':'unknown'}))
     if cat=='event':filters.update(topic=k('festival_exchange'),location=k({'scope':'specific','venues':[{'province':'11','district':None,'facility':'','address':''}]}),schedule=k({'kind':'continuous','occurrences':[{'start':{'value':'2099-10-09','precision':'day'},'end':{'value':'2099-10-09','precision':'day'}}],'recurrence':None}))
     if cat=='youth_space':filters.update(spaceKind=k('introduction'),location=k({'scope':'specific','venues':[{'province':'11','district':None,'facility':'','address':''}]}))
     return {'schema':'review-classification-ai-v1','jobId':ID,'sourceItemId':ID,'revision':REV,'classificationVersion':1,'workerId':'synthetic-worker','claimedAt':'2099-10-09T09:00:00+09:00','leaseUntil':'2099-10-09T09:05:00+09:00','source':source,'externalKey':'synthetic','sourceUrl':'https://synthetic.invalid/item','title':'합성 안내','body':'실제 콘텐츠가 아닌 합성 원문입니다.',
-        'facts':{'category':cat,'productType':'living_guide' if cat=='living' else 'policy_reference' if cat=='policy' else 'event_program','scope':'nationwide','regions':[],'evidence':'합성 전국 신청 근거','foreignEligibility':'eligible' if cat=='policy' else 'unknown','delivery':'online','deadlineKind':'none' if cat in {'program','policy'} else '','deadlineOn':'','eventStart':'2099-10-09' if cat=='event' else '','eventEnd':'2099-10-09' if cat=='event' else ''},'filters':filters if cat in {'program','event','youth_space'} else None,'nativeConfirmedFacts':{'programFacts':{'conditions':['합성 보호자 동반 조건'],'fees':[{'amount':10000,'currency':'KRW','evidence':['합성 원문 비용']}],'application_methods':['합성 신청 방법']},'gateFacts':None}}
+        'facts':{'category':cat,'productType':'living_guide' if cat=='living' else 'policy_reference' if cat=='policy' else 'event_program','scope':'nationwide','regions':[],'evidence':'합성 전국 신청 근거','foreignEligibility':'eligible' if cat=='policy' else 'unknown','delivery':'online','deadlineKind':'fixed' if cat=='program' else 'none' if cat=='policy' else '','deadlineOn':'2099-10-15' if cat=='program' else '','eventStart':'2099-10-09' if cat=='event' else '','eventEnd':'2099-10-09' if cat=='event' else ''},'filters':filters if cat in {'program','event','youth_space'} else None,'nativeConfirmedFacts':{'programFacts':{'conditions':['합성 보호자 동반 조건'],'fees':[{'amount':10000,'currency':'KRW','evidence':['합성 원문 비용']}],'application_methods':['합성 신청 방법']},'gateFacts':None}}
 
 class ClassificationAITests(unittest.TestCase):
     def setUp(self):
@@ -51,6 +51,14 @@ class ClassificationAITests(unittest.TestCase):
         for field,value in [('sourceItemId','40000000-0000-4000-8000-000000000902'),('revision','b'*64),('classificationVersion',2),('workerId','other'),('schema','other'),('jobId','invalid'),('nativeConfirmedFacts',{}),('leaseUntil','2099-10-09T09:00:00+09:00')]:
             with self.subTest(field=field):
                 c=context();c[field]=value;result,events,inputs=self.run_job(c);self.assertEqual(result.state_unknown,1);self.assertEqual(len(events),1);self.assertEqual(inputs,[])
+    def test_program_dates_incomplete_no_provider(self):
+        for kind in ['start_missing', 'no_deadline', 'deadline_mismatch']:
+            c=context('program')
+            if kind=='start_missing':c['filters']['application']['value']['start']=None
+            elif kind=='no_deadline':c['filters']['application']['value'].update(deadlineKind='none',start=None,end=None)
+            else:c['facts']['deadlineOn']='2099-10-16'
+            result,events,inputs=self.run_job(c)
+            self.assertEqual(result.state_unknown,1);self.assertEqual(len(events),1);self.assertEqual(inputs,[])
     def test_unknown_finish_read_only_reconciliation(self):
         for mode,completed in [('unknown',0),('unknown_saved',1)]:
             result,events,inputs=self.run_job(mode=mode);self.assertEqual(result.completed,completed);self.assertEqual(len(inputs),1);self.assertEqual([n for n,_ in events],['claim_reclassified_content_ai','finish_reclassified_content_ai','reclassified_content_ai_status']);self.assertFalse(events[-1][1]['p_close_expired']);self.assertEqual(result.retried,0)

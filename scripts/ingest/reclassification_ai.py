@@ -9,7 +9,7 @@ from ingest.ai_worker import (AiWorkerResult, extract_summary_section, KO_SUMMAR
     KO_SECTION_HEADERS, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
 from ingest.program_ai import ProgramAIAdapter
 from ingest.region_ja_glossary import validate_japanese_output
-from ingest.content_filters import validate_filters
+from ingest.content_filters import validate_filters, program_application_complete
 
 CATEGORIES = frozenset({'policy', 'program', 'event', 'youth_space', 'living'})
 
@@ -37,6 +37,9 @@ def validate_context(value: Any, target: str, revision: str, version: int, worke
         if f['category'] in {'program','event','youth_space'}:
             validate_filters(c['filters'])
             if c['filters']['category']!=f['category']:raise ValueError()
+            if not program_application_complete(c['filters']):raise ValueError()
+            if f['category']=='program' and (f['deadlineKind']!='fixed' or
+                    f['deadlineOn']!=c['filters']['application']['value']['end']['value'][:10]):raise ValueError()
         elif c['filters'] is not None:raise ValueError()
         if len(json.dumps(c,ensure_ascii=False,allow_nan=False).encode())>400000:raise ValueError()
         return c

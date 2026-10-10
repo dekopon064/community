@@ -1,4 +1,4 @@
-import { emptyContentFilters, parseContentFilters } from '../contentFilters';
+import { emptyContentFilters, parseContentFilters, programApplicationComplete } from '../contentFilters';
 import type { ContentFilters, FilterKey } from '../contentFilters';
 import { ReviewFailure } from './contracts';
 import type { Facts, Category } from './contracts';
@@ -82,13 +82,14 @@ export function classificationMissing(f: Facts, filters: ContentFilters | null):
   }
   if (f.productType === 'policy_reference' && f.foreignEligibility === 'unknown') missing.push('foreignEligibility');
   if (['policy','program'].includes(f.category) && !f.deadlineKind) missing.push('deadlineKind');
+  if (f.category === 'program' && f.deadlineKind !== 'fixed') missing.push('deadlineKind');
   if (f.category === 'event' && (!f.eventStart || !f.eventEnd)) missing.push('eventStart','eventEnd');
   if (classificationFields(f.category).length) {
     if (!filters || filters.category !== f.category) missing.push('filters');
-    // Explicitly confirmed province-only location and no fixed deadline are
-    // valid facts; missing district/time must never be fabricated for review.
+    // Province-only locations and optional times need no fabricated detail.
     else missing.push(...classificationFields(f.category).filter(k=>{
       if(filters[k].status==='unknown')return true;
+      if(k==='application'&&!programApplicationComplete(filters))return true;
       const candidate={...emptyContentFilters(filters.category),[k]:filters[k]};
       if(k==='location'){candidate.delivery=filters.delivery;candidate.spaceKind=filters.spaceKind;}
       if(k==='delivery'&&filters.delivery.status==='known'&&filters.delivery.value==='online'||k==='spaceKind'&&filters.spaceKind.status==='known'&&filters.spaceKind.value==='news')candidate.location={status:'not_applicable',value:null};

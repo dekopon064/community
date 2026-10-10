@@ -9,7 +9,7 @@ type Endpoint = { value: string; precision: "day" | "minute" };
 export type MySeoulPeriod = { raw: string; status: string; endpoints: Endpoint[]; origin: string; label: string };
 export type MySeoulIssue = { code: string; field: string; evidence: string[] };
 export type MySeoulFacts = Record<string, unknown>;
-export type MySeoulCommand = { action: "save_facts"; revision: string; version: string; patch: Partial<Record<MySeoulField, unknown>>; confirmRestored?: true } | { action: "exclude"; revision: string; version: string; note: string };
+export type MySeoulCommand = { action: "save_facts"; revision: string; version: string; patch: Partial<Record<MySeoulField, unknown>>; confirmRestored?: true } | { action: "exclude"; revision: string; version: string; note: string } | {action: 'confirm_residence'; revision: string; version: string; restricted: boolean; scope: string; condition: string; evidence: string[]; requestId: string};
 
 export function myObject(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new ReviewFailure("invalid_input");
@@ -96,6 +96,13 @@ export function myseoulFacts(raw: unknown): MySeoulFacts {
 }
 export function myseoulCommand(raw: unknown): MySeoulCommand {
   const o = myObject(raw), action = o.action;
+  if (action === 'confirm_residence') {
+    exact(o, ['action','revision','version','restricted','scope','condition','evidence','requestId']);
+    const revision = myText(o.revision,64), version = myText(o.version,64), requestId = myText(o.requestId,36);
+    const scope = myText(o.scope,30), condition = myText(o.condition,4000), evidence = myStrings(o.evidence);
+    if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(requestId) || typeof o.restricted !== 'boolean' || (o.restricted ? !['capital','includes_capital'].includes(scope) || !condition.trim() || !evidence.length : scope !== '' || condition !== '' || evidence.length > 0)) throw new ReviewFailure('invalid_input');
+    return {action,revision,version,requestId,restricted:o.restricted,scope,condition,evidence};
+  }
   if (!["save_facts", "exclude"].includes(String(action))) throw new ReviewFailure("invalid_input");
   exact(o, action === "save_facts" ? ["action", "revision", "version", "patch", ...(o.confirmRestored === true ? ["confirmRestored"] : [])] : ["action", "revision", "version", "note"]);
   const revision = myText(o.revision, 64), version = myText(o.version, 64);

@@ -139,9 +139,15 @@ export function emptyContentFilters(category: FilterCategory): ContentFilters {
   const unknown={status:"unknown",value:null} as const,na={status:"not_applicable",value:null} as const;
   return {schema:contentFilterSchema,category,topic:category === "youth_space"?na:unknown,location:unknown,delivery:category === "program"?unknown:na,audience:category === "program"?unknown:na,spaceKind:category === "youth_space"?unknown:na,application:category === "program"?unknown:na,schedule:category === "event"?unknown:na};
 }
+// Stored legacy snapshots remain readable; completion and writes use this guard.
+export function programApplicationComplete(d:ContentFilters):boolean {
+  return d.category !== 'program' || (d.application.status === 'known'
+    && d.application.value.deadlineKind === 'fixed'
+    && d.application.value.start !== null && d.application.value.end !== null);
+}
 export function missingContentFilters(d:ContentFilters):FilterKey[] {
   const keys=filterKeys.filter(k=>d[k].status === "unknown");
   if(d.location.status === "known" && d.location.value.venues.some(v=>!v.district)) keys.push("location");
-  if(d.application.status === "known" && d.application.value.deadlineKind === "none") keys.push("application");
+  if(!programApplicationComplete(d)) keys.push("application");
   return [...new Set(keys)];
 }

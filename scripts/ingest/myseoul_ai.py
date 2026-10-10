@@ -98,17 +98,17 @@ def validate_context(c: dict[str, Any], target: str, revision: str, worker: str,
             raise ValueError()
         local = evaluate_myseoul_facts(f, now=datetime.now().astimezone())
         if not myseoul_ai_ready(local):
-            # This is the one database-backed fact the pure local evaluator
-            # cannot know. Temporal reasons can coexist with this one missing
-            # fact, but only the protected server result can confirm readiness.
+            # Administrator venue/residence judgments are private server state.
+            # Never translate them into invented source evidence. Read the
+            # protected detail for the exact claimed facts/version/filter fence.
             if (local["decision"] != "review_required" or
                     local["application"] not in MYSEOUL_APPLICATION_STATES or
-                    "activity_region_unknown" not in local["reasons"] or
-                    any(reason not in MYSEOUL_TEMPORAL_REASONS | {"activity_region_unknown"}
+                    not {"activity_region_unknown", "online_residence_unknown"}.intersection(local["reasons"]) or
+                    any(reason not in MYSEOUL_TEMPORAL_REASONS | {"activity_region_unknown", "online_residence_unknown"}
                         for reason in local["reasons"]) or
-                    f["delivery_mode"] not in {"offline", "mixed"} or
-                    f["activity_region"] != "capital" or f["activity_evidence"] != [] or
-                    not f["venue"].strip() or read_detail is None or
+                    not (f["delivery_mode"] == "online" and "online_residence_unknown" in local["reasons"]
+                         or f["delivery_mode"] in {"offline", "mixed"} and f["activity_region"] == "capital"
+                         and f["activity_evidence"] == [] and f["venue"].strip()) or read_detail is None or
                     not _server_activity_ready(c, read_detail)):
                 raise ValueError()
     except (KeyError, ValueError, TypeError, AttributeError, IndexError):

@@ -34,7 +34,7 @@ def ready(category="program"):
     d = empty_filters(category)
     if category == "program":
         d.update(topic=field("language_learning"), delivery=field("online"), audience=field("other"),
-                 location=field(status="not_applicable"), application=field({"deadlineKind": "fixed", "start": None,
+                 location=field(status="not_applicable"), application=field({"deadlineKind": "fixed", "start": {"value": "2020-09-01", "precision": "day"},
                  "end": {"value": "2020-10-01", "precision": "day"}, "sourceStatus": "closed"}))
     elif category == "event":
         d.update(topic=field("culture_arts"), location=field({"scope": "nationwide", "venues": []}),
