@@ -8,6 +8,7 @@ from typing import Any
 
 from ingest.ai_errors import AI_UNEXPECTED_THINKING, AiJobError
 from ingest.region_ja_glossary import glossary_prompt_block, validate_japanese_output
+from ingest.translation_validation import validate_translation_fidelity
 
 SONNET_MODEL = "claude-sonnet-5"
 SUMMARY_MAX_TOKENS = 2048
@@ -343,6 +344,7 @@ class ClaudeAdapter:
             content_ja,
             korean_source=f"{title}\n{content_ko}",
         )
+        validate_translation_fidelity(title, content_ko, title_ja, content_ja)
         return title_ja, content_ja, "success", SONNET_MODEL
 
     def _count_tokens(self, create_kwargs: dict[str, Any]) -> int:

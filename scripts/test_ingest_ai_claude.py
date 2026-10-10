@@ -131,7 +131,7 @@ class ClaudeContractTests(unittest.TestCase):
                 "b53aabae7400cf5877fec8e858d00e4c6f910c9126335dc69a8ec99c075ef7cf"
             ),
             PROMPTS / "translation_system.txt": (
-                "cdc15c565a93883da00eefa2e3966055042a376ad8c5a9b10c4fd7496ba67bc5"
+                "fb713d6953eb87b721c6c5c1511437ad327f3292b30a02d94f92877a60c17b69"
             ),
             SCHEMAS / "summary.schema.json": (
                 "88fb85a1a5cd4a485e15701d3e708d3568c212f1f605665f7300b0a0efedb093"
