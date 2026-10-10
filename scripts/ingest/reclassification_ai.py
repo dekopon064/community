@@ -30,13 +30,18 @@ def validate_context(value: Any, target: str, revision: str, version: int, worke
         f=c['facts']
         if not isinstance(f,dict) or set(f)!={'productType','category','scope','regions','evidence','foreignEligibility','delivery','deadlineKind','deadlineOn','eventStart','eventEnd'}:raise ValueError()
         if f['category'] not in CATEGORIES or f['productType'] not in {'event_program','policy_reference','living_guide'} or f['delivery'] not in {'online','offline','hybrid'}:raise ValueError()
-        if f['productType']!='living_guide' and (f['scope'] not in {'nationwide','specific'} or not isinstance(f['evidence'],str) or not f['evidence'].strip()):raise ValueError()
+        uses_venue=(f['productType']=='event_program' and f['category'] in {'program','event','youth_space'}
+                    and f['delivery'] in {'offline','hybrid'}
+                    and not (f['category']=='youth_space' and c['filters'].get('spaceKind',{}).get('value')=='news'))
+        if f['scope'] not in {'nationwide','specific','unknown'} or not isinstance(f['evidence'],str):raise ValueError()
+        if f['productType']!='living_guide' and not uses_venue and (f['scope']=='unknown' or not f['evidence'].strip()):raise ValueError()
         if not isinstance(c['nativeConfirmedFacts'],dict) or set(c['nativeConfirmedFacts'])!={'programFacts','gateFacts'}:raise ValueError()
         for fkey in ('programFacts','gateFacts'):
             if c['nativeConfirmedFacts'][fkey] is not None and not isinstance(c['nativeConfirmedFacts'][fkey],dict):raise ValueError()
         if f['category'] in {'program','event','youth_space'}:
             validate_filters(c['filters'])
             if c['filters']['category']!=f['category']:raise ValueError()
+            if uses_venue and c['filters']['location']['status']!='known':raise ValueError()
             if not program_application_complete(c['filters']):raise ValueError()
             if f['category']=='program' and (f['deadlineKind']!='fixed' or
                     f['deadlineOn']!=c['filters']['application']['value']['end']['value'][:10]):raise ValueError()

@@ -21,6 +21,27 @@ def context(cat='living',source='myseoul_program'):
         'facts':{'category':cat,'productType':'living_guide' if cat=='living' else 'policy_reference' if cat=='policy' else 'event_program','scope':'nationwide','regions':[],'evidence':'합성 전국 신청 근거','foreignEligibility':'eligible' if cat=='policy' else 'unknown','delivery':'online','deadlineKind':'fixed' if cat=='program' else 'none' if cat=='policy' else '','deadlineOn':'2099-10-15' if cat=='program' else '','eventStart':'2099-10-09' if cat=='event' else '','eventEnd':'2099-10-09' if cat=='event' else ''},'filters':filters if cat in {'program','event','youth_space'} else None,'nativeConfirmedFacts':{'programFacts':{'conditions':['합성 보호자 동반 조건'],'fees':[{'amount':10000,'currency':'KRW','evidence':['합성 원문 비용']}],'application_methods':['합성 신청 방법']},'gateFacts':None}}
 
 class ClassificationAITests(unittest.TestCase):
+    def test_offline_venue_without_residence_and_protected_native_conditions(self):
+        for category in ('program','event','youth_space'):
+            c=context(category)
+            c['facts'].update(delivery='offline',scope='unknown',regions=[],evidence='')
+            c['filters']['location']={'status':'known','value':{'scope':'specific','venues':[{'province':'11','district':None,'facility':'','address':''}]}}
+            if category=='program':c['filters']['delivery']={'status':'known','value':'onsite'}
+            result,events,inputs=self.run_job(c)
+            self.assertEqual(result.completed,1);self.assertEqual(inputs[0]['currentClassificationFacts']['scope'],'unknown')
+            self.assertIn('참가 조건',protected_information(c));self.assertNotIn('참가 대상 근거:',protected_information(c))
+            c['filters']['location']={'status':'unknown','value':None}
+            self.assertEqual(self.run_job(c)[0].state_unknown,1)
+        c=context('program');c['facts'].update(scope='unknown',evidence='')
+        self.assertEqual(self.run_job(c)[0].state_unknown,1)
+        # Space news keeps the existing eligibility contract and N/A venue.
+        c=context('youth_space');c['facts']['delivery']='offline'
+        c['filters']['spaceKind']={'status':'known','value':'news'}
+        c['filters']['location']={'status':'not_applicable','value':None}
+        self.assertEqual(self.run_job(c)[0].completed,1)
+        c['facts'].update(scope='unknown',evidence='')
+        self.assertEqual(self.run_job(c)[0].state_unknown,1)
+
     def setUp(self):
         self.network=patch.object(socket.socket,'connect',side_effect=AssertionError('external network forbidden'));self.network.start();self.addCleanup(self.network.stop)
     def run_job(self,c=None,mode='success',provider_mode='success'):

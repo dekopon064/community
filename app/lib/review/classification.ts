@@ -6,6 +6,16 @@ import { validateFacts, validateContent } from './validation';
 import type { CandidateContent } from './contracts';
 
 export const classificationCategories = ['policy', 'program', 'event', 'youth_space', 'living'] as const;
+export function classificationMode(item: Pick<ClassificationDetail, 'category'>, category: Category) {
+  return !item.category ? 'initial' : item.category === category ? 'confirm' : 'change';
+}
+// On-site content is checked by its actual venue. Participant residence remains
+// a separate fact; an absent restriction is never converted to nationwide.
+export function classificationUsesVenue(f: Facts, filters: ContentFilters | null) {
+  return f.productType === 'event_program' && ['program','event','youth_space'].includes(f.category)
+    && ['offline','hybrid'].includes(f.delivery)
+    && !(f.category === 'youth_space' && filters?.spaceKind.status === 'known' && filters.spaceKind.value === 'news');
+}
 export const classificationFields = (category: Category): FilterKey[] => category === 'program'
   ? ['topic', 'delivery', 'audience', 'location', 'application'] : category === 'event'
     ? ['topic', 'location', 'schedule'] : category === 'youth_space' ? ['spaceKind', 'location'] : [];
@@ -109,7 +119,7 @@ export function classificationMissing(f: Facts, filters: ContentFilters | null):
   if (!classificationCategories.includes(f.category as typeof classificationCategories[number])) missing.push('category');
   if (!f.productType) missing.push('productType');
   if (f.delivery === 'unknown') missing.push('delivery');
-  if (f.productType !== 'living_guide') {
+  if (f.productType !== 'living_guide' && !classificationUsesVenue(f, filters)) {
     if (f.scope === 'unknown' || f.scope === 'specific' && !f.regions.length) missing.push('scope');
     if (!f.evidence.trim()) missing.push('evidence');
   }

@@ -102,8 +102,8 @@ try{
  globalThis.fetch=async()=>response(missingProgram);states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();
  editFilters=nodes(render()).find(n=>n?.props?.prefix==='classification');editFilters.props.onChange({...missingProgram.filters,location:sourceFilters.location});
  ok(nodes(render()).find(n=>n?.props?.prefix==='classification').props.fields.includes('location'));
- let factsEditor=nodes(render()).find(n=>n?.props?.idPrefix==='classification-');ok(factsEditor.props.editableFields.includes('regions'));factsEditor.props.onChange({...states[1],evidence:'첫'});
- ok(nodes(render()).find(n=>n?.props?.idPrefix==='classification-').props.editableFields.includes('evidence'));
+ ok(!nodes(render()).some(n=>n?.props?.idPrefix==='classification-')); // On-site review never adds residence input.
+ eq(states[1].scope,'unknown');eq(states[1].evidence,'');
  const FilterInputs=load('app/components/admin/FilterReviewPanel.tsx').FilterInputs;const legacy=structuredClone(seedFilters);legacy.location.value.venues[0].facility='합성 시설';legacy.location.value.venues[0].address='합성 주소';
  cursor=0;rc=0;const inputTree=FilterInputs({data:legacy,fields:['location'],onChange(){},disabled:false});
  ok(!text(inputTree).includes('시설명 (선택)'));ok(!text(inputTree).includes('상세 주소 (선택)'));eq(classificationFilters('event',legacy).location.value.venues[0].facility,'합성 시설');
@@ -119,5 +119,60 @@ try{
  await publicPrepare();props.onSaved=async()=>{throw Error('synthetic refresh failed');};await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[14],false);eq(states[10],false);ok(text(render()).includes('적용은 완료했지만'));props.onSaved=async()=>{};
  transport='unknown';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[10],true);eq(states[14],true);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[10],false);eq(states[14],false);eq(writes,1);
  transport='conflict';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});current={...pub,version:'e'.repeat(64),publication:{...pub.publication,version:'f'.repeat(64),content:{...body,contentKo:'다른 검토자가 수정한 합성 본문'}}};button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[16],false);eq(states[15].contentKo,body.contentKo);eq(states[0].publication.content.contentKo,current.publication.content.contentKo);eq(button('재분류 적용').props.disabled,true);eq(writes,1);
+ // Regression for the three reported paths: no selection, same category, and a real change.
+ const {classificationMode}=load('app/lib/review/classification.ts');
+ const {myseoulReviewReasons}=load('app/components/admin/MySeoulReviewPanel.tsx');
+ const unresolvedReasons=[{code:'category_unresolved',text:'분류 확인 필요',supported:true},{code:'delivery_mode_unknown',text:'진행 방식 확인 필요',supported:true}];
+ const normalReasons=myseoulReviewReasons({reasonGuidance:unresolvedReasons,filterInfo:null});
+ eq(normalReasons,unresolvedReasons);ok(normalReasons!==unresolvedReasons);
+ eq(classificationMode({category:''},'program'),'initial');
+ eq(classificationMode({category:'program'},'program'),'confirm');
+ eq(classificationMode({category:'program'},'event'),'change');
+ const fullProgram={...missingProgram,filters:seedFilters,facts:{...chosen.facts,scope:'unknown',regions:[],evidence:''}};
+ eq(classificationMissing(fullProgram.facts,fullProgram.filters),[]);
+ const singleMissing={...seedFilters,topic:{status:'unknown',value:null}};
+ eq(classificationMissing(fullProgram.facts,singleMissing),['filter:topic']);
+ for(const delivery of ['online','unknown'])ok(classificationMissing({...fullProgram.facts,delivery},seedFilters).includes('scope'));
+ ok(classificationMissing({...fullProgram.facts,category:'policy',productType:'policy_reference'},null).includes('evidence'));
+ let flowWrites=0;
+ globalThis.fetch=async(_u,o={})=>{if(o.body)flowWrites++;return response(fullProgram);};
+ states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();
+ ok(text(render()).includes('현재 카테고리 확인'));eq(nodes(render()).find(n=>n?.type==='h3').props.children[1],0);
+ eq(states[2],seedFilters);eq(states[1].scope,'unknown');eq(states[1].evidence,'');
+ ok(!nodes(render()).some(n=>n?.props?.idPrefix==='classification-'));
+ nodes(render()).find(n=>n?.props?.id==='classification-category').props.onChange({target:{value:'event'}});
+ ok(text(render()).includes('변경할 카테고리'));eq(states[2].location,seedFilters.location);
+ ok(!text(render()).includes('대상 지역의 원문 근거'));
+ nodes(render()).find(n=>n?.props?.id==='classification-category').props.onChange({target:{value:'program'}});
+ eq(states[2],seedFilters);eq(states[1],fullProgram.facts);eq(flowWrites,0);
+ const absentCategory={...seeded,drafts:{},filters:null,facts:{...seeded.facts,scope:'unknown',regions:[],evidence:''}};
+ props.overview=React.createElement('section',{'data-test-overview':true},normalReasons.map(r=>r.text).join(' · '));
+ globalThis.fetch=async(_u,o={})=>{if(o.body)flowWrites++;return response(absentCategory);};
+ states=[];refs=[];render();effects[0]();await settle();
+ ok(text(render()).includes('카테고리 확정'));eq(nodes(render()).find(n=>n?.type==='h3').props.children[1],1);
+ ok(!nodes(render()).some(n=>n?.props?.idPrefix==='classification-'));
+ button('분류 변경 닫기').props.onClick();ok(text(render()).includes('분류 확인 필요'));ok(text(render()).includes('진행 방식 확인 필요'));
+ button('분류 변경').props.onClick();eq(states[1].category,'');eq(flowWrites,0);
+ nodes(render()).find(n=>n?.props?.id==='classification-category').props.onChange({target:{value:'program'}});
+ ok(!text(render()).includes('대상 지역의 원문 근거'));eq(states[1].scope,'unknown');eq(flowWrites,0);
+ // Opening from a reason uses the same lock as the header action.
+ states[3]=false;states[14]=true;
+ render().props.onClick({target:{closest:()=>true}});eq(states[3],false);
+ states[14]=false;states[10]=true;
+ render().props.onClick({target:{closest:()=>true}});eq(states[3],false);
+ const spaceNews=classificationFilters('youth_space',null);spaceNews.spaceKind={status:'known',value:'news'};spaceNews.location={status:'not_applicable',value:null};
+ eq(classificationMissing({...fullProgram.facts,category:'youth_space',deadlineKind:'',deadlineOn:'',scope:'nationwide',evidence:'합성 전국 이용 근거'},spaceNews),[]);
+ eq(classificationMissing({...fullProgram.facts,category:'youth_space',deadlineKind:'',deadlineOn:''},spaceNews),['scope','evidence']);
+ // Mode must be resolved before showing participant eligibility, while the
+ // server command still rejects unresolved delivery.
+ const undecided={...fullProgram,facts:{...fullProgram.facts,delivery:'unknown'},filters:{...seedFilters,delivery:{status:'unknown',value:null}}};
+ globalThis.fetch=async()=>response(undecided);states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();
+ ok(!text(render()).includes('대상 지역의 원문 근거'));
+ ok(text(render()).includes('진행 방식'));
+ fails(()=>classificationCommand({...command,facts:undecided.facts,filters:undecided.filters}));
+ const modeInputs=nodes(render()).find(n=>n?.props?.prefix==='classification');
+ modeInputs.props.onChange({...undecided.filters,delivery:{status:'known',value:'onsite'}});
+ ok(!text(render()).includes('대상 지역의 원문 근거'));
+ eq(states[1].scope,'unknown');eq(states[1].evidence,'');
  console.log(JSON.stringify({checks,syntheticOnly:true,externalConnections:0,result:'passed'}));
 }finally{globalThis.fetch=originalFetch;}
