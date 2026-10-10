@@ -107,8 +107,7 @@ def validate_context(c: dict[str, Any], target: str, revision: str, worker: str,
                     any(reason not in MYSEOUL_TEMPORAL_REASONS | {"activity_region_unknown", "online_residence_unknown"}
                         for reason in local["reasons"]) or
                     not (f["delivery_mode"] == "online" and "online_residence_unknown" in local["reasons"]
-                         or f["delivery_mode"] in {"offline", "mixed"} and f["activity_region"] == "capital"
-                         and f["activity_evidence"] == [] and f["venue"].strip()) or read_detail is None or
+                         or f["delivery_mode"] in {"offline", "mixed"} and f["activity_region"] == "capital") or read_detail is None or
                     not _server_activity_ready(c, read_detail)):
                 raise ValueError()
     except (KeyError, ValueError, TypeError, AttributeError, IndexError):

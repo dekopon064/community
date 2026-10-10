@@ -27,6 +27,14 @@ class ResidenceAITests(unittest.TestCase):
   read=Mock(return_value=d)
   with self.assertRaises(AiJobError):validate_context(c,c['sourceItemId'],c['revision'],c['workerId'],read_detail=read)
   read.assert_not_called()
+ def test_confirmed_region_requires_exact_fresh_server_snapshot(self):
+  c,d=self.fixture();c['facts'].update(delivery_mode='offline',activity_region='capital',venue='',activity_evidence=[])
+  local=evaluate_myseoul_facts(c['facts'],now=datetime.now().astimezone());self.assertEqual(local['reasons'],['activity_region_unknown'])
+  d.update(facts=copy.deepcopy(c['facts']),result={**local,'scope':'included','quality':'sufficient','decision':'in_scope','disposition':'target','reasons':[]})
+  self.assertIs(validate_context(c,c['sourceItemId'],c['revision'],c['workerId'],read_detail=Mock(return_value=d)),c)
+  body=json.loads(myseoul_input(c));self.assertEqual(body['currentFacts']['venue'],'');self.assertEqual(c['facts']['activity_evidence'],[])
+  for patch in [{'factsVersion':999},{'status':'open'},{'result':local},{'facts':{**c['facts'],'activity_region':'unknown'}}]:
+   with self.subTest(patch=patch),self.assertRaises(AiJobError):validate_context(c,c['sourceItemId'],c['revision'],c['workerId'],read_detail=Mock(return_value={**d,**patch}))
  def test_provider_keeps_source_truth_and_no_internal_judgment(self):
   c,d=self.fixture();validate_context(c,c['sourceItemId'],c['revision'],c['workerId'],read_detail=Mock(return_value=d))
   before=copy.deepcopy(c);body=json.loads(myseoul_input(c));self.assertEqual(body['currentFacts']['residence_scope'],'unknown');self.assertNotIn('residenceReview',body);self.assertNotIn('actor',body)

@@ -1,5 +1,7 @@
 import { ReviewFailure } from "./contracts";
 import { myseoulHasMarkup } from "./myseoul-text";
+import { filterCommand } from './content-filter-store';
+import type { ContentFilters, FilterKey } from '../contentFilters';
 
 export const myseoulSchema = "myseoul-program-facts-v1-local";
 export const myseoulProfile = "myseoul-program-v1-local";
@@ -9,7 +11,9 @@ type Endpoint = { value: string; precision: "day" | "minute" };
 export type MySeoulPeriod = { raw: string; status: string; endpoints: Endpoint[]; origin: string; label: string };
 export type MySeoulIssue = { code: string; field: string; evidence: string[] };
 export type MySeoulFacts = Record<string, unknown>;
-export type MySeoulCommand = { action: "save_facts"; revision: string; version: string; patch: Partial<Record<MySeoulField, unknown>>; confirmRestored?: true } | { action: "exclude"; revision: string; version: string; note: string } | {action: 'confirm_residence'; revision: string; version: string; restricted: boolean; scope: string; condition: string; evidence: string[]; requestId: string};
+export type MySeoulCommand = { action: "save_facts"; revision: string; version: string; patch: Partial<Record<MySeoulField, unknown>>; confirmRestored?: true } | { action: "exclude"; revision: string; version: string; note: string } | {action: 'confirm_residence'; revision: string; version: string; restricted: boolean; scope: string; condition: string; evidence: string[]; requestId: string}
+  | {action:'confirm_activity';revision:string;version:string;filterVersion:number;data:ContentFilters;fields:FilterKey[];patch:Partial<Record<MySeoulField,unknown>>}
+  | {action:'confirm_body';revision:string;version:string;description:string;confirmed:true};
 
 export function myObject(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new ReviewFailure("invalid_input");
@@ -96,6 +100,20 @@ export function myseoulFacts(raw: unknown): MySeoulFacts {
 }
 export function myseoulCommand(raw: unknown): MySeoulCommand {
   const o = myObject(raw), action = o.action;
+  if (action === 'confirm_body') {
+    exact(o,['action','revision','version','description','confirmed']);
+    const revision=myText(o.revision,64),version=myText(o.version,64),description=myText(o.description).trim();
+    if (!/^[a-f0-9]{64}$/.test(revision)||!/^[a-f0-9]{64}$/.test(version)||description.length<20||o.confirmed!==true) throw new ReviewFailure('invalid_input');
+    return {action,revision,version,description,confirmed:true};
+  }
+  if (action === 'confirm_activity') {
+    exact(o,['action','revision','version','filterVersion','data','fields','patch']);
+    const c=filterCommand({revision:o.revision,version:o.version,filterVersion:o.filterVersion,data:o.data,fields:o.fields});
+    const p=myObject(o.patch);
+    if (!c.fields.includes('location')||Object.keys(p).some(k=>['activity_region','venue','activity_evidence','delivery_mode','public_category','purpose'].includes(k))) throw new ReviewFailure('invalid_input');
+    const checked=Object.keys(p).length ? myseoulCommand({action:'save_facts',revision:c.revision,version:c.version,patch:p}) : null;
+    return {action,...c,patch:checked?.action==='save_facts'?checked.patch:{}};
+  }
   if (action === 'confirm_residence') {
     exact(o, ['action','revision','version','restricted','scope','condition','evidence','requestId']);
     const revision = myText(o.revision,64), version = myText(o.version,64), requestId = myText(o.requestId,36);
@@ -124,9 +142,10 @@ export function myseoulCommand(raw: unknown): MySeoulCommand {
 }
 
 const guidance: Record<string, string> = {
+  attachment_dependent: '이미지 원문을 확인하고 프로그램 설명을 보완해 주세요.',
   description_missing: "공식 원문에서 프로그램 설명을 확인해 입력해 주세요.", target_missing: "명시된 참여 대상을 확인해 주세요.",
   application_actor_unknown: "개인이 신청 가능한지 원문 조건을 확인해 주세요.", delivery_mode_unknown: "실제 진행 방식과 장소를 확인해 주세요.", course_modes_unresolved: "과정별 온라인·현장 안내를 대조해 주세요.",
-  activity_region_unknown: "실제 개최 장소와 주소를 확인해 주세요. 집결지나 운영기관 주소와 구분합니다.", online_residence_unknown: "온라인 참여자의 거주 지역 조건을 확인해 주세요.",
+  activity_region_unknown: "실제 개최 지역을 원문과 대조해 확인해 주세요. 집결지나 운영기관의 지역과 구분합니다.", online_residence_unknown: "온라인 참여자의 거주 지역 조건을 확인해 주세요.",
   category_unresolved: "주요 활동의 근거에 따라 프로그램 또는 행사를 확인해 주세요.", nationality_or_visa_unresolved: "명시된 체류·국적 자격을 보존하고 일본인 거주자의 해당 조건 충족 근거를 기록해 주세요.",
   application_period_unknown: "신청 시작일과 마감일을 확인해 입력해 주세요.", operation_period_unknown: "교육·행사의 날짜와 시작·종료 시각을 확인해 주세요. 집결 시각은 시작 시각과 구분합니다.",
   application_method_missing: "신청 방법을 확인해 주세요. 별도 신청 폼은 필수가 아닙니다.", fee_unknown: "수강료와 별도 비용을 확인해 주세요.", fee_components_unresolved: "복합 비용의 항목별 근거를 확인해 주세요. 금액을 임의 분할하지 않습니다.", application_state_unknown: "현재 신청 상태와 기간을 대조해 주세요.",
@@ -140,7 +159,7 @@ export function myseoulGuidance(code: string) {
 // Must match myseoul_reason_fields in SQL. Unknown reasons stay read-only.
 export function myseoulReasonFields(reason: string): string[] {
   const map: Record<string, string[]> = {
-    description_missing: ['description'], target_missing: ['target','conditions','application_actor'],
+    description_missing: ['description'], attachment_dependent: ['description'], target_missing: ['target','conditions','application_actor'],
     application_actor_unknown: ['application_actor','target','conditions'],
     delivery_mode_unknown: ['delivery_mode','activity_region','venue','activity_evidence'],
     course_modes_unresolved: ['delivery_mode','activity_region','venue','activity_evidence'],

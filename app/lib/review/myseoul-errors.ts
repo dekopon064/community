@@ -3,6 +3,9 @@ import { failureText } from './presentation';
 
 // Only these authored messages may cross the RPC -> browser error boundary.
 const saveMessages: Record<string, string> = {
+  invalid_myseoul_body_confirmation: '이미지 원문에서 확인한 설명을 20자 이상 입력해 주세요. 설명과 확인 상태는 저장되지 않았으며 입력은 유지됩니다.',
+  myseoul_confirmation_capital_required: '실제 개최 지역의 서울·인천·경기를 확인해 주세요. 비수도권 전용 콘텐츠는 지역 제외로 처리하며 입력은 유지됩니다.',
+  invalid_myseoul_confirmation: '개최 지역 확인과 함께 저장할 항목을 확인해 주세요. 아무 값도 저장하지 않았으며 입력은 유지됩니다.',
   myseoul_no_resolved_fact: '확인한 값은 같지만 남은 확인 사유가 해소되지 않아 저장되지 않았습니다. 입력은 유지됩니다. 확인할 항목과 저장 조건을 다시 확인해 주세요.',
   myseoul_field_read_only: '현재 확인 사유에서 수정할 수 없는 항목이 포함되어 저장되지 않았습니다. 입력은 유지됩니다. 최신 내용을 다시 확인해 주세요.',
   myseoul_period_axis_read_only: '현재 확인 대상이 아닌 신청 기간 또는 운영 일정이 포함되어 저장되지 않았습니다. 입력은 유지됩니다. 최신 내용을 다시 확인해 주세요.',
