@@ -1,5 +1,6 @@
 import type { FilterInfo, CandidateFilterInfo } from './content-filter-store';
 export type ReviewKind = "facts" | "candidates";
+export type ReviewListScope = "pending" | "published";
 export type Category = "" | "policy" | "program" | "event" | "youth_space" | "living";
 export type Facts = {
   productType: "" | "event_program" | "policy_reference" | "living_guide";
@@ -43,6 +44,7 @@ export type CandidateItem = BaseItem & {
   category: Category; period: string;
   publishedAt: string | null; publishedId: string | null; publishedSlug?: string | null;
   image?: CandidateImage;
+  publishedBodyVersion?: string;
   // Recomputed from the immutable generation snapshot and SAVED candidate.
   // Informational only: never used in commands, validation or publish gates.
   contentNotices?: CandidateNotice[];
@@ -56,6 +58,7 @@ export type ReviewCommand =
   | (Preconditions & { action: "exclude"; note: string })
   | (Preconditions & { action: "save_candidate"; content: CandidateContent; imageSelection?: CandidateImageSelection })
   | (Preconditions & { action: "review_change"; disposition: "no_impact" | "edited"; note: string; content?: CandidateContent })
+  | (Preconditions & { action: "save_published_body"; publicVersion: string; contentKo: string; contentJa: string; note: string })
   | (Preconditions & { action: "publish" })
   | (Preconditions & { action: "reject"; note: string });
 
@@ -63,8 +66,8 @@ export type ReviewCommand =
 // atomically. Only an explicitly selected adapter may handle requests.
 export interface ReviewStore {
   readonly mode: "database" | "local-fixture";
-  list(kind: ReviewKind, offset?: number): Promise<ListItem[]>;
-  get(kind: ReviewKind, id: string): Promise<ReviewItem>;
+  list(kind: ReviewKind, offset?: number, scope?: ReviewListScope): Promise<ListItem[]>;
+  get(kind: ReviewKind, id: string, scope?: ReviewListScope): Promise<ReviewItem>;
   execute(kind: ReviewKind, id: string, command: ReviewCommand, actor: string): Promise<ReviewItem>;
 }
 export type ReviewFailureCode = "not_connected" | "not_found" | "conflict" | "already_processed" | "publish_failed" | "invalid_input" | "unavailable" | "program_input_changed" | "program_unavailable" | "trash_expired" | "trash_source_changed" | "trash_processing_active" | "trash_already_published";

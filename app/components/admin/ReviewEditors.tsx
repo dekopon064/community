@@ -83,7 +83,7 @@ export function FactsEditor({ value, onChange, errors, disabled, editableFields,
   </div></FactContext.Provider>;
 }
 
-export function CandidateEditor({ value, onChange, errors, disabled, formattedBody=false }: { value: CandidateContent; onChange: (value: CandidateContent) => void; errors: Record<string, string>; disabled: boolean; formattedBody?:boolean }) {
+export function CandidateEditor({ value, onChange, errors, disabled, formattedBody=false, bodyOnly=false }: { value: CandidateContent; onChange: (value: CandidateContent) => void; errors: Record<string, string>; disabled: boolean; formattedBody?:boolean; bodyOnly?:boolean }) {
   return <div className="grid gap-10 xl:grid-cols-2">
     {([{ name: "한국어", lang: "ko", suffix: "Ko" }, { name: "일본어", lang: "ja", suffix: "Ja" }] as const).map(({ name, lang, suffix }) => <fieldset key={lang} lang={lang} className="min-w-0 space-y-6">
       <legend className="mb-4 border-b border-info-rule pb-3 text-xl font-bold" lang="ko">{name} 내용</legend>
@@ -92,7 +92,7 @@ export function CandidateEditor({ value, onChange, errors, disabled, formattedBo
         if(prefix==='content'&&formattedBody)return <BodyEditor key={key} id={key} label={`${name} 상세`} locale={lang}
           value={value[key]} onChange={next=>onChange({...value,[key]:next})} disabled={disabled} error={errors[key]}/>;
         return <Field key={key} name={key} label={`${name} ${label}`} error={errors[key]}>
-          <textarea id={key} aria-invalid={Boolean(errors[key])} aria-describedby={errors[key] ? `${key}-error` : undefined} className={`${fieldClass} resize-y leading-7`} disabled={disabled} maxLength={max} rows={rows} value={value[key]} onChange={(e) => onChange({ ...value, [key]: e.target.value })} />
+          <textarea id={key} aria-invalid={Boolean(errors[key])} aria-describedby={errors[key] ? `${key}-error` : undefined} className={`${fieldClass} resize-y leading-7`} disabled={disabled || bodyOnly && prefix !== 'content'} maxLength={max} rows={rows} value={value[key]} onChange={(e) => onChange({ ...value, [key]: e.target.value })} />
         </Field>;
       })}
     </fieldset>)}

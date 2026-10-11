@@ -1,6 +1,6 @@
 // Local test double only. This is NOT the operational evaluator or a DB adapter.
 import { ReviewFailure } from "./contracts";
-import type { Facts, FactsItem, CandidateItem, ReviewItem, ReviewKind, ReviewStore, ReviewCommand } from "./contracts";
+import type { Facts, FactsItem, CandidateItem, ReviewItem, ReviewKind, ReviewStore, ReviewCommand, ReviewListScope } from "./contracts";
 
 export function fixtureFacts(): Facts {
   return { productType: "policy_reference", category: "policy", scope: "unknown", regions: [], evidence: "", foreignEligibility: "unknown", delivery: "unknown", deadlineKind: "", deadlineOn: "", eventStart: "", eventEnd: "" };
@@ -17,12 +17,13 @@ export class LocalReviewStore implements ReviewStore {
   private items: Map<string, ReviewItem>;
   private blockedPublications = new Set<string>();
   constructor() { this.items = new Map(sampleItems().map((item) => [item.id, item])); }
-  async list(kind: ReviewKind, offset = 0) {
-    return [...this.items.values()].filter((item) => item.kind === kind).slice(offset, offset + 25).map((item) => ({ id: item.id, title: item.kind === "facts" ? item.source.title : item.content.titleKo, sourceName: item.source.name, status: item.status, reasons: item.kind === "facts" ? [...item.reasons] : [] }));
+  async list(kind: ReviewKind, offset = 0, scope: ReviewListScope = "pending") {
+    return [...this.items.values()].filter((item) => item.kind === kind && (scope === "published" ? item.kind === "candidates" && item.status === "published" : item.kind !== "candidates" || item.status !== "published")).slice(offset, offset + 25).map((item) => ({ id: item.id, title: item.kind === "facts" ? item.source.title : item.content.titleKo, sourceName: item.source.name, status: item.status, reasons: item.kind === "facts" ? [...item.reasons] : [] }));
   }
-  async get(kind: ReviewKind, id: string) {
+  async get(kind: ReviewKind, id: string, scope: ReviewListScope = "pending") {
     const item = this.items.get(id);
     if (!item || item.kind !== kind) throw new ReviewFailure("not_found");
+    if (scope === "published" && (item.kind !== "candidates" || item.status !== "published")) throw new ReviewFailure("not_found");
     return structuredClone(item);
   }
   // Failure injection belongs to tests, never to a UI/request payload.
@@ -32,7 +33,8 @@ export class LocalReviewStore implements ReviewStore {
     const existing = this.items.get(id);
     if (!existing || existing.kind !== kind) throw new ReviewFailure("not_found");
     if (existing.revision !== command.revision || existing.version !== command.version) throw new ReviewFailure("conflict");
-    if ((existing.kind === "facts" && existing.status !== "open") || (existing.kind === "candidates" && existing.status !== "pending")) throw new ReviewFailure("already_processed");
+    if ((existing.kind === "facts" && existing.status !== "open") || (existing.kind === "candidates" && existing.status !== "pending" && command.action !== "save_published_body")) throw new ReviewFailure("already_processed");
+    if (command.action === "save_published_body" && (existing.kind !== "candidates" || existing.status !== "published" || !existing.publishedId || existing.programInfo?.inputChanged || existing.publishedBodyVersion !== command.publicVersion)) throw new ReviewFailure("conflict");
     const item = structuredClone(existing);
     const now = new Date().toISOString();
     if (item.kind === "facts" && command.action === "save_facts") {
@@ -53,14 +55,18 @@ export class LocalReviewStore implements ReviewStore {
       item.status = "excluded"; item.aiStatus = "cancelled"; item.reasons = ["manual_non_target"];
     } else if (item.kind === "candidates" && command.action === "save_candidate") {
       item.content = structuredClone(command.content);
+    } else if (item.kind === "candidates" && command.action === "save_published_body") {
+      if (item.content.contentKo === command.contentKo && item.content.contentJa === command.contentJa) throw new ReviewFailure("invalid_input");
+      item.content.contentKo = command.contentKo; item.content.contentJa = command.contentJa;
+      item.publishedBodyVersion = String(Number(item.version) + 1).padStart(64, "0");
     } else if (item.kind === "candidates" && command.action === "reject") {
       item.status = "rejected";
     } else if (item.kind === "candidates" && command.action === "publish") {
       if (this.blockedPublications.has(id)) throw new ReviewFailure("publish_failed");
-      item.status = "published"; item.publishedAt = now; item.publishedId = "30000000-0000-4000-8000-000000000001";
+      item.status = "published"; item.publishedAt = now; item.publishedId = "30000000-0000-4000-8000-000000000001"; item.publishedBodyVersion = String(Number(item.version) + 1).padStart(64, "0");
     } else throw new ReviewFailure("invalid_input");
     item.version = String(Number(item.version) + 1);
-    item.history.push({ action: command.action, actor, at: now, note: "note" in command ? command.note : "" });
+    item.history.push({ action: command.action, actor, at: now, note: "note" in command ? command.note : "", ...(command.action === "save_published_body" ? { changeLabel: "공개 본문 수정" } : {}) });
     this.items.set(id, item); // One synchronous commit, no await between check and commit.
     return structuredClone(item);
   }
