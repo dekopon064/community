@@ -47,7 +47,7 @@ def native_packet():
 def native_client(c):
     client = FakeClient()
     ko = '[한 줄 요약]\n합성 교육입니다.\n[주요 내용]\n선착순 25명 교육입니다.'
-    ranges = japanese_dates(fact_sections(c['facts'])['[기간·상태]'].split('\n진행 일정:')[0])
+    ranges = japanese_dates(fact_sections(c['facts'])['[일정 안내]'].split('\n진행 일정:')[0])
     ranges = ranges.replace('신청기간', '申請期間').replace('진행기간', '実施期間')
     ja = ('[要約]\n合成教育です。\n[対象]\n保護者同伴\n[期間・状況]\n' + ranges +
           '\n実施日程: 10月3日(土)、10月10日(土)、10月17日(土)、全3回\n[主な内容]\n'

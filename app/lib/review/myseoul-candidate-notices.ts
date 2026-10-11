@@ -1,4 +1,5 @@
 import type { CandidateContent, CandidateNotice } from "./contracts";
+import { curationHeadingAliases } from "../curationSectionLabels";
 
 type RecordValue = Record<string, unknown>;
 const record = (v: unknown): RecordValue | null => v !== null && typeof v === "object" && !Array.isArray(v) ? v as RecordValue : null;
@@ -58,17 +59,24 @@ function rows(v: string): string[] {
   });
 }
 function section(content: string, header: string): string {
-  const at = content.indexOf(header);
-  if (at < 0) return "";
-  return content.slice(at + header.length).split(/\n\s*\[[^\]\n]+\]/)[0].trim();
+  content = content.replace(/\r\n|\r/g, "\n");
+  const aliases = curationHeadingAliases(header.slice(1, -1));
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const markers = aliases.map(alias => escape(`[${alias}]`)).join("|");
+  // Ambiguous duplicate schedule sections must remain unverified.
+  if (/^ {0,3}(?:`{3,}|~{3,})/m.test(content)) return "";
+  const matches = [...content.matchAll(new RegExp(`^[ \\t]*(?:${markers})(?=[ \\t]|$)[ \\t]*`, "gm"))];
+  if (matches.length !== 1) return "";
+  const match = matches[0];
+  return content.slice(match.index + match[0].length).split(/\n\s*\[[^\]\n]+\]/)[0].trim();
 }
 const unknown = (item: string): CandidateNotice => ({ kind: "unverified", language: "both", section: "전체", item, expected: "생성 당시 입력", result: "대조 자료를 읽지 못해 판단할 수 없습니다. 후보 내용은 그대로 표시합니다." });
 // Display-only excerpts from the SAVED candidate; never new generation evidence.
 function candidatePassage(content: CandidateContent, language: CandidateNotice["language"], label: string): string {
   const passage = (lang: "ko" | "ja") => {
     const body = lang === "ko" ? content.contentKo : content.contentJa;
-    const headers = lang === "ko" ? ["대상", "기간·상태", "주요 내용", "신청 방법"] : ["対象", "期間・状況", "主な内容", "申請方法"];
-    const labels = ["대상", "기간·상태", "주요 내용", "신청 방법"];
+    const headers = lang === "ko" ? ["대상", "일정 안내", "주요 내용", "신청 방법"] : ["対象", "日程案内", "主な内容", "申請方法"];
+    const labels = ["대상", "일정 안내", "주요 내용", "신청 방법"];
     const pieces = headers.flatMap((header, i) => label.includes(labels[i]) ? [section(body, `[${header}]`)] : []).filter(Boolean);
     return excerpt(pieces.length ? pieces.join("\n") : label === "전체" ? body : "해당 섹션 표지를 찾지 못했습니다. 아래 후보 본문에서 확인해 주세요.", 900);
   };
@@ -101,7 +109,7 @@ export function mySeoulCandidateNotices(raw: unknown, id: string, inputFactsVers
     ? { day: tokens(text(endpoints[0]?.value)), pair: `${text(endpoints[0]?.value).slice(11, 16)}~${text(endpoints[1]?.value).slice(11, 16)}` } : null;
   for (const language of ["ko", "ja"] as const) {
     const body = language === "ko" ? content.contentKo : content.contentJa;
-    const period = section(body, language === "ko" ? "[기간·상태]" : "[期間・状況]");
+    const period = section(body, language === "ko" ? "[일정 안내]" : "[日程案内]");
     const participant = section(body, language === "ko" ? "[대상]" : "[対象]") + "\n" + section(body, language === "ko" ? "[주요 내용]" : "[主な内容]");
     const unit = (s: string) => s.replace(/ウォン|KRW/g, "원").replace(/[歳才]/g, "세").replace(/[名人]/g, "명").replace(/回/g, "회").replace(/以上/g, "이상").replace(/以下/g, "이하").replace(/未満/g, "미만").replace(/超/g, "초과").replace(/[,\s]/g, "");
     for (const [item, expected] of requirements) {
@@ -112,7 +120,7 @@ export function mySeoulCandidateNotices(raw: unknown, id: string, inputFactsVers
       if (missing.length) add(language, item === "비용" ? "전체" : "대상·주요 내용", item, expected, `명시된 숫자·단위 ${missing.join(", ")}를 관련 섹션에서 찾지 못했습니다. 다른 표현인지는 판단하지 못했습니다.`, "possible_missing");
       else if (!quantities.length && (language === "ja" || !body.replace(/\s/g, "").includes(expected.replace(/\s/g, "")))) {
         // A substring mismatch cannot be labelled as a confirmed semantic error.
-        add(language, item === "개최 장소" ? "기간·상태·주요 내용" : item === "비용" ? "주요 내용" : "대상·주요 내용", item, expected, "같은 뜻으로 표현됐는지 아래 후보 문장과 비교해 주세요.");
+        add(language, item === "개최 장소" ? "일정 안내·주요 내용" : item === "비용" ? "주요 내용" : "대상·주요 내용", item, expected, "같은 뜻으로 표현됐는지 아래 후보 문장과 비교해 주세요.");
       }
     }
     for (const key of ["application", "operation"]) {
@@ -120,13 +128,13 @@ export function mySeoulCandidateNotices(raw: unknown, id: string, inputFactsVers
       for (const p of periods) {
         const value = record(p), endpoints = Array.isArray(value?.endpoints) ? value.endpoints as unknown[] : [];
         const expected = endpoints.map(v => { const e = record(v); return text(e?.value).slice(0, e?.precision === "day" ? 10 : 16).replace("T", " "); }).filter(Boolean).join(" ~ ");
-        if (!expected || value?.status !== "ok") { add(language, "기간·상태", key === "application" ? "신청기간" : "운영기간", text(value?.raw), "구조화 일정의 범위를 판단하지 못했습니다."); continue; }
+        if (!expected || value?.status !== "ok") { add(language, "일정 안내", key === "application" ? "신청기간" : "운영기간", text(value?.raw), "구조화 일정의 범위를 판단하지 못했습니다."); continue; }
         if (!rows(period).some(row => covers(tokens(expected), tokens(row)))) {
           const clocks = [...tokens(period)].filter(v => v.startsWith("clock:")).map(v => v.slice(6));
           const wanted = tokens(expected), parsed = tokens(period);
           const knownDate = [...wanted].filter(t => t.startsWith("date:")).some(t => parsed.has(t));
           const differentClock = knownDate && [...wanted].filter(t => t.startsWith("clock:")).some(t => !parsed.has(t)) && clocks.length > 0;
-          add(language, "기간·상태", key === "application" ? "신청기간" : "운영기간", expected, clocks.length ? `연결된 날짜·시각을 찾지 못했습니다. 이 섹션의 시각: ${clocks.join(", ")}` : "연결된 날짜·시각을 찾지 못했습니다. 표현 해석에는 한계가 있습니다.", differentClock ? "difference" : "unverified");
+          add(language, "일정 안내", key === "application" ? "신청기간" : "운영기간", expected, clocks.length ? `연결된 날짜·시각을 찾지 못했습니다. 이 섹션의 시각: ${clocks.join(", ")}` : "연결된 날짜·시각을 찾지 못했습니다. 표현 해석에는 한계가 있습니다.", differentClock ? "difference" : "unverified");
         }
       }
     }
@@ -149,10 +157,10 @@ export function mySeoulCandidateNotices(raw: unknown, id: string, inputFactsVers
         const aliases = [...label.matchAll(/\b(?:ITQ|DIAT|TOPIK(?:\s*II)?|[0-6][AB])\b/g)].map(m => m[0]);
         const known = label.includes("기초반") ? ["기초반", "コンピュータ基礎", "パソコン基礎", "基礎クラス"] : label.includes("생활디지털") ? ["생활디지털", "生活デジタル", "デジタル活用"] : label.includes("발음반") ? ["발음반", "発音"] : [];
         const unsupportedLabel = language === "ja" && label.includes("반") && !aliases.length && !known.length;
-        if (!wanted.size || pairs.length > 1 || unsupportedLabel) { add(language, "기간·상태", item, expected, "이 표현 또는 반 이름의 연결을 자동으로 판단하지 못했습니다."); continue; }
+        if (!wanted.size || pairs.length > 1 || unsupportedLabel) { add(language, "일정 안내", item, expected, "이 표현 또는 반 이름의 연결을 자동으로 판단하지 못했습니다."); continue; }
         const found = rows(period).some(row => covers(wanted, tokens(row)) && aliases.every(a => row.includes(a)) && (!known.length || known.some(a => row.includes(a))) &&
           (item !== "집결 안내" || /집결|集合/.test(row)) && (pairs.length === 0 || [...tokens(row)].filter(v => v.startsWith("pair:")).length === 1));
-        if (!found) add(language, "기간·상태", item, expected, "같은 일정 묶음의 날짜·요일·시간·횟수 또는 집결 역할을 확인하지 못했습니다. 누락인지 다른 표현인지는 판단하지 못했습니다.");
+        if (!found) add(language, "일정 안내", item, expected, "같은 일정 묶음의 날짜·요일·시간·횟수 또는 집결 역할을 확인하지 못했습니다. 누락인지 다른 표현인지는 판단하지 못했습니다.");
       }
     }
     const methods = section(body, language === "ko" ? "[신청 방법]" : "[申請方法]");

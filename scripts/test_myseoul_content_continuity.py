@@ -203,13 +203,13 @@ class ContentContinuityTests(unittest.TestCase):
             with self.subTest(year=year):
                 validate_summary_period('실제 수업: '+year+
                     '2월 3일, 2월 10일, 2월 17일 각 09:30~11:00, 총 3회',
-                    fact_sections(f)['[기간·상태]'], f)
+                    fact_sections(f)['[일정 안내]'], f)
         self.assertEqual(f, before)
-        self.assertNotIn('2027년', fact_sections(f)['[기간·상태]'])
+        self.assertNotIn('2027년', fact_sections(f)['[일정 안내]'])
         f['session_evidence'] = []
         f['description'] = '교육 일정: 2월 3일, 2월 10일, 2월 17일 09:30~11:00, 총 3회'
         validate_summary_period('실제 수업: 2027년 2월 10일 09:30~11:00',
-            fact_sections(f)['[기간·상태]'], f)
+            fact_sections(f)['[일정 안내]'], f)
 
     def test_true_session_conflicts_still_fail_including_no_count_label(self):
         f = self.schedule_facts()
@@ -217,30 +217,30 @@ class ContentContinuityTests(unittest.TestCase):
                      '2월 3일 09:45~11:00', '2월 3일 09:30~12:00',
                      '2월 3일, 총 4회', '2월 3일(월)'):
             with self.subTest(line=line), self.assertRaises(AiJobError):
-                validate_summary_period('실제 수업: '+line, fact_sections(f)['[기간·상태]'], f)
+                validate_summary_period('실제 수업: '+line, fact_sections(f)['[일정 안내]'], f)
 
     def test_cross_year_sessions_bind_year_to_date_not_year_set(self):
         f = self.schedule_facts('2026-12-30', '2027-01-06',
             ['12월 30일, 1월 6일 09:30~11:00, 총 2회'])
         correct = '진행 일정: 2026년 12월 30일, 2027년 1월 6일 09:30~11:00, 총 2회'
-        validate_summary_period(correct, fact_sections(f)['[기간·상태]'], f)
+        validate_summary_period(correct, fact_sections(f)['[일정 안내]'], f)
         swapped = correct.replace('2026년 12월', '2027년 12월').replace('2027년 1월', '2026년 1월')
         with self.assertRaises(AiJobError):
-            validate_summary_period(swapped, fact_sections(f)['[기간·상태]'], f)
+            validate_summary_period(swapped, fact_sections(f)['[일정 안내]'], f)
         f['session_evidence'] = ['2026년 12월 30일, 2027년 1월 6일 09:30~11:00, 총 2회']
-        validate_summary_period(correct, fact_sections(f)['[기간·상태]'], f)
+        validate_summary_period(correct, fact_sections(f)['[일정 안내]'], f)
         with self.assertRaises(AiJobError):
-            validate_summary_period(swapped, fact_sections(f)['[기간·상태]'], f)
+            validate_summary_period(swapped, fact_sections(f)['[일정 안내]'], f)
 
     def test_explicit_evidence_year_cannot_be_overridden_by_operation_year(self):
         f = self.schedule_facts(evidence=['2028년 2월 3일 09:30~11:00, 총 3회'])
         for year in (2027, 2028):
             with self.subTest(year=year), self.assertRaises(AiJobError):
                 validate_summary_period(f'진행 일정: {year}년 2월 3일 09:30~11:00, 총 3회',
-                    fact_sections(f)['[기간·상태]'], f)
+                    fact_sections(f)['[일정 안내]'], f)
         f = self.schedule_facts(evidence=['2027년 2월 3일 09:30~11:00, 총 3회'])
         validate_summary_period('진행 일정: 2027년 2월 3일 09:30~11:00, 총 3회',
-            fact_sections(f)['[기간·상태]'], f)
+            fact_sections(f)['[일정 안내]'], f)
 
     def test_unknown_or_ambiguous_operation_year_is_not_invented(self):
         for bounds in ([], [{'status': 'unknown', 'endpoints': []}],
@@ -278,7 +278,7 @@ class ContentContinuityTests(unittest.TestCase):
         c['facts']['description'] = ('합성 교육 안내입니다.\n'
             '교육 일정: 10월 3일(토), 10월 10일(토), 10월 17일(토), 총 3회\n'
             '접수 발표: 9월 30일')
-        text = fact_sections(c['facts'])['[기간·상태]']
+        text = fact_sections(c['facts'])['[일정 안내]']
         self.assertIn('10월 10일', text)
         self.assertIn('총 3회', text)
         self.assertNotIn('접수 발표', text)
@@ -345,7 +345,7 @@ class ContentContinuityTests(unittest.TestCase):
     def test_explicit_application_operation_swap_is_rejected(self):
         c = context()
         parts = fact_sections(c['facts'])
-        period = parts['[기간·상태]']
+        period = parts['[일정 안내]']
         application = period.splitlines()[0].split(': ', 1)[1]
         operation = period.splitlines()[1].split(': ', 1)[1]
         ko = Mock(return_value=('[한 줄 요약]\n체험\n[기간·상태]\n신청기간: ' + operation +

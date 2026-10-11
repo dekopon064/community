@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
+import { registerHooks } from "node:module";
+registerHooks({ resolve(specifier, context, next) {
+  try { return next(specifier, context); }
+  catch (error) {
+    if (specifier.startsWith(".") && !/\.[a-z]+$/i.test(specifier)) return next(`${specifier}.ts`, context);
+    throw error;
+  }
+} });
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { parseCurationBodySections } from "../app/lib/curationBodySections.ts";
+const { parseCurationBodySections } = await import("../app/lib/curationBodySections.ts");
 
 // These shapes match the published Korean inline-label and Japanese
 // separate-label formats; the text is only a local display fixture.
@@ -14,9 +22,21 @@ const korean = `[한 줄 요약] 집수리 실습 프로그램
 [신청 방법] 구글폼([신청 링크](https://forms.gle/example))으로 신청.`;
 const ko = parseCurationBodySections(korean, "ko");
 assert.deepEqual(ko?.sections.map((section) => section.heading), [
-  "한 줄 요약", "대상", "기간·상태", "주요 내용", "신청 방법",
+  "한 줄 요약", "대상", "일정 안내", "주요 내용", "신청 방법",
 ]);
 assert.equal(ko?.sections[2].body, "접수기간: 2026년 10월 1일까지");
+assert.deepEqual(parseCurationBodySections(korean.replace("[기간·상태]", "[일정 안내]"), "ko"), ko);
+assert.ok(korean.includes("[기간·상태]")); // Persisted source stays unchanged.
+for (const header of ["期間・状況", "日程案内"]) {
+  const body = `[要約]\n合成案内\n[${header}]\n申請期間：10月1日～10月2日\n[主な内容]\n合成本文`;
+  assert.equal(parseCurationBodySections(body, "ja")?.sections[1].heading, "日程案内");
+}
+for (const body of [
+  korean + "\n[일정 안내]\n중복 일정",
+  "[要約]\n合成\n[期間・状況]\n旧\n[日程案内]\n新\n[主な内容]\n本文",
+]) assert.equal(parseCurationBodySections(body, body.startsWith("[要約]") ? "ja" : "ko"), null);
+assert.equal(parseCurationBodySections(korean.replace("전동 드라이버", "문장에서 언급한 [기간·상태]와 전동 드라이버"), "ko")?.sections[3].body,
+  "문장에서 언급한 [기간·상태]와 전동 드라이버와 콘센트 교체 실습");
 assert.equal(
   ko?.sections[4].body,
   "구글폼([신청 링크](https://forms.gle/example))으로 신청.",

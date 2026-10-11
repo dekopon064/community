@@ -174,6 +174,8 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         content_ko, status_ko, model = summarize_program(program_input(c), c["facts"]["official_url"], title=c["title"])
         if status_ko != "success" or not isinstance(content_ko, str):
             raise AiJobError("ai_schema_error")
+        from ingest.body_sections import normalize_schedule_heading
+        content_ko = normalize_schedule_heading(content_ko, 'ko')
         summary_ko = extract_summary_section(content_ko, KO_SUMMARY_HEADER, KO_SECTION_HEADERS)
         # This block is deterministic current-facts content, not AI-invented facts.
         verified = protected_facts(c["facts"])
@@ -181,6 +183,7 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content_ko)
         if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
             raise AiJobError("ai_schema_error")
+        content_ja = normalize_schedule_heading(content_ja, 'ja')
         summary_ja = extract_summary_section(content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
         validate_japanese_output(title_ja, content_ja, korean_source=c["title"] + "\n" + content_ko)
         # Conservative numeric omission check; semantic eligibility still requires human review.

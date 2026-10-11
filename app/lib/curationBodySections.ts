@@ -1,9 +1,4 @@
-const SECTION_LABELS = {
-  ko: ["한 줄 요약", "대상", "기간·상태", "주요 내용", "신청 방법"],
-  ja: ["要約", "対象", "期間・状況", "主な内容", "申請方法"],
-} as const;
-
-type BodyLocale = keyof typeof SECTION_LABELS;
+import { CURATION_SECTION_LABELS, curationHeadingAliases, type BodyLocale } from "./curationSectionLabels";
 
 export type CurationBodySection = {
   heading: string;
@@ -17,12 +12,14 @@ export type ParsedCurationBody = {
 
 function sectionAtStart(line: string, labels: readonly string[]) {
   for (const heading of labels) {
-    const marker = `[${heading}]`;
-    if (line === marker) {
-      return { heading, rest: "" };
-    }
-    if (line.startsWith(marker) && /^[ \t]/.test(line[marker.length] ?? "")) {
-      return { heading, rest: line.slice(marker.length).replace(/^[ \t]+/, "") };
+    for (const alias of curationHeadingAliases(heading)) {
+      const marker = `[${alias}]`;
+      if (line === marker) {
+        return { heading, rest: "" };
+      }
+      if (line.startsWith(marker) && /^[ \t]/.test(line[marker.length] ?? "")) {
+        return { heading, rest: line.slice(marker.length).replace(/^[ \t]+/, "") };
+      }
     }
   }
   return null;
@@ -38,7 +35,7 @@ export function parseCurationBodySections(
   // original Markdown renderer instead of interpreting their lines as sections.
   if (/^ {0,3}(?:`{3,}|~{3,})/m.test(content)) return null;
 
-  const labels = SECTION_LABELS[locale as BodyLocale];
+  const labels = CURATION_SECTION_LABELS[locale as BodyLocale];
   const lines = content.split(/\r\n|\n|\r/);
   const introduction: string[] = [];
   const sections: { heading: string; lines: string[] }[] = [];

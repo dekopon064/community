@@ -10,6 +10,7 @@ from ingest.ai_worker import (AiWorkerResult, extract_summary_section, KO_SUMMAR
 from ingest.program_ai import ProgramAIAdapter
 from ingest.region_ja_glossary import validate_japanese_output
 from ingest.content_filters import validate_filters, program_application_complete
+from ingest.body_sections import normalize_schedule_heading
 
 CATEGORIES = frozenset({'policy', 'program', 'event', 'youth_space', 'living'})
 
@@ -71,11 +72,15 @@ def protected_information(c:dict)->str:
             from ingest.myseoul_content import participation_constraints
             protected=participation_constraints(native)
             value=[v for v in (value or []) if v in protected]
+        if key=='session_evidence' and value and native.get('schema_version')=='myseoul-program-facts-v1-local':
+            from ingest.myseoul_content import schedule_lines
+            value=schedule_lines(native)
         if value:lines.append(label+': '+json.dumps(value,ensure_ascii=False))
     if native.get('schema_version') == 'myseoul-program-facts-v1-local':
-        from ingest.myseoul_content import schedule_lines
+        from ingest.myseoul_content import schedule_lines, announcement_lines
         if not native.get('session_evidence') and schedule_lines(native):
             lines.append('진행 일정: '+' / '.join(schedule_lines(native)))
+        lines.extend(announcement_lines(native))
     if f['category']=='program':
         application=c['filters']['application']['value']
         lines.append('신청기간: '+application['start']['value']+' ~ '+application['end']['value'])
@@ -97,15 +102,17 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
     try:
         content,status,model=summarize_ko(classification_input(c),c['sourceUrl'],title=c['title'])
         if status!='success' or not isinstance(content,str):raise ValueError()
+        content=normalize_schedule_heading(content,'ko')
         summary=extract_summary_section(content,KO_SUMMARY_HEADER,KO_SECTION_HEADERS)
         verified=protected_information(c)
         verified_in_main=False
         native=c['nativeConfirmedFacts']['programFacts'] or {}
         if native.get('schema_version')=='myseoul-program-facts-v1-local':
-            from ingest.myseoul_content import optional_period_section,validate_summary_period,validate_participant_quantities,deduplicate_summary_fees,validate_assembled_fees
+            from ingest.myseoul_content import validate_summary_period,validate_participant_quantities,deduplicate_summary_fees,validate_assembled_fees,without_replaced_announcements
             from ingest.myseoul_ai_support import section_body
             from ingest.myseoul_ai import fact_sections
-            validate_summary_period(optional_period_section(content),verified,native)
+            validate_summary_period(content,verified,native)
+            content=without_replaced_announcements(content,native)
             main=section_body(content,'[주요 내용]',KO_SECTION_HEADERS)
             validate_participant_quantities(native,main+'\n'+verified)
             main=deduplicate_summary_fees(main,fact_sections(native)['activity'])
@@ -120,6 +127,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             validate_assembled_fees(content,fact_sections(native)['activity'],canonical_block=verified)
         title_ja,content_ja,status_ja,_=translate_ja(c['title'],content)
         if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise ValueError()
+        content_ja=normalize_schedule_heading(content_ja,'ja')
         summary_ja=extract_summary_section(content_ja,JA_SUMMARY_HEADER,JA_SECTION_HEADERS)
         validate_japanese_output(title_ja,content_ja,korean_source=c['title']+'\n'+content)
         numbers=lambda v:{int(x.replace(',','')) for x in re.findall(r'\d[\d,]*',v)}
