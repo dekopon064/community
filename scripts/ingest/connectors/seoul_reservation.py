@@ -46,6 +46,8 @@ class _BodyParser(HTMLParser):
         self.skip = 0
         self.images = False
         self.attachments = False
+        self.table_ranges: list[tuple[int, int, int]] = []
+        self._outer_table: tuple[int, int] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in {"script", "style", "iframe", "object"}:
@@ -62,6 +64,8 @@ class _BodyParser(HTMLParser):
             if self.cell:
                 self.cell["text"] += " "
         if tag == "table":
+            if not self.table_stack:
+                self._outer_table = (len(self.parts), len(self.tables))
             if self.cell is not None:
                 self.cell.setdefault("nested_tables", []).append(len(self.tables))
             self.table_stack.append((self.table, self.row, self.cell))
@@ -93,6 +97,10 @@ class _BodyParser(HTMLParser):
             self.row = None
         if tag == "table":
             self.table, self.row, self.cell = self.table_stack.pop() if self.table_stack else (None, None, None)
+            if not self.table_stack and self._outer_table is not None:
+                start, index = self._outer_table
+                self.table_ranges.append((start, len(self.parts), index))
+                self._outer_table = None
         if tag in {"p", "div", "li", "tr", "h1", "h2", "h3", "dt", "dd"}:
             self.parts.append("\n")
 
@@ -111,8 +119,24 @@ def parse_body(raw: str) -> dict[str, Any]:
     parser.feed(raw.replace("\\r\\n", "\n"))
     lines = [re.sub(r"[ \t\u00a0]+", " ", part).strip() for part in "".join(parser.parts).splitlines()]
     plain = "\n".join(part for part in lines if part)
-    marker = re.search(r"(?:3\s*\.\s*)?상세\s*내용", plain)
-    details = plain[marker.end():].strip() if marker else plain
+    # Preserve simple explicit header/row tables in the AI description. Raw
+    # HTML and parsed spans stay separate, including unsupported nested tables.
+    parts = parser.parts[:]
+    for start, end, index in reversed(parser.table_ranges):
+        table = parser.tables[index]
+        if (len(table) < 2 or not table[0] or not all(cell['header'] for cell in table[0])
+                or any(len(row) != len(table[0]) for row in table)
+                or any(not cell['text'] or cell['rowspan'] != 1 or cell['colspan'] != 1 or cell.get('nested_tables')
+                       for row in table for cell in row)):
+            continue
+        row_text = lambda row: '| ' + ' | '.join(cell['text'].replace('|', r'\|') for cell in row) + ' |'
+        markdown = '\n\n' + row_text(table[0]) + '\n| ' + ' | '.join('---' for _ in table[0]) + ' |\n'
+        markdown += '\n'.join(row_text(row) for row in table[1:]) + '\n\n'
+        parts[start:end] = [markdown]
+    formatted = '\n'.join(re.sub(r'[ \t\u00a0]+', ' ', line).strip()
+                          for line in ''.join(parts).splitlines())
+    marker = re.search(r"(?:3\s*\.\s*)?상세\s*내용", formatted)
+    details = formatted[marker.end():].strip() if marker else formatted.strip()
     # Warnings can contain actual eligibility, documents and closing conditions.
     # Preserve them for both review and extraction instead of dropping this section.
     # Boilerplate without a details section is not program evidence.

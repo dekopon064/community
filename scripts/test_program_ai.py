@@ -3,6 +3,7 @@ import copy
 import json
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from ingest.program_ai import ProgramAIAdapter, process_seoul_program_job, program_input, protected_facts
 from ingest.ai_worker import process_ai_jobs
 from ingest.ai_worker import _process_one
@@ -17,12 +18,25 @@ JOB = "00000000-0000-4000-8000-000000000003"
 REV = "a" * 64
 
 
+def bind_program_filters(c):
+    from ingest.content_filters import SCHEMA,empty_filters,field,confirmed_filter_values
+    data=empty_filters('program')
+    data.update(topic=field('culture_experience'),audience=field('other'),
+        location=field({'scope':'specific','venues':[{'province':'11','district':'종로구','facility':'','address':''}]}))
+    for key,value in confirmed_filter_values(c['facts']).items():data[key]=field(value)
+    now=datetime.now(timezone.utc)
+    c.update(claimedAt=now.isoformat(),leaseUntil=(now+timedelta(seconds=600)).isoformat())
+    c['filterContext']={'schema':SCHEMA,'filterVersion':2,'data':data,
+        **{key:c[key] for key in ('claimedAt','leaseUntil','workerId')}}
+    return c
+
+
 def context():
     f = json.loads(json.dumps(fixtures(storage=True)[1]["item"]["program_facts"]))
-    return {"jobId": JOB, "sourceItemId": ID, "source": "seoul_reservation", "externalKey": "family_paid", "revision": REV,
+    return bind_program_filters({"jobId": JOB, "sourceItemId": ID, "source": "seoul_reservation", "externalKey": "family_paid", "revision": REV,
         "schema": "program-scope-v1-local", "profile": "program_capital_v1_local", "factsVersion": 2,
         "title": "성인 공예 체험", "apiCategory": "문화체험", "facts": f, "observedFacts": copy.deepcopy(f),
-        "claimedAt": "2026-10-01T12:00:00+00:00", "leaseUntil": "2026-10-01T12:10:00+00:00", "workerId": "ingest-program-worker"}
+        "workerId": "ingest-program-worker"})
 
 
 def providers(c):
@@ -33,10 +47,11 @@ def providers(c):
         return "[한 줄 요약]\n家族 체험\n[주요 내용]\n공예 프로그램", "success", "fake-model"
     def translate(title, body):
         # Explicit synthetic Japanese output, NOT real translation quality evidence.
-        assert protected_facts(c["facts"]) in body
-        import re
-        numbers = " ".join(re.findall(r'\d[\d,]*', body))
-        return "家族体験", "[要約]\n家族体験\n[主な内容]\n保護者同伴 10,000ウォン ソウル " + numbers, "success", "fake-model"
+        from ingest.seoul_content import reviewed_sections
+        from test_seoul_content import fake_japanese
+        for value in reviewed_sections(c['facts']).values():
+            if value:assert value in body
+        return "家族体験", fake_japanese(body), "success", "fake-model"
     return summarize, translate, calls
 
 
@@ -85,6 +100,15 @@ class ProgramAITests(unittest.TestCase):
             result,events,inputs=self.run_job(c)
             self.assertEqual(result.state_unknown,1);self.assertFalse(inputs)
 
+    def test_absent_or_incomplete_filter_snapshot_never_calls_provider(self):
+        for missing in [True,False]:
+            c=context()
+            if missing:c.pop('filterContext')
+            else:c['filterContext']['data']['topic']={'status':'unknown','value':None}
+            result,events,inputs=self.run_job(c)
+            self.assertEqual(result.state_unknown,1);self.assertFalse(inputs)
+            self.assertEqual(len(events),1)
+
     def test_program_prompt_and_legacy_prompt_separate(self):
         old=build_summary_create_kwargs(title="t",body="b",source_url=None)
         new=build_summary_create_kwargs(title="t",body="b",source_url=None,program=True)
@@ -101,9 +125,9 @@ class ProgramAITests(unittest.TestCase):
 
     def test_provider_failure_uses_attempt_fenced_retry(self):
         def fail(*a,**kw): raise AiJobError("ai_blocked_cost_cap")
-        result,events,_=self.run_job(summarize=fail)
+        c=context();result,events,_=self.run_job(c,summarize=fail)
         self.assertEqual(result.retried,1);self.assertEqual(events[-1][0],"fail_seoul_program_ai")
-        self.assertEqual(events[-1][1]["p_claimed_at"],context()["claimedAt"])
+        self.assertEqual(events[-1][1]["p_claimed_at"],c["claimedAt"])
 
     def test_numeric_omission_is_failed_before_storage(self):
         result,events,_=self.run_job(translate=lambda *a:("体験","[要約]\n体験\n[主な内容]\n参加","success","fake"))

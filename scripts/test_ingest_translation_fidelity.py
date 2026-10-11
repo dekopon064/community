@@ -177,13 +177,14 @@ class OfflineTests(unittest.TestCase):
         c = native_context()
         f = c['facts']
         f.update(target='보호자 동반', conditions=[], age=[], companion=[], language=[], residence='',
-                 qualification_note='', venue='', fees=[], session_evidence=[], meeting_evidence=[],
+                 qualification_note='', venue='', fees=[], fee_body=[], session_evidence=[], meeting_evidence=[],
                  application_methods=['방문 신청'], application_links=[])
         f['periods'] = {'application': [], 'operation': []}
+        f['fees']=[{'component':'tuition','evidence':['무료']}]
         f['description'] = '합성 이미지에서 검토자가 보완한 설명'
         c['observedFacts']['description'] = ''
         before = copy.deepcopy(c)
-        ja = '[要約]\n合成案内\n[対象]\n保護者同伴\n[期間・状況]\n- **申請期間:** 公式案内確認\n- **実施期間:** 公式案内確認\n[主な内容]\n画像で確認した活動\n[申請方法]\n窓口申込'
+        ja = '[要約]\n合成案内\n[対象]\n保護者同伴\n[期間・状況]\n- **申請期間:** 公式案内確認\n- **実施期間:** 公式案内確認\n[主な内容]\n画像で確認した活動\n- **費用:** 受講料: 無料\n[申請方法]\n窓口申込'
         adapter, client = adapter_for('[한 줄 요약]\n합성 요약\n[주요 내용]\n검토자가 확인한 활동', ja)
         output = generate_myseoul_output(c, summarize_ko=adapter.summarize_ko, translate_ja=adapter.translate_ja)
         self.assertEqual(output['contentJa'], ja.replace('[期間・状況]', '[日程案内]'))
@@ -201,13 +202,13 @@ class OfflineTests(unittest.TestCase):
                 c['body'] = ''
                 c['nativeConfirmedFacts']['programFacts'] = {'description': '합성 이미지 보완 설명', 'conditions': ['보호자 동반']}
                 before = copy.deepcopy(c)
-                ja = ('[要約]\n合成案内\n[主な内容]\n合成活動\n確認した分類・参加案内\n'
-                      '- **分類:** 合成\n- **実施方式:** オンライン\n- **参加対象の根拠:** 合成の全国対象')
-                if category == 'program': ja += '\n- **申請締切:** 2099年10月15日'
-                if category == 'policy': ja += '\n- **申請締切:** 締切なし'
-                if category == 'event': ja += '\n- **開催期間:** 2099年10月9日～2099年10月9日'
-                ja += '\n- **参加条件:** 保護者同伴'
-                if category == 'program': ja += '\n- **申請期間:** 2099年10月1日～2099年10月15日'
+                # Handwritten structural fixture follows the current section
+                # contract; it is not a model-quality evaluation.
+                from ingest.myseoul_content import merge_reviewed_sections
+                from ingest.reclassification_ai import protected_sections
+                from test_seoul_content import fake_japanese
+                ja=fake_japanese(merge_reviewed_sections(
+                    '[한 줄 요약]\n합성 안내\n[주요 내용]\n합성 활동',protected_sections(c)))
                 adapter, client = adapter_for('[한 줄 요약]\n합성 안내\n[주요 내용]\n합성 활동', ja)
                 calls = []
                 def rpc(name, args):

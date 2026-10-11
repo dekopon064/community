@@ -26,8 +26,14 @@ export function programItem(data: unknown, id: string) {
       facts: programFacts(o.facts), observedFacts: programFacts(o.observedFacts), status: str(o.status), aiStatus: str(o.aiStatus),
       result: { decision: str(result.decision), disposition: str(result.disposition), reasons },
       reasonGuidance: reasons.map((code) => ({ code, text: programReasonText[code] ?? "지원하지 않는 사유입니다. 원문과 계약을 확인하고 임의로 해소하지 마세요." })),
-      restoredReviewPending: o.restoredReviewPending === true, editableFields: editable, history };
+      activityReview: activityReview(o.activityReview), restoredReviewPending: o.restoredReviewPending === true, editableFields: editable, history };
   } catch { throw new ReviewFailure("unavailable"); }
+}
+function activityReview(v:unknown) {
+  if(v===undefined)return {supported:false,confirmed:false,pending:false};
+  const o=obj(v);
+  if(typeof o.supported!=='boolean'||typeof o.confirmed!=='boolean'||typeof o.pending!=='boolean'||(!o.supported&&(o.confirmed||o.pending)))throw new ReviewFailure('unavailable');
+  return {supported:o.supported,confirmed:o.confirmed,pending:o.pending};
 }
 export class ProgramReviewStore {
   constructor(privateClient: RpcClient) { this.client = privateClient; }
@@ -48,6 +54,10 @@ export class ProgramReviewStore {
   async get(id: string) { return programItem(await this.invoke("admin_program_detail", { p_id: id }), id); }
   async execute(id: string, command: ProgramCommand, actor: string) {
     const args: Record<string, unknown> = { p_id: id, p_revision: command.revision, p_version: command.version, p_note: command.note, p_actor: actor };
+    if(command.action==='confirm_activity') {
+      Object.assign(args,{p_facts_version:command.factsVersion,p_filter_version:command.filterVersion,p_filters:command.filters});
+      return programItem(await this.invoke('admin_program_activity_confirm',args),id);
+    }
     if (command.action === "save_facts") { args.p_patch = command.patch; args.p_resolve = command.resolve; }
     return programItem(await this.invoke(command.action === "save_facts" ? command.confirmRestored ? "admin_program_save_restored" : "admin_program_save" : "admin_program_exclude", args), id);
   }

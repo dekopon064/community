@@ -1,4 +1,4 @@
-import type { ProgramCommand, ProgramFacts, ProgramField } from "./program-contract";
+import type { ProgramCommand, ProgramFacts, ProgramField, Period } from "./program-contract";
 import { programCommand } from "./program-contract";
 import { ReviewFailure } from "./contracts";
 export const programLabels: Partial<Record<ProgramField, string>> = {
@@ -41,5 +41,29 @@ export function buildProgramSave(item:{revision:string;version:string;facts:Prog
 export function displayProgramValue(key:string,value:unknown):string {
  if(Array.isArray(value))return value.length?value.map(v=>programChoices[key]?.[String(v)]??({internet:"인터넷 예약",onsite:"현장 접수",phone:"전화 접수"}[String(v)]??String(v))).join("\n"):"미표기";
  return programChoices[key]?.[String(value)]??(typeof value==="string"&&value?value:"미확인");
+}
+export function programValueMissing(value:unknown):boolean {
+ return value===null||value===undefined||value===""||value==="unknown"||Array.isArray(value)&&!value.some(v=>String(v).trim());
+}
+export function programInputFields(item:{facts:ProgramFacts;editableFields:string[];result:{reasons:string[]}}):string[] {
+ return item.editableFields.filter(key=>programValueMissing(item.facts[key as ProgramField])||
+  item.result.reasons.some(reason=>(reasonPatchFields[reason]??[]).includes(key)&&
+    (/conflict|period|weekday|invalid_body_date/.test(reason)||key==="description")));
+}
+export function preserveProgramDraft(saved:ProgramFacts,draft:ProgramFacts,next:ProgramFacts,editable:string[]):ProgramFacts {
+ return {...structuredClone(next),...structuredClone(programPatch(saved,draft,editable))};
+}
+export function displayProgramDate(period:Period):string {
+ if(period.status!=="ok"||!period.value)return "확인 필요";
+ if(period.precision==="day")return period.value.replaceAll("-",".");
+ const date=new Date(period.value);
+ if(!Number.isFinite(date.valueOf())||!/(?:Z|[+-]\d{2}:\d{2})$/.test(period.value))return "저장된 날짜 읽기 실패";
+ const parts=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(date);
+ const part=(type:string)=>parts.find(p=>p.type===type)?.value;
+ return `${part("year")}.${part("month")}.${part("day")} ${part("hour")}:${part("minute")}${part("second")==="00"?"":":"+part("second")}`;
+}
+export function programDateInput(period:Period):string {
+ const label=displayProgramDate(period);
+ return /^\d{4}\.\d{2}\.\d{2}(?: \d{2}:\d{2}(?::\d{2})?)?$/.test(label)?label.replaceAll(".","-").replace(" ","T"):"";
 }
 export function programOutcome(decision:string) {return ({in_scope:"서비스 범위 통과 · 신청 가능",out_of_scope:"서비스 범위에서 제외",review_required:"확인할 사실이 남아 있습니다",not_currently_available:"현재 신청 불가 · 서비스 범위 제외와 구분"}[decision]??"상태 확인 필요");}

@@ -34,7 +34,8 @@ registerHooks({
 globalThis.fetch=()=>{throw Error('network forbidden');};
 const python=process.env.MACHIMOA_TEST_PYTHON;
 assert.ok(python,'Explicit test Python required');
-const fixture=process.argv.includes('--actual-summary')
+const seoul=process.argv.includes('--seoul');
+const fixture=seoul ? 'test_seoul_workflow.py' : process.argv.includes('--actual-summary')
   ? 'test_myseoul_schedule_table_continuity.py' : 'test_body_markdown_pipeline.py';
 const packet=JSON.parse(execFileSync(python,['-X','utf8',fixture,'--fixture'],
   {cwd:path.join(root,'scripts'),encoding:'utf8'}));
@@ -48,7 +49,7 @@ const {CandidateEditor}=await import('../app/components/admin/ReviewEditors.tsx'
 const {default:CurationBody}=await import(pathToFileURL(path.join(uiRoot,'app/components/CurationBody.tsx')).href);
 const id='20000000-0000-4000-8000-000000000001',actor='00000000-0000-4000-8000-000000000001';
 const base=await new LocalReviewStore().get('candidates',id);
-const candidate={...base,source:{...base.source,name:'myseoul_program',body:packet.source},content,
+const candidate={...base,source:{...base.source,name:seoul?'seoul_reservation':'myseoul_program',body:packet.source},content,
   version:'c'.repeat(64),programInfo:{inputFactsVersion:2,currentFactsVersion:2,inputChanged:false,
     canPublish:false,applicationPeriod:'2026-10-01 ~ 2026-10-02',operatingPeriod:'2026-10-03 ~ 2026-10-10'}};
 const projected=databaseItem(candidate,'candidates',id);
@@ -82,7 +83,8 @@ for(const [locale,body] of [['ko',content.contentKo],['ja',content.contentJa]]){
   assert.equal((html.match(/<table/g)||[]).length,1);
   assert.equal((html.match(/<tbody>/g)||[]).length,1);
   assert.ok(html.includes('<ol')&&html.includes('<ul')&&html.includes('<strong'));
-  assert.ok(html.includes('href="https://synthetic.invalid/apply?id=1"'));
+  if(seoul)assert.ok(html.includes('02-1234-5678'));
+  else assert.ok(html.includes('href="https://synthetic.invalid/apply?id=1"'));
   assert.ok(html.includes('10,000')&&html.includes('2,000'));
   assert.ok(!html.includes('[일정 안내]')&&!html.includes('[日程案内]'));
   if(process.argv.includes('--actual-summary')){
