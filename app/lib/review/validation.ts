@@ -78,6 +78,17 @@ export function validateCommand(kind: ReviewKind, value: unknown): ReviewCommand
     if (!["no_impact", "edited"].includes(String(v.disposition)) || typeof v.note !== "string" || !v.note.trim() || v.note.trim().length > 4000) throw new ReviewFailure("invalid_input");
     return { ...preconditions, action: "review_change", disposition: edited ? "edited" : "no_impact", note: v.note.trim(), ...(edited ? { content: validateContent(v.content) } : {}) };
   }
+  if (kind === "candidates" && v.action === "save_published_body") {
+    exact(v, ["action", "revision", "version", "publicVersion", "contentKo", "contentJa", "note"]);
+    const errors: Record<string, string> = {};
+    if (typeof v.publicVersion !== "string" || !/^[a-f0-9]{64}$/.test(v.publicVersion)) throw new ReviewFailure("invalid_input");
+    for (const key of ["contentKo", "contentJa", "note"]) {
+      if (typeof v[key] !== "string" || !(v[key] as string).trim() || (v[key] as string).trim().length > (key === "note" ? 4000 : 200000))
+        errors[key] = key === "note" ? "수정 사유를 1~4,000자로 입력해 주세요." : "본문을 1~200,000자로 입력해 주세요.";
+    }
+    if (Object.keys(errors).length) throw new ReviewFailure("invalid_input", errors);
+    return { ...preconditions, action: "save_published_body", publicVersion: v.publicVersion, contentKo: (v.contentKo as string).trim(), contentJa: (v.contentJa as string).trim(), note: (v.note as string).trim() };
+  }
   if (kind === "candidates" && v.action === "publish") {
     exact(v, ["action", "revision", "version"]);
     return { ...preconditions, action: "publish" };

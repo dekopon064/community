@@ -18,6 +18,7 @@ import type { QuickReason } from "@/app/lib/review/trash";
 import ClassificationPanel from "./ClassificationPanel";
 import FactsGuidance from "./FactsGuidance";
 import { programReasonText } from "@/app/lib/review/program-contract";
+import { canEditPublishedBody, publishedBodyCommand } from "@/app/lib/review/published-body";
 import { reviewDetailPath } from "@/app/lib/review/program-ui";
 
 class RequestFailure extends Error {
@@ -38,7 +39,7 @@ function focusTask(element: HTMLElement | null) {
 }
 
 export default function ReviewWorkspace() {
-  const [kind, setKind] = useState<ReviewKind | "ai" | "trash">("facts");
+  const [kind, setKind] = useState<ReviewKind | "ai" | "trash" | "published">("facts");
   const [list, setList] = useState<ListItem[]>([]);
   const [item, setItem] = useState<ReviewItem | null>(null);
   const [programId, setProgramId] = useState<string | null>(null);
@@ -61,7 +62,7 @@ export default function ReviewWorkspace() {
   }, []);
   const [note, setNote] = useState("");
   const [changeNote, setChangeNote] = useState("");
-  const [confirmation, setConfirmation] = useState<"publish" | "reject" | "exclude" | null>(null);
+  const [confirmation, setConfirmation] = useState<"publish" | "reject" | "exclude" | "save_published_body" | null>(null);
   const [reload, setReload] = useState(0);
   const [mode, setMode] = useState<"database" | "local-fixture" | null>(null);
   const [offset, setOffset] = useState(0);
@@ -80,14 +81,18 @@ export default function ReviewWorkspace() {
   const contentDirty = Boolean(item && (item.kind === "facts" ? JSON.stringify(item.facts) !== JSON.stringify(facts) : JSON.stringify(item.content) !== JSON.stringify(content)));
   const fieldsDirty = contentDirty || imageDirty;
   const dirty = programBlocked || fieldsDirty || Boolean(note) || Boolean(changeNote);
-  const publicChange = Boolean(item?.kind === "candidates" && item.source.name === "myseoul_program" && item.status === "published" && item.programInfo?.inputChanged);
-  const processed = item && (item.kind === "facts" ? item.status !== "open" : item.status !== "pending" && !publicChange);
+  const publishedMode = kind === "published";
+  const detailKind = publishedMode ? "candidates" : kind;
+  const publishedEditable = publishedMode && canEditPublishedBody(item);
+  const detailQuery = publishedMode ? "?status=published" : "";
+  const publicChange = Boolean(item?.kind === "candidates" && item.source.name === "myseoul_program" && item.status === "published" && item.programInfo?.inputChanged && !publishedMode);
+  const processed = item && (item.kind === "facts" ? item.status !== "open" : item.status !== "pending" && !publicChange && !publishedEditable);
   const locked = busy || Boolean(processed) || Boolean(confirmation);
 
   useEffect(() => {
     if (kind === "ai" || kind === "trash") return;
     const controller = new AbortController();
-    call(`/api/admin/review?kind=${kind}&offset=${offset}`, undefined, controller.signal).then((data) => {
+    call(`/api/admin/review?kind=${kind === "published" ? "candidates" : kind}&offset=${offset}${kind === "published" ? "&status=published" : ""}`, undefined, controller.signal).then((data) => {
       if (controller.signal.aborted) return;
       setList(data.items); setMode(data.mode); setHasMore(data.hasMore); setError(""); setLoading(false);
     }).catch((e) => { if (!controller.signal.aborted) { setError(e instanceof RequestFailure ? e.code : "unavailable"); setLoading(false); } });
@@ -112,11 +117,11 @@ export default function ReviewWorkspace() {
     setMyseoulId(null);
     if (kind === "facts" && entry?.sourceName === "seoul_reservation") { setProgramId(id); return; }
     setProgramId(null); setBusy(true);
-    try { const data = await call(reviewDetailPath(kind, id, entry?.sourceName ?? "")); accept(data.item); }
+    try { const data = await call(reviewDetailPath(detailKind, id, entry?.sourceName ?? "") + detailQuery); accept(data.item); }
     catch (e) { setError(e instanceof RequestFailure ? e.code : "unavailable"); }
     finally { setBusy(false); }
   }
-  function switchKind(next: ReviewKind | "ai" | "trash") {
+  function switchKind(next: ReviewKind | "ai" | "trash" | "published") {
     if (busy || dirty || confirmation || next === kind) return;
     setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setMyseoulId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(next !== "ai" && next !== "trash");
   }
@@ -128,12 +133,13 @@ export default function ReviewWorkspace() {
       const payload = command.action === "exclude" ? { action: "exclude", id: item.id, revision: command.revision, version: command.version, reasonCode: command.reasonCode ?? "custom", note: command.note } : null;
       const key = JSON.stringify(payload);
       if (payload && pendingRequest.current?.key !== key) pendingRequest.current = { key, id: crypto.randomUUID() };
-      const data = await call(payload ? "/api/admin/review-trash" : `/api/admin/review/${kind}/${item.id}`, payload ? { ...payload, requestId: pendingRequest.current!.id } : command);
+      const data = await call(payload ? "/api/admin/review-trash" : `/api/admin/review/${detailKind}/${item.id}${detailQuery}`, payload ? { ...payload, requestId: pendingRequest.current!.id } : command);
       const next: ReviewItem = data.item; accept(next); setChangeNote("");
       setList((old) => old.flatMap((entry) => next.kind === "facts" && entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry]));
       const result = command.action === "save_facts" && next.kind === "facts" ?
         next.status === "excluded" ? "사실 저장 후 대상 부적격으로 판정되었습니다. AI는 진행하지 않습니다." : `사실을 저장했습니다. 남은 확인 사유 ${next.reasons.length}개. ${aiStatusText[next.aiStatus]} 저장 요청에서 AI를 실행하지 않았습니다.` :
         command.action === "review_change" ? `${publicChange && command.disposition === "edited" ? "공개 내용을 수정하고 " : ""}최신 원문 대조와 처리 근거를 저장했습니다. AI 실행·재번역은 하지 않았습니다.` :
+        command.action === "save_published_body" ? "한국어·일본어 공개 본문과 수정 이력을 저장했습니다. 게시 시각과 탐색 정보는 유지했습니다." :
         command.action === "save_candidate" ? "수정 내용을 비공개로 저장했습니다. AI 실행·재번역은 하지 않았습니다." :
         command.action === "publish" ? "저장된 내용의 승인·게시와 이력을 기록했습니다." : command.action === "exclude" ? `제외했습니다. ${time(data.expiresAt)} (한국 시간)까지 휴지통에서 복구할 수 있습니다.` : "사유를 기록하고 후보를 반려했습니다.";
       if (command.action === "exclude") { setItem(null); setFacts(null); pendingRequest.current = null; }
@@ -142,8 +148,15 @@ export default function ReviewWorkspace() {
       setError(e instanceof RequestFailure ? e.code : "unavailable"); setErrors(e instanceof RequestFailure ? e.fields : {}); setConfirmation(null);
     } finally { sending.current = false; setBusy(false); }
   }
+  function confirmAction() {
+    if (!item || !confirmation) return;
+    if (confirmation === "save_published_body") {
+      if (content && canEditPublishedBody(item)) void submit(publishedBodyCommand(item, content.contentKo, content.contentJa, note));
+    } else if (confirmation === "publish") void submit({ ...preconditions(), action: "publish" });
+    else void submit({ ...preconditions(), action: confirmation, note });
+  }
   function preconditions() { return { revision: item!.revision, version: item!.version }; }
-  const errorMessage = error ? failureText[error] ?? failureText.unavailable : "";
+  const errorMessage = error ? publishedMode && error === "program_unavailable" ? "현재 수집원 권한 또는 공개 상태로 본문을 수정할 수 없습니다. 입력은 유지했습니다." : failureText[error] ?? failureText.unavailable : "";
   const source = item ? sourceLink(item.source.url) : null;
 
   return <div className="mt-8">
@@ -151,12 +164,13 @@ export default function ReviewWorkspace() {
       <button type="button" aria-current={kind === "facts" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("facts")} className={kind === "facts" ? primaryButton : secondaryButton}>사람 사실 review</button>
       <button type="button" aria-current={kind === "ai" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("ai")} className={kind === "ai" ? primaryButton : secondaryButton}>AI 작업 대기</button>
       <button type="button" aria-current={kind === "candidates" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("candidates")} className={kind === "candidates" ? primaryButton : secondaryButton}>AI 결과 후보 검토</button>
+      <button type="button" aria-current={publishedMode ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("published")} className={publishedMode ? primaryButton : secondaryButton}>게시된 글</button>
       <button type="button" aria-current={kind === "trash" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("trash")} className={kind === "trash" ? primaryButton : secondaryButton}>휴지통</button>
     </nav>
     <TrashPanel active={kind === "trash"} onBusy={trashBusy} onRestored={restored} />
     <AiQueuePanel active={kind === "ai"} />
     <div hidden={kind === "ai" || kind === "trash"}>
-    <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : publicChange ? "공개된 콘텐츠의 원문 변경을 확인합니다. ‘공개 내용 수정·변경 확인’은 현재 공개 글에 직접 반영됩니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
+    <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : publishedMode ? "게시된 글의 한국어·일본어 상세 본문을 수정합니다. ‘공개 본문 저장’은 현재 공개 글에 직접 반영되며, 수정 사유와 전후 이력을 남깁니다." : publicChange ? "공개된 콘텐츠의 원문 변경을 확인합니다. ‘공개 내용 수정·변경 확인’은 현재 공개 글에 직접 반영됩니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
     {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}
     {error && <div ref={errorMessageBox} tabIndex={-1} role="alert" className="my-5 scroll-mt-36 border-y border-info-rule py-5">
       <p className="max-w-3xl leading-7 text-info-status">{errorMessage}</p>
@@ -164,13 +178,13 @@ export default function ReviewWorkspace() {
       <div className="mt-4 flex flex-wrap gap-4">
         {["signed_out", "forbidden"].includes(error) && <Link prefetch={false} className={secondaryButton} href="/ko/login?next=%2Fko%2Fadmin">로그인 상태 확인</Link>}
         {!item && <button className={secondaryButton} disabled={busy || loading || dirty} onClick={() => { setLoading(true); setError(""); setReload((n) => n + 1); }}>목록 다시 확인</button>}
-        {item && <button className={secondaryButton} disabled={busy} onClick={async () => { setBusy(true); try { const data = await call(`/api/admin/review/${kind}/${item.id}`); accept(data.item); setError(""); setNotice(""); } catch (e) { setError(e instanceof RequestFailure ? e.code : "unavailable"); } finally { setBusy(false); } }}>입력을 버리고 최신 내용 불러오기</button>}
+        {item && <button className={secondaryButton} disabled={busy} onClick={async () => { setBusy(true); try { const data = await call(`/api/admin/review/${detailKind}/${item.id}${detailQuery}`); accept(data.item); setError(""); setNotice(""); } catch (e) { setError(e instanceof RequestFailure ? e.code : "unavailable"); } finally { setBusy(false); } }}>입력을 버리고 최신 내용 불러오기</button>}
       </div>
     </div>}
     {notice && <p ref={resultMessage} tabIndex={-1} role="status" className="my-5 scroll-mt-36 border-y border-info-rule py-4 leading-7 text-info-body">{notice}</p>}
     {!loading && <div className="grid gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <aside aria-label="검토 목록" className="min-w-0">
-        <h2 className="mb-3 text-lg font-bold">{kind === "facts" ? "사실 확인 항목" : "결과 후보"}</h2>
+        <h2 className="mb-3 text-lg font-bold">{kind === "facts" ? "사실 확인 항목" : publishedMode ? "게시된 글" : "결과 후보"}</h2>
         {!list.length && !error && <p className="py-6 leading-7 text-info-muted">현재 검토할 항목이 없습니다. 새 항목이 준비되면 이 목록에서 확인할 수 있습니다.</p>}
         <ul className="divide-y divide-info-rule border-y border-info-rule">
           {list.map((entry) => <li key={entry.id}><button disabled={busy || dirty || Boolean(confirmation)} aria-current={(item?.id ?? myseoulId ?? programId) === entry.id ? "true" : undefined} className={`w-full px-3 py-5 text-left hover:bg-info-surface disabled:cursor-not-allowed disabled:opacity-60 ${(item?.id ?? myseoulId ?? programId) === entry.id ? "bg-info-surface" : ""}`} onClick={() => select(entry.id)}>
@@ -192,7 +206,7 @@ export default function ReviewWorkspace() {
             <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>
             <p className="mt-3 text-sm leading-6 text-info-muted">{item.source.name}{item.kind === "candidates" ? ` · ${item.category ? categories[item.category] : "분류 확인 필요"} · ${item.period}` : ""}</p>
           </header>
-          {(item.kind==='facts'||item.kind==='candidates'&&item.status==='published')&&<ClassificationPanel key={item.id+item.version} id={item.id} disabled={operationBusy||fieldsDirty||Boolean(confirmation)} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const data=await call(`/api/admin/review/${item.kind}/${item.id}`);accept(data.item);setReload(n=>n+1);}}/>}
+          {(!publishedMode&&(item.kind==='facts'||item.kind==='candidates'&&item.status==='published'))&&<ClassificationPanel key={item.id+item.version} id={item.id} disabled={operationBusy||fieldsDirty||Boolean(confirmation)} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const data=await call(`/api/admin/review/${item.kind}/${item.id}`);accept(data.item);setReload(n=>n+1);}}/>}
           {item.kind==='facts'&&!classificationActive&&<FactsGuidance item={item}/>}
           <details className="my-6 border-b border-info-rule pb-6">
             <summary className="min-h-11 cursor-pointer py-2 font-semibold">원문 확인</summary>
@@ -203,9 +217,9 @@ export default function ReviewWorkspace() {
           {item.kind === "candidates" && item.programInfo && <div className="my-5 border-y border-info-rule py-4 text-sm leading-6 text-info-body">
             <p>후보 입력 사실 버전 {item.programInfo.inputFactsVersion} · 현재 사실 버전 {item.programInfo.currentFactsVersion}</p>
             <p>신청 기간: {item.programInfo.applicationPeriod}</p><p>운영 기간: {item.programInfo.operatingPeriod} (한국 시간)</p>
-            {item.programInfo.inputChanged && item.source.name !== "myseoul_program" ? <p role="status" className="mt-2 text-info-status">후보 생성 후 사실이 변경되었습니다. 수정 저장·반려는 가능하지만 게시는 차단됩니다. 자동 요약·재번역은 하지 않았으며 사실과 후보의 재대조 기능은 아직 없습니다.</p> : !publicChange && !item.programInfo.canPublish && <p role="status" className="mt-2 text-info-status">현재 접수 상태·판정 또는 수집원 권한으로 게시할 수 없습니다. 수정 저장·반려는 계속할 수 있습니다.</p>}
+            {item.programInfo.inputChanged && item.source.name !== "myseoul_program" ? <p role="status" className="mt-2 text-info-status">후보 생성 후 사실이 변경되었습니다. 수정 저장·반려는 가능하지만 게시는 차단됩니다. 자동 요약·재번역은 하지 않았으며 사실과 후보의 재대조 기능은 아직 없습니다.</p> : !publicChange && !publishedMode && !item.programInfo.canPublish && <p role="status" className="mt-2 text-info-status">현재 접수 상태·판정 또는 수집원 권한으로 게시할 수 없습니다. 수정 저장·반려는 계속할 수 있습니다.</p>}
           </div>}
-          {item.kind === "candidates" && item.source.name === "myseoul_program" && item.programInfo?.inputChanged && <section className="my-6 border-y border-info-rule py-5" aria-label="원문 변경 확인">
+          {item.kind === "candidates" && !publishedMode && item.source.name === "myseoul_program" && item.programInfo?.inputChanged && <section className="my-6 border-y border-info-rule py-5" aria-label="원문 변경 확인">
             <h3 className="font-semibold">생성 이후 원문이 변경됨</h3>
             <p className="mt-2 leading-7 text-info-body">{item.programInfo.changeReviewed ? "현재 원문과의 대조를 완료했습니다. 다른 게시 조건은 계속 검사합니다." : publicChange ? "공개 글을 자동 수정하거나 숨기지 않았습니다. 최신 원문과 두 언어의 내용을 대조해 주세요." : "후보를 자동 수정하지 않았습니다. 최신 원문을 확인하고 필요한 내용을 수정하거나 영향 없음을 기록해 주세요."}</p>
             <p className="mt-2 text-sm text-info-body">확인할 항목: {item.programInfo.changedFields?.join(" · ") || "본문 또는 입력 사실 변경"}</p>
@@ -218,17 +232,29 @@ export default function ReviewWorkspace() {
           </section>}
           {item.kind === 'facts' && item.filterInfo && !processed && !classificationActive && <FilterReviewPanel key={item.filterInfo.filterVersion} id={item.id} version={item.version} info={item.filterInfo} disabled={operationBusy || fieldsDirty || Boolean(note) || Boolean(confirmation)} onBlocked={setFilterBlocked} onSaved={async () => { const data = await call(`/api/admin/review/facts/${item.id}`); setItem(data.item); setReload(n => n + 1); setNotice('탐색 정보를 확인·저장했습니다.'); }}/>}
           {item.kind === 'candidates' && item.filterInfo && <CandidateFilterComparison info={item.filterInfo}/>}
-          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation || publicChange) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content && !invalidImage) void submit({ ...preconditions(), action: "save_candidate", content, ...(imageEditable && imageSelection ? { imageSelection } : {}) }); }}>
+          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation || publicChange || publishedMode) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content && !invalidImage) void submit({ ...preconditions(), action: "save_candidate", content, ...(imageEditable && imageSelection ? { imageSelection } : {}) }); }}>
+            {publishedMode && <div className="my-6 border-y border-info-rule py-5">
+              <p className="leading-7 text-info-body">제목·요약·이미지·분류·필터·게시 시각은 유지하고 상세 본문만 저장합니다.</p>
+              {!publishedEditable && <p role="status" className="mt-3 leading-7 text-info-status">본문 수정에 필요한 최신 공개 상태를 확인하지 못했거나 원문·사실 변경이 있습니다. 원문 변경이 있는 글은 기존 원문 변경 검토 경로에서 수정해 주세요.</p>}
+              {item.kind === "candidates" && item.publishedSlug && <Link prefetch={false} className="mt-3 inline-flex min-h-11 items-center underline underline-offset-4" href={`/ko/info/${encodeURIComponent(item.publishedSlug)}`} target="_blank" rel="noopener noreferrer">현재 공개 글 열기 (새 창)</Link>}
+              <label htmlFor="published-edit-note" className="mt-4 block font-semibold">본문 수정 사유</label>
+              <textarea id="published-edit-note" value={note} onChange={e => setNote(e.target.value)} disabled={locked} className={fieldClass} rows={2} maxLength={4000} aria-invalid={Boolean(errors.note)} aria-describedby={errors.note ? "published-edit-note-error" : undefined} />
+              {errors.note && <p id="published-edit-note-error" className="mt-2 text-info-status">{errors.note}</p>}
+            </div>}
             {imageEditable && item.kind === "candidates" && item.image && imageSelection && <CandidateImageEditor key={item.id + item.version} saved={item.image} value={imageSelection} onChange={setImageSelection} disabled={locked} error={errors.imageUrl} title={content?.titleKo ?? item.content.titleKo} />}
-            {item.kind === "facts" && facts && !classificationActive ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor key={item.id+item.version} value={content} onChange={setContent} errors={errors} disabled={locked} formattedBody />}
-            {fieldsDirty && <p className="mt-6 leading-7 text-info-status">아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요.</p>}
-            {!processed && <div className="my-7 flex flex-wrap gap-3">
+            {item.kind === "facts" && facts && !classificationActive ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor key={item.id+item.version} value={content} onChange={setContent} errors={errors} disabled={locked} formattedBody bodyOnly={publishedMode} />}
+            {fieldsDirty && <p className="mt-6 leading-7 text-info-status">{publishedMode ? "아직 저장하지 않은 본문 변경이 있습니다. 다른 항목으로 이동하려면 저장하거나 수정을 취소해 주세요." : "아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요."}</p>}
+            {!processed && !publishedMode && <div className="my-7 flex flex-wrap gap-3">
               <button type="submit" disabled={publicChange || busy || Boolean(invalidImage) || Boolean(confirmation) || (!fieldsDirty && !(item.kind === "facts" && item.restoredReviewPending) && !(item.kind === "candidates" && item.filterInfo?.changed))} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>
               {dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(""); setNotice(""); }}>수정 취소</button>}
               {item.kind === "candidates" && item.status === "pending" && <button type="button" className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || (item.kind === "candidates" && Boolean((item.programInfo && !item.programInfo.canPublish) || (item.filterInfo && !item.filterInfo.canPublish)))} onClick={() => setConfirmation("publish")}>승인하고 게시</button>}
             </div>}
+            {publishedMode && <div className="my-7 flex flex-wrap gap-3">
+              <button type="button" className={primaryButton} disabled={!publishedEditable || busy || Boolean(confirmation) || !contentDirty || !note.trim()} onClick={() => setConfirmation("save_published_body")}>공개 본문 저장</button>
+              {dirty && <button type="button" className={secondaryButton} disabled={busy || Boolean(confirmation)} onClick={() => { accept(item); setError(""); setNotice(""); }}>수정 취소</button>}
+            </div>}
           </form>
-          {!processed && !publicChange && (item.kind === "candidates" || item.excludeAllowed !== false) && <section className="border-t border-info-rule pt-6">
+          {!processed && !publicChange && !publishedMode && (item.kind === "candidates" || item.excludeAllowed !== false) && <section className="border-t border-info-rule pt-6">
               {item.kind === "facts" && <><h3 className="font-bold">빠른 제외</h3><p className="mt-2 text-sm leading-6 text-info-muted">사유를 자동 기록하고 휴지통으로 이동합니다. 72시간 이내에 복구할 수 있습니다.</p>
               <div className="my-4 flex flex-wrap gap-3">{Object.entries(quickReasons).map(([code, label]) => <button key={code} type="button" className={secondaryButton} disabled={locked || fieldsDirty || Boolean(note)} onClick={() => void submit({ ...preconditions(), action: "exclude", reasonCode: code as QuickReason, note: "" })}>{label} · 제외</button>)}</div></>}
             <h3 className="text-lg font-bold">{item.kind === "facts" ? "부적격으로 제외" : "후보 반려"}</h3>
@@ -239,9 +265,9 @@ export default function ReviewWorkspace() {
             <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || fieldsDirty || !note.trim() || Boolean(confirmation)} onClick={() => setConfirmation(item.kind === "facts" ? "exclude" : "reject")}>{item.kind === "facts" ? "사유를 남기고 제외" : "사유를 남기고 반려"}</button>
           </section>}
           {confirmation && <section ref={confirmationBox} tabIndex={-1} aria-label="최종 처리 확인" className="mt-8 scroll-mt-36 border-y border-info-rule bg-info-surface px-5 py-6">
-            <h3 className="text-xl font-bold">{confirmation === "publish" ? "저장된 최종 내용으로 게시할까요?" : confirmation === "exclude" ? "이 항목을 제외할까요?" : "이 후보를 반려할까요?"}</h3>
-            <p className="mt-3 leading-7 text-info-body">{confirmation === "publish" ? `위에 표시된 한국어·일본어 저장본을 승인하고 게시합니다. 승인자·시각과 게시 이력을 함께 기록합니다.${mode === "local-fixture" ? " 현재는 실제 공개 없이 로컬 시험으로 처리됩니다." : ""}` : `기록할 사유: ${note}`}</p>
-            <div className="mt-5 flex flex-wrap gap-3"><button className={primaryButton} disabled={busy} onClick={() => void submit(confirmation === "publish" ? { ...preconditions(), action: "publish" } : { ...preconditions(), action: confirmation, note })}>{busy ? "처리 중…" : confirmation === "publish" ? "확인하고 게시" : "확인하고 처리"}</button><button className={secondaryButton} disabled={busy} onClick={() => setConfirmation(null)}>돌아가기</button></div>
+            <h3 className="text-xl font-bold">{confirmation === "save_published_body" ? "변경한 본문을 공개 글에 반영할까요?" : confirmation === "publish" ? "저장된 최종 내용으로 게시할까요?" : confirmation === "exclude" ? "이 항목을 제외할까요?" : "이 후보를 반려할까요?"}</h3>
+            <p className="mt-3 leading-7 text-info-body">{confirmation === "save_published_body" ? `수정 사유: ${note}. 위 한국어·일본어 본문 변경을 현재 공개 글에 반영하고 이력을 남깁니다.${mode === "local-fixture" ? " 실제 공개 없이 로컬 시험으로 처리됩니다." : ""}` : confirmation === "publish" ? `위에 표시된 한국어·일본어 저장본을 승인하고 게시합니다. 승인자·시각과 게시 이력을 함께 기록합니다.${mode === "local-fixture" ? " 현재는 실제 공개 없이 로컬 시험으로 처리됩니다." : ""}` : `기록할 사유: ${note}`}</p>
+            <div className="mt-5 flex flex-wrap gap-3"><button className={primaryButton} disabled={busy} onClick={confirmAction}>{busy ? "처리 중…" : confirmation === "save_published_body" ? "확인하고 공개 본문 저장" : confirmation === "publish" ? "확인하고 게시" : "확인하고 처리"}</button><button className={secondaryButton} disabled={busy} onClick={() => setConfirmation(null)}>돌아가기</button></div>
           </section>}
           {item.kind === "candidates" && item.publishedAt && <p className="mt-7 text-info-body">{mode === "local-fixture" ? "시험 게시" : "게시"} 시각: {time(item.publishedAt)} (한국 시간)</p>}
           {item.kind === "candidates" && <details className="mt-10 border-t border-info-rule pt-4" open={item.history.length > 0}>

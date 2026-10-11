@@ -19,14 +19,20 @@ export function reviewKind(value: string | null): ReviewKind {
   if (value === "facts" || value === "candidates") return value;
   throw new ReviewFailure("invalid_input");
 }
+function reviewScope(request: Request, kind: ReviewKind) {
+  const status = new URL(request.url).searchParams.get("status") ?? "pending";
+  if (status !== "pending" && status !== "published" || status === "published" && kind !== "candidates") throw new ReviewFailure("invalid_input");
+  return status;
+}
 export async function listReviews(request: Request, deps: Dependencies) {
   try {
     await deps.authorize();
     const kind = reviewKind(new URL(request.url).searchParams.get("kind"));
     const rawOffset = new URL(request.url).searchParams.get("offset") ?? "0";
     if (!/^\d{1,6}$/.test(rawOffset)) throw new ReviewFailure("invalid_input");
+    const scope = reviewScope(request, kind);
     const store = deps.store();
-    const items = await store.list(kind, Number(rawOffset));
+    const items = await store.list(kind, Number(rawOffset), scope);
     return privateResponse(Response.json({ mode: store.mode, items, hasMore: items.length === 25 }));
   } catch (error) { return failure(error); }
 }
@@ -36,7 +42,7 @@ export async function reviewDetail(request: Request, rawKind: string, id: string
     const { userId } = await deps.authorize();
     const kind = reviewKind(rawKind);
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new ReviewFailure("invalid_input");
-    if (request.method === "GET") { const store = deps.store(); return privateResponse(Response.json({ mode: store.mode, item: await store.get(kind, id) })); }
+    if (request.method === "GET") { const store = deps.store(); return privateResponse(Response.json({ mode: store.mode, item: await store.get(kind, id, reviewScope(request, kind)) })); }
     if (!isSameOriginPost(request)) return privateResponse(Response.json({ code: "wrong_origin" }, { status: 403 }));
     if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json") throw new ReviewFailure("invalid_input");
     const declaredLength = Number(request.headers.get("content-length"));

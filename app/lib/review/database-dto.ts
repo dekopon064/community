@@ -22,8 +22,8 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
   const v = object(data); const src = object(v.source);
   if (v.kind !== kind || v.id !== id || !/^[0-9a-f]{64}$/.test(string(v.revision)) || !/^[0-9a-f]{64}$/.test(string(v.version)) || !Array.isArray(v.history)) throw new ReviewFailure("unavailable");
   const base = { id, revision: string(v.revision), version: string(v.version), source: { name: string(src.name), title: string(src.title), url: string(src.url), body: string(src.body) },
-    history: v.history.map((entry) => { const h = object(entry); if (Number.isNaN(Date.parse(string(h.at)))) throw new ReviewFailure("unavailable"); const markers = src.name === "myseoul_program" && Array.isArray(h.fields) ? h.fields : [];
-      const changeLabel = markers.includes("source_change_review:no_impact") ? "원문 변경 확인·내용 영향 없음" : markers.includes("source_change_review:edited") ? markers.includes("source_change_stage:published") ? "공개 내용 수정·원문 변경 확인" : "후보 내용 수정·원문 변경 확인" : undefined;
+    history: v.history.map((entry) => { const h = object(entry); if (Number.isNaN(Date.parse(string(h.at)))) throw new ReviewFailure("unavailable"); const markers = Array.isArray(h.fields) ? h.fields : [];
+      const changeLabel = markers.includes("published_body_edit") ? "공개 본문 수정" : markers.includes("source_change_review:no_impact") ? "원문 변경 확인·내용 영향 없음" : markers.includes("source_change_review:edited") ? markers.includes("source_change_stage:published") ? "공개 내용 수정·원문 변경 확인" : "후보 내용 수정·원문 변경 확인" : undefined;
       return { ...(changeLabel ? { changeLabel } : {}), action: string(h.action), actor: string(h.actor), at: string(h.at), note: string(h.note) }; }) };
   if (kind === "facts") {
     const f = object(v.facts);
@@ -41,6 +41,7 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
   const c = object(v.content); const content = Object.fromEntries(["titleKo", "titleJa", "summaryKo", "summaryJa", "contentKo", "contentJa"].map((key) => [key, string(c[key])])) as CandidateContent;
   const publishedAt = nullable(v.publishedAt);
   if (publishedAt !== null && Number.isNaN(Date.parse(publishedAt))) throw new ReviewFailure("unavailable");
+  if (v.publishedBodyVersion !== undefined && (v.status !== "published" || !/^[a-f0-9]{64}$/.test(string(v.publishedBodyVersion)))) throw new ReviewFailure("unavailable");
   let programInfo;
   let image;
   if (base.source.name === "myseoul_program" && v.image !== undefined) {
@@ -58,5 +59,5 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
     programInfo = { inputFactsVersion: Number(p.inputFactsVersion), currentFactsVersion: Number(p.currentFactsVersion), inputChanged: p.inputChanged, canPublish: p.canPublish,
       applicationPeriod: string(p.applicationPeriod), operatingPeriod: string(p.operatingPeriod), ...(base.source.name === "myseoul_program" ? { changeReviewed: p.changeReviewed === true, changedFields: p.changedFields === undefined ? [] : strings(p.changedFields), comparisonAvailable: p.comparisonAvailable === true } : {}) };
   }
-  return { ...base, kind, content, filterInfo: candidateFilterInfo(v.filterInfo), status: choice(v.status, ["pending", "published", "rejected", "superseded"]), category: choice(v.category, ["", "policy", "program", "event", "youth_space", "living"]), period: string(v.period), publishedAt, publishedId: nullable(v.publishedId), ...(base.source.name === "myseoul_program" ? { publishedSlug: nullable(v.publishedSlug ?? null) } : {}), ...(programInfo ? { programInfo } : {}), ...(image ? { image } : {}) };
+  return { ...base, kind, content, filterInfo: candidateFilterInfo(v.filterInfo), status: choice(v.status, ["pending", "published", "rejected", "superseded"]), category: choice(v.category, ["", "policy", "program", "event", "youth_space", "living"]), period: string(v.period), publishedAt, publishedId: nullable(v.publishedId), ...(base.source.name === "myseoul_program" ? { publishedSlug: nullable(v.publishedSlug ?? null) } : {}), ...(programInfo ? { programInfo } : {}), ...(image ? { image } : {}), ...(v.publishedBodyVersion !== undefined ? { publishedBodyVersion: string(v.publishedBodyVersion) } : {}) };
 }
