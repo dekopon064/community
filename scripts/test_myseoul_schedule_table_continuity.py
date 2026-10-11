@@ -183,7 +183,8 @@ class ActualSummaryRegressionTests(unittest.TestCase):
             def ja(title, body):
                 translated.append(body)
                 self.assertIn(TABLE, body)
-                self.assertIn(protected_information(c), body)
+                from test_reclassification_ai import assert_public_facts
+                assert_public_facts(self, c, body)
                 return '合成案内', '''[要約]
 大人と子どもの家族が文書の作成と提出を実習する、合成テスト用プログラムです。
 

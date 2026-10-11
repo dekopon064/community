@@ -10,6 +10,18 @@ from ingest.reclassification_ai import validate_context,classification_input,pro
 from ingest.program_ai import ProgramAIAdapter
 from run_reclassified_content_ai import main
 
+def assert_public_facts(test, c, body):
+    """Check every protected value at its public destination, not an appendix."""
+    from ingest.reclassification_ai import protected_sections
+    from ingest.myseoul_ai_support import section_body
+    from ingest.ai_worker import KO_SECTION_HEADERS
+    test.assertNotIn('확인한 분류·참가 안내', body)
+    for header, value in protected_sections(c).items():
+        if value.strip():
+            section = section_body(body, header, KO_SECTION_HEADERS)
+            for line in value.splitlines():
+                if line.strip():test.assertIn(line, section)
+
 ID='40000000-0000-4000-8000-000000000901';REV='a'*64
 def context(cat='living',source='myseoul_program'):
     k=lambda v:{'status':'known','value':v};na={'status':'not_applicable','value':None}
@@ -59,7 +71,7 @@ class ClassificationAITests(unittest.TestCase):
             if provider_mode=='fail':raise TimeoutError()
             return '[한 줄 요약]\n합성 안내\n[주요 내용]\n합성 본문','success','fake-model'
         def ja(title,body):
-            self.assertIn(protected_information(c),body)
+            assert_public_facts(self,c,body)
             return '合成案内','[要約]\n合成案内\n[主な内容]\n参加条件は原文をご確認ください。 '+ ' '.join(re.findall(r'\d[\d,]*',body)),'success','fake-model'
         result=process_reclassified_job(ProgramAIAdapter(rpc),source_item_id=ID,revision=REV,classification_version=1,worker_id='synthetic-worker',summarize_ko=ko,translate_ja=ja)
         return result,events,inputs

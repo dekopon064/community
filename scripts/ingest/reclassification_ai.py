@@ -135,6 +135,46 @@ def protected_information(c:dict)->str:
     from ingest.body_markdown import format_reviewed_block
     return format_reviewed_block('\n'.join(lines))
 
+
+def protected_sections(c:dict)->dict[str,str]:
+    """Public placement of the same reviewed facts; classification stays metadata.
+
+    The legacy flattened text is used for validation, never appended to a body.
+    Method/contact details stay separate from audience, activity and schedule.
+    """
+    from ingest.myseoul_content import PUBLIC_FACT_SECTIONS, _public_fact_row
+    sections = {h: [] for h in ('[대상]', '[일정 안내]', '[주요 내용]', '[신청 방법]')}
+    destination = '[주요 내용]'
+    for index,line in enumerate(protected_information(c).splitlines()):
+        row = _public_fact_row(line)
+        # Only the two metadata rows built by this worker are omitted. A label
+        # quoted inside a source condition is data, not another metadata row.
+        if index < 2:
+            continue
+        # A program's reviewed application end already contains the deadline.
+        if row == ('신청 마감',c['facts']['deadlineOn']) and c['facts']['category'] == 'program':
+            continue
+        if re.fullmatch(r'\*\*진행 일정:\*\*', line):
+            destination = '[일정 안내]'
+        elif row and (row[0] in PUBLIC_FACT_SECTIONS or '발표' in row[0]):
+            destination = PUBLIC_FACT_SECTIONS.get(row[0], '[일정 안내]')
+        if line.strip():sections[destination].append(line)
+    native=c['nativeConfirmedFacts']['programFacts'] or {}
+    if native.get('schema_version')=='myseoul-program-facts-v1-local':
+        from ingest.myseoul_content import participation_constraints
+        from ingest.body_markdown import format_reviewed_block
+        if native.get('target'):sections['[대상]'].insert(0,native['target'])
+        constraints=participation_constraints(native)
+        represented=[v for v in native.get('conditions',[]) if v in constraints]
+        if native.get('residence'):represented.append(native['residence'])
+        sections['[대상]']=[line for line in sections['[대상]']
+            if not (row := _public_fact_row(line)) or row != ('거주 조건 근거',native.get('residence'))]
+        for value in constraints:
+            if value not in represented and value not in native.get('target',''):
+                sections['[대상]'].append(format_reviewed_block('참가 조건: '+value))
+        if native.get('venue'):sections['[주요 내용]'].append(format_reviewed_block('장소: '+native['venue']))
+    return {h:'\n'.join(lines) for h,lines in sections.items()}
+
 def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revision:str,classification_version:int,
         summarize_ko:Callable,translate_ja:Callable,worker_id:str,lease_seconds:int=300)->AiWorkerResult:
     try:
@@ -153,7 +193,6 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         content=normalize_application_link_text(normalize_schedule_heading(content,'ko'),links)
         summary=extract_summary_section(content,KO_SUMMARY_HEADER,KO_SECTION_HEADERS)
         verified=protected_information(c)
-        verified_in_main=False
         native=c['nativeConfirmedFacts']['programFacts'] or {}
         if native.get('schema_version')=='myseoul-program-facts-v1-local':
             from ingest.myseoul_content import validate_summary_period,validate_participant_quantities,deduplicate_summary_fees,validate_assembled_fees,without_replaced_announcements,normalize_summary_schedule
@@ -166,14 +205,16 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             validate_participant_quantities(native,content+'\n'+verified)
             main=deduplicate_summary_fees(main,fact_sections(native)['activity'])
             if not main:
-                main=verified
-                verified_in_main=True
+                main=protected_sections(c)['[주요 내용]']
             boundary='|'.join(re.escape(header) for header in KO_SECTION_HEADERS)
             content=re.sub(r'(?ms)(^\s*\[주요 내용\][ \t]*)(.*?)(?=^\s*(?:'+boundary+r')|\Z)',
                 lambda match:match[1]+'\n'+main+'\n',content,count=1)
-        if not verified_in_main:content+='\n\n'+verified
+        from ingest.myseoul_content import merge_reviewed_sections
+        content=merge_reviewed_sections(content,protected_sections(c))
         if native.get('schema_version')=='myseoul-program-facts-v1-local':
-            validate_assembled_fees(content,fact_sections(native)['activity'],canonical_block=verified)
+            from ingest.body_markdown import format_reviewed_block
+            fee_block=format_reviewed_block('비용: '+_public_fees(native['fees'])) if native['fees'] else ''
+            validate_assembled_fees(content,fact_sections(native)['activity'],canonical_block=fee_block)
         title_ja,content_ja,status_ja,_=translate_ja(c['title'],content)
         if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise ValueError()
         content_ja=normalize_schedule_heading(content_ja,'ja')

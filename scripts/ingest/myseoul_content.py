@@ -12,6 +12,110 @@ from ingest.body_markdown import comparison_text, inline_text, read_body, schedu
 from ingest.myseoul_ai_support import schedule_values
 from ingest.translation_validation import _dates_and_times, _entry, _quantities, _amounts, _durations
 
+
+PUBLIC_FACT_SECTIONS = {
+    '대상': '[대상]', '참가 조건': '[대상]', '참가 대상 근거': '[대상]',
+    '거주 조건': '[대상]', '거주 조건 근거': '[대상]', '모집 인원': '[대상]',
+    '신청기간': '[일정 안내]', '신청 기간': '[일정 안내]',
+    '진행기간': '[일정 안내]', '진행 기간': '[일정 안내]', '운영 기간': '[일정 안내]',
+    '개최 기간': '[일정 안내]', '신청 마감': '[일정 안내]',
+    '진행 일정': '[일정 안내]', '집결 안내': '[일정 안내]',
+    '장소': '[주요 내용]', '진행 방식': '[주요 내용]',
+    '비용': '[주요 내용]', '비용 안내': '[주요 내용]',
+    '신청 방법': '[신청 방법]', '신청 링크': '[신청 방법]',
+}
+
+
+def _public_fact_row(line: str):
+    plain = re.sub(r'^\s*[-+*]\s+', '', inline_text(line)).strip()
+    if re.fullmatch(r'https?://\S+', plain):
+        return None
+    match = re.fullmatch(r'([^:：\n]+)\s*[:：]\s*(.+)', plain)
+    return (match[1].strip(), match[2].strip()) if match else None
+
+
+def _same_public_row(left: str, right: str) -> bool:
+    # Exact text/role equality only. URL paths, numeric roles and qualifiers
+    # remain opaque; no substring, number-set or prose meaning inference.
+    a, b = _public_fact_row(left), _public_fact_row(right)
+    if a and b:
+        return a == b
+    if a or b:
+        labeled, bare = (a, right) if a else (b, left)
+        return labeled[0] in {'대상', '신청 방법', '신청 링크'} and labeled[1] == inline_text(bare).strip()
+    return inline_text(left).strip() == inline_text(right).strip()
+
+
+def merge_reviewed_sections(content: str, reviewed: dict[str, str]) -> str:
+    """Place public facts in their section, never below the last application.
+
+    Keep unique generated instructions and inseparable prose/table conditions.
+    Deduplicate only identical complete rows. A section heading is not data.
+    The summary is intentionally allowed to repeat useful facts for readability.
+    """
+    from ingest.ai_worker import KO_SECTION_HEADERS
+    headers = list(KO_SECTION_HEADERS)
+    boundary = '|'.join(re.escape(h) for h in headers)
+    matches = list(re.finditer(r'(?ms)^[ \t]*('+boundary+r')[ \t]*(.*?)(?=^[ \t]*(?:'+boundary+r')(?=[ \t]|$)|\Z)', content))
+    if (not matches or content[:matches[0].start()].strip()
+            or len({m[1] for m in matches}) != len(matches)):
+        raise AiJobError('ai_schema_error')
+    sections = {m[1]: m[2].strip() for m in matches}
+    if not sections.get('[한 줄 요약]') or not sections.get('[주요 내용]'):
+        raise AiJobError('ai_schema_error')
+    canonical = [line for value in reviewed.values() for line in value.splitlines() if line.strip()]
+    method_rows = [v for v in reviewed.get('[신청 방법]', '').splitlines() if v.strip()]
+    links = {row[1] for v in method_rows if (row := _public_fact_row(v)) and row[0] == '신청 링크'}
+    methods = {(_public_fact_row(v) or ('', inline_text(v).strip()))[1] for v in method_rows
+               if not _public_fact_row(v) or _public_fact_row(v)[0] == '신청 방법'}
+    kept = {h: [] for h in headers}
+    for header, text in sections.items():
+        if header == '[한 줄 요약]':
+            kept[header] = [text]
+            continue
+        # Remove an exact previously merged block as a whole. In particular,
+        # don't leave a table/header behind when applying this function twice.
+        own = reviewed.get(header, '').strip()
+        if own:
+            text = re.sub(r'(?m)^'+re.escape(own)+r'(?=\n|$)', '', text)
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            row = _public_fact_row(line)
+            # Tables and indented continuations are never individually removed
+            # or moved. A date/activity belongs to its existing row/parent.
+            if '|' in line or (line[:1].isspace() and line.strip()):
+                kept[header].append(line)
+                continue
+            continuation = index+1 < len(lines) and lines[index+1][:1].isspace() and lines[index+1].strip()
+            if line.strip() and not continuation and any(_same_public_row(line, v) for v in canonical):
+                continue
+            # A pure "<confirmed method>: <confirmed URL>" row carries no
+            # extra instructions. Keep contact/QR/qualification prose intact.
+            if header == '[신청 방법]' and row and not continuation and row[1] in links and row[0] in methods:
+                continue
+            destination = (PUBLIC_FACT_SECTIONS.get(row[0], header)
+                           if header == '[신청 방법]' and row and not continuation else header)
+            kept[destination].append(line)
+    for header, value in reviewed.items():
+        if header not in kept:
+            raise AiJobError('ai_schema_error')
+        if value.strip():
+            while kept[header] and not kept[header][-1].strip():
+                kept[header].pop()
+            kept[header].extend(['', value])
+    result = '\n\n'.join(h+'\n'+ '\n'.join(kept[h]).strip() for h in headers
+                         if '\n'.join(kept[h]).strip())
+    # No unsectioned internal checklist can silently become public method text.
+    if re.search(r'(?m)^\s*확인한 분류·참가 안내\s*$', result):
+        raise AiJobError('ai_schema_error')
+    for line in '\n'.join(kept['[신청 방법]']).splitlines():
+        row = _public_fact_row(line)
+        if row and (row[0] == '분류' or PUBLIC_FACT_SECTIONS.get(row[0], '[신청 방법]') != '[신청 방법]'):
+            # Ambiguous/nested records are not silently discarded to force
+            # completion. Use the worker's existing pre-translation failure.
+            raise AiJobError('ai_schema_error')
+    return result
+
 _DATED_LINE = (r'^(?:제?\d+\s*(?:회차|차)\s*[:.)-]?\s*)?'
                r'(?:(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일|\d{4}-\d{2}-\d{2})')
 
@@ -527,9 +631,11 @@ def validate_assembled_fees(content: str, activity: str, *, canonical_block: str
     that cannot be separated safely are preserved, not classified as duplicates.
     """
     block = canonical_block if canonical_block is not None else activity
-    if content.count(block) != 1:
+    if block and content.count(block) != 1:
         raise AiJobError('ai_schema_error')
-    generated = content.replace(block, '', 1)
+    # Empty reviewed fees have no public fee row. Validate the entire text;
+    # never invent a free/paid value or bypass the existing component checks.
+    generated = content.replace(block, '', 1) if block else content
     validate_summary_fees(generated, activity)
     # Never remove table cells. A pure repeat fails before translation; a row
     # containing an inseparable refund/discount/activity condition stays intact.

@@ -228,7 +228,8 @@ class ScheduleBlockTests(unittest.TestCase):
         self.assertEqual(c,before)
         self.assertEqual(calls,['claim_reclassified_content_ai','finish_reclassified_content_ai'])
         self.assertEqual(json.loads(ko.call_args.args[0])['currentFilters'],c['filters'])
-        self.assertIn(protected_information(c),ja.call_args.args[1])
+        from test_reclassification_ai import assert_public_facts
+        assert_public_facts(self,c,ja.call_args.args[1])
         self.assertIn('10월 30일',output['contentKo'])
         calls.clear()
         ko.return_value = (RECORDED_SUMMARY.replace('10월 30일:', '10월 31일:'),'success','fake-model')

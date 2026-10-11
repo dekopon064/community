@@ -162,7 +162,8 @@ class ContentContinuityTests(unittest.TestCase):
         def ja(title, content):
             self.assertNotIn('수강료는 무료이며', content)
             self.assertIn('환불 조건은 원문을 확인하세요.', content)
-            self.assertIn(protected_information(c), content)
+            from test_reclassification_ai import assert_public_facts
+            assert_public_facts(self, c, content)
             import re
             return '合成', '[要約]\n合成\n[主な内容]\n'+ ' '.join(re.findall(r'\d[\d,]*', content)), 'success', 'fake'
         result = process_reclassified_job(ProgramAIAdapter(rpc), source_item_id=ID, revision=REV,
@@ -170,16 +171,18 @@ class ContentContinuityTests(unittest.TestCase):
         self.assertEqual(result.completed, 1)
         self.assertEqual(c, before)
         self.assertEqual([name for name,_ in events], ['claim_reclassified_content_ai','finish_reclassified_content_ai'])
-        # Fee-only major content still has a real section: insert the protected
-        # block there once, without dropping it or appending a second copy.
+        # Fee-only major content keeps the activity/fee section. Audience and
+        # schedule are separately preserved, never appended below application.
         events.clear()
         ko.return_value = ('[한 줄 요약]\n합성 교육\n[주요 내용]\n'
             '수강료는 무료이며, 입장료는 3,000원입니다.\n[신청 방법]\n공식 안내 확인', 'success', 'fake')
         def fee_only_ja(title, content):
             from ingest.myseoul_ai_support import section_body
             from ingest.ai_worker import KO_SECTION_HEADERS
-            self.assertEqual(section_body(content, '[주요 내용]', KO_SECTION_HEADERS), protected_information(c))
-            self.assertEqual(content.count(protected_information(c)), 1)
+            from test_reclassification_ai import assert_public_facts
+            from ingest.reclassification_ai import protected_sections
+            assert_public_facts(self, c, content)
+            self.assertEqual(section_body(content, '[주요 내용]', KO_SECTION_HEADERS), protected_sections(c)['[주요 내용]'])
             self.assertNotIn('수강료는 무료이며', content)
             import re
             return '合成', '[要約]\n合成\n[主な内容]\n'+ ' '.join(re.findall(r'\d[\d,]*', content)), 'success', 'fake'
