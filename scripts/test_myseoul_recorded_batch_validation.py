@@ -19,49 +19,68 @@ from test_reclassification_ai import context as classified_context
 
 CASES = json.loads((Path(__file__).parent / 'testdata/myseoul_recorded_batch_responses.json').read_text(encoding='utf-8'))['cases']
 
-# Handwritten replacements for the JSON tail only. The prefix is the recorded
-# model translation, not evidence that the model generated this new body.
+# Handwritten current-contract replacements for the JSON tail. Recorded response
+# bytes remain unchanged; these lists/links are fake fixtures, not model evidence.
 FAKE_PROTECTED_JA = {
     0: '''確認済みの分類・参加案内
-分類：プログラム
-実施方式：オフライン
-申請締切：2026年10月17日
-申請方法：来所,電話
-費用：受講料：無料
-募集人数：20名
-実施日程：2026年10月24日（土）13時30分～17時00分 / 家族プログラムは9月～11月に計3回実施され、3回すべてに参加した家族にはプレゼントと修了証が提供されます。
-申請期間：2026年10月1日10時00分～2026年10月17日18時00分（+09:00）
-実施期間：2026年10月24日13時30分～2026年10月24日17時00分''',
+- **分類:** プログラム
+- **実施方式:** オフライン
+- **申請締切:** 2026年10月17日
+- **申請方法:** 来所,電話
+- **費用:** 受講料: 無料
+- **募集人数:** 20名
+
+**実施日程:**
+- **日程:** 2026年10月24日（土）13時30分～17時00分
+- **参加特典:** 家族プログラムは9月～11月に計3回実施され、3回すべてに参加した家族にはプレゼントと修了証が提供されます。
+
+- **申請期間:** 2026年10月1日10時00分～2026年10月17日18時00分（+09:00）
+- **実施期間:** 2026年10月24日13時30分～2026年10月24日17時00分''',
     1: '''確認済みの分類・参加案内
-分類：プログラム
-実施方式：オフライン
-申請締切：2026年10月25日
-申請方法：その他（Googleフォーム）
-費用：受講料：無料
-募集人数：30名
-実施日程：10月29日（木）～10月30日（金）13時00分～17時30分
-申請期間：2026年10月8日00時00分+09:00～2026年10月25日23時50分+09:00
-実施期間：2026年10月29日13時00分～2026年10月30日17時30分''',
+- **分類:** プログラム
+- **実施方式:** オフライン
+- **申請締切:** 2026年10月25日
+- **申請方法:** その他（Googleフォーム）
+- **費用:** 受講料: 無料
+- **募集人数:** 30名
+
+**実施日程:**
+- ▪️ 日時: 10月29日（木）～10月30日（金）13時00分～17時30分
+
+- **申請リンク:** https://forms.gle/SG4i68iNWKWSFWLy8
+- **申請期間:** 2026年10月8日00時00分+09:00～2026年10月25日23時50分+09:00
+- **実施期間:** 2026年10月29日13時00分～2026年10月30日17時30分''',
     3: '''確認済みの分類・参加案内
-分類：プログラム
-実施方式：オフライン
-申請締切：2026年10月21日
-参加条件：子どもは接種できません。
-申請方法：来所、オンライン
-費用：受講料：無料
-募集人数：20名
-実施日程：第1回50名：2026年10月25日（日）14時00分～16時00分（予定） / 第2回50名：2026年11月8日（日）14時00分～16時00分（予定） / 第1回50名：2026年10月25日（日）14時00分～16時00分（変更の可能性あり） / 第2回50名：2026年11月8日（日）14時00分～16時00分（変更の可能性あり） / 第1回50名：2026年10月25日（日）14時00分～16時00分（日時が変更される可能性あり） / 第2回50名：2026年11月8日（日）14時00分～16時00分（日時が変更される可能性あり） / 第1回（50名）：2026年10月25日（日）14時00分～16時00分（実施予定確定） / 第2回（50名）：2026年11月8日（日）14時00分～16時00分（実施予定確定）
-申請期間：2026年10月8日01時00分+09:00～2026年10月21日18時30分+09:00
-実施期間：2026年10月25日14時00分～2026年10月25日16時00分''',
+- **分類:** プログラム
+- **実施方式:** オフライン
+- **申請締切:** 2026年10月21日
+- **参加条件:** * 子どもは接種できません。
+- **申請方法:** 来所、オンライン
+- **費用:** 受講料: 無料
+- **募集人数:** 20名
+
+**実施日程:**
+- 第1回50名: 2026年10月25日（日）14時00分～16時00分（予定）
+- 第2回50名: 2026年11月8日（日）14時00分～16時00分（予定）
+- 第1回50名: 2026年10月25日（日）14時00分～16時00分（変更の可能性あり）
+- 第2回50名: 2026年11月8日（日）14時00分～16時00分（変更の可能性あり）
+- 第1回50名: 2026年10月25日（日）14時00分～16時00分（日時が変更される可能性あり）
+- 第2回50名: 2026年11月8日（日）14時00分～16時00分（日時が変更される可能性あり）
+- 第1回（50名）: 2026年10月25日（日）14時00分～16時00分（実施予定確定）
+- 第2回（50名）: 2026年11月8日（日）14時00分～16時00分（実施予定確定）
+
+- **申請リンク:** https://forms.gle/ZycTB4k8y6embBMK6
+- **申請期間:** 2026年10月8日01時00分+09:00～2026年10月21日18時30分+09:00
+- **実施期間:** 2026年10月25日14時00分～2026年10月25日16時00分''',
     4: '''確認済みの分類・参加案内
-分類：プログラム
-実施方式：オフライン
-申請締切：2026年10月13日
-申請方法：その他（Googleフォーム）
-費用：受講料：無料
-募集人数：20名
-申請期間：2026年10月8日00時00分+09:00～2026年10月13日00時00分+09:00
-実施期間：2026年10月15日10時00分～2026年10月15日11時30分''',
+- **分類:** プログラム
+- **実施方式:** オフライン
+- **申請締切:** 2026年10月13日
+- **申請方法:** オンライン
+- **費用:** 受講料: 無料
+- **募集人数:** 20名
+- **申請期間:** 2026年10月8日00時00分+09:00～2026年10月13日00時00分+09:00
+- **実施期間:** 2026年10月15日10時00分～2026年10月15日11時30分''',
 }
 
 # TOPIK translation was never called in the live batch; this entire fixture is fake.
@@ -70,17 +89,19 @@ FAKE_ONLINE_JA = '''[要約]
 [対象]
 外国人住民
 [日程案内]
-申請期間：2026年9月28日10:00～2026年10月15日18:00
-実施期間：2026年10月18日12:00～2026年11月8日15:00
-実施日程：毎週日曜日、10月18日～11月8日、全4回、1回3時間
+- **申請期間:** 2026年9月28日10:00～2026年10月15日18:00
+- **実施期間:** 2026年10月18日12:00～2026年11月8日15:00
+
+**実施日程:**
+- ■ 運営期間: 10月18日～11月8日 / 毎週日曜日（4回）、3時間
 [主な内容]
 ZOOMのオンライン授業です。この案内ではTOPIKクラス1のみ申し込めます。他のレベルのクラスは申し込めません。
-費用：受講料：無料
-募集人数：20名
-実施方式：オンライン
+- **費用:** 受講料: 無料
+- **募集人数:** 20名
+- **実施方式:** オンライン
 [申請方法]
 オンライン
-申請リンク：https://forms.gle/ziWmG2CKaaD3gu2N9?fbclid=IwZXh0bgNhZW0CMTAAcGRvZgFicmlkETFEVFJMcFZQd2JsSkMyQzVac3J0YwZhcHBfaWQQMjIyMDM5MTc4ODIwMDg5MgABHr70cEf-rnl3As_hNzIezXVoHhqTilygZnkHsb50OLfr9uk7f9trtzhufH_3_aem_KNMYNkZGAKfqkzTSy-h3ZQ / https://forms.gle/ziWmG2CKaaD3gu2N9?fbclid=IwZXh0bgNhZW0CMTAAcGRvZgFicmlkETFEVFJMcFZQd2JsSkMyQzVac3J0YwZhcHBfaWQQMjIyMDM5MTc4ODIwMDg5MgABHq8GVS1LnLu_z7nM8OwPNNMlQ80BTJMkqptxFhwu3DRZYozQGfKmC3uhLjFU_aem_Oq0Pc_S-URH_10nG1sLi9Q'''
+- **申請リンク:** https://forms.gle/ziWmG2CKaaD3gu2N9'''
 
 
 def replay_context(index):
@@ -113,10 +134,12 @@ class RecordedBatchValidationTests(unittest.TestCase):
         validate_summary_period(case['summary']['content_ko'], fact_sections(f)['[일정 안내]'], f)
 
     def test_recorded_classified_protection_is_readable_not_json(self):
-        for case in CASES:
+        for index, case in enumerate(CASES):
             if case['route'] != 'classified':
                 continue
-            c = copy.deepcopy(case['context'])
+            # Recorded snapshot is intentionally partial. The fake worker claim
+            # supplies required metadata, including the actual source contract.
+            c = replay_context(index)
             before = copy.deepcopy(c)
             text = protected_information(c)
             self.assertNotRegex(text, r'\["|\{\s*"|"evidence"|"component"')
@@ -256,6 +279,21 @@ class RecordedBatchValidationTests(unittest.TestCase):
                     else:
                         ja, title_ja = FAKE_ONLINE_JA, '日曜韓国語教室TOPIKクラス1募集'
                     validate_translation_fidelity(title, body, title_ja, ja)
+                    # A corrected fixture must still fail if a list item or
+                    # canonical application link is removed/changed.
+                    lines = ja.splitlines()
+                    first_item = next(i for i, line in enumerate(lines) if line.startswith('- '))
+                    with self.assertRaises(AiJobError):
+                        validate_translation_fidelity(title, body, title_ja,
+                            '\n'.join(lines[:first_item] + lines[first_item+1:]))
+                    for link in ('https://forms.gle/SG4i68iNWKWSFWLy8',
+                                 'https://forms.gle/ziWmG2CKaaD3gu2N9',
+                                 'https://forms.gle/ZycTB4k8y6embBMK6',
+                                 'https://bit.ly/hangeulkeyring1015'):
+                        if link in ja:
+                            with self.assertRaises(AiJobError):
+                                validate_translation_fidelity(title, body, title_ja,
+                                    ja.replace(link, 'https://synthetic.invalid/wrong-application'))
                     return title_ja, ja, 'success', 'fake-translation'
                 ko = Mock(return_value=(case['summary']['content_ko'], 'success', 'recorded-response'))
                 ja = Mock(side_effect=fake_translation)

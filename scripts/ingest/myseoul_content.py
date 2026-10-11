@@ -20,6 +20,37 @@ def _plain_schedule_line(line: str) -> str:
     return re.sub(r'^[^\w가-힣\[]+', '', inline_text(line)).strip('[]:： ')
 
 
+def _schedule_heading_or_invitation(line: str) -> bool:
+    """Recognize only factless headings/invitations, not arbitrary prose.
+
+    A weekday in a class title is not a session. Explicit recurrence, dates,
+    counts, durations, money and restrictions always prevent removal.
+    """
+    text = inline_text(line).strip()
+    values = schedule_values(text)
+    if (any(v for key, v in values.items() if key != 'weekdays')
+            or _dates_and_times(text) or _durations(text) or _amounts(text, japanese=False)
+            or _quantities(text, japanese=False)
+            or re.search(r'매주|격주|매월|매일|필수|의무|조건|자격|제한|전용|한정|선착순|'
+                         r'보호자|동반|지참|제출|출석|참석|국적|비자|거주|연령|\d+\s*살|'
+                         r'불가|금지|않|없|이상|이하|미만|초과|만\s*신청|'
+                         r'무료|유료|할인|면제|환불|납부|마감|종료|취소|변경|예정', text)):
+        return False
+    return bool(
+        re.fullmatch(r'<[^<>\n]+(?:모집|신청|수업|교육|일정)\s*안내\s*>', text)
+        or re.fullmatch(r'(?:교육|수업|강의|행사|프로그램|진행|운영)\s*(?:일정|일시)(?:\s*안내)?',
+                        _plain_schedule_line(text))
+        or re.fullmatch(r'.+(?:신청|모집)\s*안내\s*(?:드립니다|드려요|합니다)[.!。！]*', text)
+        or re.fullmatch(r'(?:많은\s*)?관심과\s*참여\s*부탁드립니다[.!。！]*', text)
+    )
+
+
+def schedule_block(lines: list[str]) -> str:
+    """Keep evidence boundaries as list items; never split source slashes."""
+    return ('**진행 일정:**\n' + '\n'.join('- ' + line.replace('\n', '\n  ') for line in lines)
+            if lines else '')
+
+
 def _schedule_display_line(line: str) -> str:
     # Keep the explicit count, not the surrounding invitation. Mixed dates,
     # durations, obligations and uncertain statements retain their source text.
@@ -40,7 +71,8 @@ def _schedule_display_line(line: str) -> str:
 def schedule_lines(f: dict) -> list[str]:
     # Explicit structured sessions take precedence over the current description.
     if f.get('session_evidence'):
-        return list(dict.fromkeys(_schedule_display_line(line) for line in f['session_evidence']))
+        return list(dict.fromkeys(_schedule_display_line(line) for line in f['session_evidence']
+                                 if not _schedule_heading_or_invitation(line)))
     lines = []
     in_schedule = False
     for line in f.get('description', '').splitlines():
@@ -57,7 +89,7 @@ def schedule_lines(f: dict) -> list[str]:
         values = schedule_values(line)
         dated_bullet = in_schedule and re.match(_DATED_LINE, plain)
         counted_class = values['counts'] and re.search(r'총\s*\d+\s*회|\d+\s*번', line)
-        labeled = re.search(r'일정|일시|회차|교육일|수업일', line)
+        labeled = re.search(r'일정|일시|회차|교육일|수업일|(?:운영|교육|수업|진행)\s*기간', line)
         if (dated_bullet or counted_class or labeled) and any(values.values()):
             line = _schedule_display_line(line)
             if line not in lines:
@@ -66,6 +98,35 @@ def schedule_lines(f: dict) -> list[str]:
             # A different section or ordinary prose ends the date-list scope.
             in_schedule = False
     return lines
+
+
+def normalize_summary_schedule(content: str, f: dict) -> str:
+    """After validation, repair exact legacy serialization in the schedule section.
+
+    No slash parsing or global replacements. Unknown/mixed prose and tables stay
+    intact; only known record joins or wholly factless headings are changed.
+    """
+    records = f.get('session_evidence') or schedule_lines(f)
+    legacy = {' / '.join(records), ' / '.join(schedule_lines(f))} - {''}
+    def replace_section(match):
+        lines = []
+        changed = False
+        for line in match[2].splitlines():
+            plain = _plain_schedule_line(line)
+            labeled = re.fullmatch(r'진행\s*일정\s*[:：]\s*(.*)', plain)
+            if labeled and labeled[1] in legacy:
+                lines.append(schedule_block(schedule_lines(f)))
+                changed = True
+            elif inline_text(line).strip() == '진행 일정:':
+                # Retain the generated list's label on repeated processing.
+                lines.append(line)
+            elif not _schedule_heading_or_invitation(line):
+                lines.append(line)
+            else:
+                changed = True
+        return match[1] + '\n' + '\n'.join(lines).strip() + '\n\n' if changed else match[0]
+    return re.sub(r'(?ms)(^[ \t]*\[일정 안내\][ \t]*)(.*?)(?=^[ \t]*\[|\Z)',
+                  replace_section, content, count=1)
 
 
 _ANNOUNCEMENT_LABEL = r'(?:합격자|선정자|당첨자|선발\s*결과|선정\s*결과|합격\s*여부|결과)\s*발표'

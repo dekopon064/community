@@ -114,15 +114,17 @@ def protected_information(c:dict)->str:
             protected=participation_constraints(native)
             value=[v for v in (value or []) if v in protected]
         if key=='session_evidence' and value and native.get('schema_version')=='myseoul-program-facts-v1-local':
-            from ingest.myseoul_content import schedule_lines
-            value=schedule_lines(native)
+            from ingest.myseoul_content import schedule_lines, schedule_block
+            block=schedule_block(schedule_lines(native))
+            if block:lines.append('\n'+block+'\n')
+            continue
         if value:
             text=_public_fees(value) if key=='fees' else _public_text(value)
             lines.append(label+': '+text)
     if native.get('schema_version') == 'myseoul-program-facts-v1-local':
-        from ingest.myseoul_content import schedule_lines, announcement_lines
+        from ingest.myseoul_content import schedule_lines, schedule_block, announcement_lines
         if not native.get('session_evidence') and schedule_lines(native):
-            lines.append('진행 일정: '+' / '.join(schedule_lines(native)))
+            lines.append('\n'+schedule_block(schedule_lines(native))+'\n')
         lines.extend(announcement_lines(native))
     if f['category']=='program':
         application=c['filters']['application']['value']
@@ -154,10 +156,11 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         verified_in_main=False
         native=c['nativeConfirmedFacts']['programFacts'] or {}
         if native.get('schema_version')=='myseoul-program-facts-v1-local':
-            from ingest.myseoul_content import validate_summary_period,validate_participant_quantities,deduplicate_summary_fees,validate_assembled_fees,without_replaced_announcements
+            from ingest.myseoul_content import validate_summary_period,validate_participant_quantities,deduplicate_summary_fees,validate_assembled_fees,without_replaced_announcements,normalize_summary_schedule
             from ingest.myseoul_ai_support import section_body
             from ingest.myseoul_ai import fact_sections
             validate_summary_period(content,verified,native)
+            content=normalize_summary_schedule(content,native)
             content=without_replaced_announcements(content,native)
             main=section_body(content,'[주요 내용]',KO_SECTION_HEADERS)
             validate_participant_quantities(native,content+'\n'+verified)

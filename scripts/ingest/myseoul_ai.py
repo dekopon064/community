@@ -17,7 +17,7 @@ from ingest.myseoul_db import SCHEMA, evaluate_myseoul_facts
 from ingest.program_ai import ProgramAIAdapter, reviewed_temporal_ready
 from ingest.myseoul_ai_support import section_body, schedule_values, process_program_job
 from ingest.region_ja_glossary import validate_japanese_output
-from ingest.myseoul_content import (schedule_lines, announcement_lines, without_replaced_announcements,
+from ingest.myseoul_content import (schedule_lines, schedule_block, announcement_lines, without_replaced_announcements,
     validate_summary_period, participation_constraints, validate_participant_quantities, deduplicate_summary_fees,
     validate_assembled_fees, retained_schedule_tables, deduplicate_summary_venue)
 
@@ -154,7 +154,7 @@ def fact_sections(f: dict) -> dict[str, str]:
     period = "신청기간: " + period_text(f, "application") + "\n진행기간: " + period_text(f, "operation")
     sessions = schedule_lines(f)
     if sessions:
-        period += "\n진행 일정: " + " / ".join(sessions)
+        period += "\n\n" + schedule_block(sessions)
     if f["meeting_evidence"]:
         period += "\n집결 안내: " + " / ".join(f["meeting_evidence"])
     announcements = announcement_lines(f)
