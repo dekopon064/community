@@ -88,14 +88,14 @@ class JapaneseValidationTests(unittest.TestCase):
 
 class PromptAndCandidatePathTests(unittest.TestCase):
     def test_summary_prompt_requires_sections_and_skips_absent_optional_ones(self) -> None:
-        for label in ("[한 줄 요약]", "[대상]", "[기간·상태]", "[주요 내용]", "[신청 방법]"):
+        for label in ("[한 줄 요약]", "[대상]", "[일정 안내]", "[주요 내용]", "[신청 방법]"):
             self.assertIn(label, SUMMARY_SYSTEM)
         self.assertIn("[한 줄 요약] and [주요 내용] are required.", SUMMARY_SYSTEM)
         self.assertIn("없는 선택 섹션은 만들지 않는다", SUMMARY_SYSTEM)
 
     def test_translation_prompt_includes_japanese_sections_and_glossary(self) -> None:
         system = translation_system_prompt()
-        for label in ("[要約]", "[対象]", "[期間・状況]", "[主な内容]", "[申請方法]"):
+        for label in ("[要約]", "[対象]", "[日程案内]", "[主な内容]", "[申請方法]"):
             self.assertIn(label, system)
         self.assertIn("없는 선택 섹션은 만들지 않는다", system)
         self.assertIn("강남구 → カンナム区", system)

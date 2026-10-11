@@ -15,6 +15,7 @@ from ingest.source_identity import (
 )
 from ingest.store import AI_CLAIM_LIMIT, DEFAULT_JOB_LEASE_SECONDS, IngestStore, LeaseLost
 from ingest.content_filters import validate_claim_filter
+from ingest.body_sections import KO_SECTION_HEADERS, JA_SECTION_HEADERS, normalize_schedule_heading
 
 WORKER_ID = "ingest-ai-worker"
 AI_SKIPPED_NOT_CONFIGURED = "ai_skipped_not_configured"
@@ -30,20 +31,6 @@ _ONE_OFF_INCOMPLETE_BODY = "홈페이지 링크: https://buly.kr/jc9Pam"
 SUMMARY_MAX_CHARS = 1000
 KO_SUMMARY_HEADER = "[한 줄 요약]"
 JA_SUMMARY_HEADER = "[要約]"
-KO_SECTION_HEADERS = (
-    "[한 줄 요약]",
-    "[대상]",
-    "[기간·상태]",
-    "[주요 내용]",
-    "[신청 방법]",
-)
-JA_SECTION_HEADERS = (
-    "[要約]",
-    "[対象]",
-    "[期間・状況]",
-    "[主な内容]",
-    "[申請方法]",
-)
 
 SummarizeFn = Callable[..., tuple[str, str, str | None]]
 TranslateFn = Callable[..., tuple[str | None, str | None, str, str | None]]
@@ -284,10 +271,14 @@ def _process_one(
     content_ko, ai_status_ko, ai_model = _call_summarize(
         summarize_ko, body, source_url, title
     )
+    if isinstance(content_ko, str):
+        content_ko = normalize_schedule_heading(content_ko, 'ko')
 
     title_ja = content_ja = ai_status_ja = None
     if ai_status_ko == "success" and translate_ja is not None:
         title_ja, content_ja, ai_status_ja, _model = translate_ja(title, content_ko)
+        if isinstance(content_ja, str):
+            content_ja = normalize_schedule_heading(content_ja, 'ja')
 
     summary_ko = extract_summary_section(
         content_ko, KO_SUMMARY_HEADER, KO_SECTION_HEADERS
@@ -364,6 +355,10 @@ def extract_summary_section(
     """
     if not isinstance(content, str):
         raise AiJobError("ai_schema_error")
+    if headers == KO_SECTION_HEADERS or headers == JA_SECTION_HEADERS:
+        locale = 'ko' if headers == KO_SECTION_HEADERS else 'ja'
+        content = normalize_schedule_heading(content, locale)
+        header = normalize_schedule_heading(header, locale)
     ordered = tuple(sorted(headers, key=len, reverse=True))
     parts: list[str] = []
     collecting = False

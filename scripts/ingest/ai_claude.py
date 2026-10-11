@@ -9,6 +9,7 @@ from typing import Any
 from ingest.ai_errors import AI_UNEXPECTED_THINKING, AiJobError
 from ingest.region_ja_glossary import glossary_prompt_block, validate_japanese_output
 from ingest.translation_validation import validate_translation_fidelity
+from ingest.body_sections import normalize_schedule_heading
 
 SONNET_MODEL = "claude-sonnet-5"
 SUMMARY_MAX_TOKENS = 2048
@@ -108,7 +109,7 @@ def validate_summary_payload(payload: object) -> str:
     for key in required_facts:
         if not isinstance(facts[key], str):
             raise AiJobError("ai_schema_error")
-    return content_ko
+    return normalize_schedule_heading(content_ko, 'ko')
 
 
 def validate_translation_payload(payload: object) -> tuple[str, str]:
@@ -119,7 +120,7 @@ def validate_translation_payload(payload: object) -> tuple[str, str]:
         raise AiJobError("ai_schema_error")
     title_ja = _require_string(payload.get("title_ja"), "title_ja")
     content_ja = _require_string(payload.get("content_ja"), "content_ja")
-    return title_ja, content_ja
+    return title_ja, normalize_schedule_heading(content_ja, 'ja')
 
 
 def _thinking_disabled() -> dict[str, str]:

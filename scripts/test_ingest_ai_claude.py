@@ -128,10 +128,10 @@ class ClaudeContractTests(unittest.TestCase):
     def test_copied_prompt_schema_hashes(self) -> None:
         expected = {
             PROMPTS / "summary_system.txt": (
-                "b53aabae7400cf5877fec8e858d00e4c6f910c9126335dc69a8ec99c075ef7cf"
+                "83ad14af15b430c9d68d73438424456ac0cc3a54e4f04ce6fad87467ab18842e"
             ),
             PROMPTS / "translation_system.txt": (
-                "fb713d6953eb87b721c6c5c1511437ad327f3292b30a02d94f92877a60c17b69"
+                "7d78c9742a58819766442c7c47dab48ee72efcb60769c2044bddcea1ebf65cc1"
             ),
             SCHEMAS / "summary.schema.json": (
                 "88fb85a1a5cd4a485e15701d3e708d3568c212f1f605665f7300b0a0efedb093"

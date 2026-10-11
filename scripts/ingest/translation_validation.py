@@ -11,9 +11,10 @@ import re
 import unicodedata
 
 from ingest.ai_errors import AiJobError
+from ingest.body_sections import normalize_schedule_heading
 
 _HEADERS = {
-    "한 줄 요약": "要約", "대상": "対象", "기간·상태": "期間・状況",
+    "한 줄 요약": "要約", "대상": "対象", "일정 안내": "日程案内",
     "주요 내용": "主な内容", "신청 방법": "申請方法",
 }
 _NUMBER = r"\d[\d,]*(?:\.\d+)?"
@@ -144,6 +145,8 @@ def _validate_field(korean: str, japanese: str) -> None:
 
 
 def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str, content_ja: str) -> None:
+    content_ko = normalize_schedule_heading(content_ko, 'ko')
+    content_ja = normalize_schedule_heading(content_ja, 'ja')
     for korean, japanese in ((title_ko, title_ja), (content_ko, content_ja)):
         _validate_field(korean, japanese)
     expected = [_HEADERS[h] for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ko) if h in _HEADERS]

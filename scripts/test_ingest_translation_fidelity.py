@@ -186,7 +186,7 @@ class OfflineTests(unittest.TestCase):
         ja = '[要約]\n合成案内\n[対象]\n保護者同伴\n[期間・状況]\n申請期間: 公式案内確認\n実施期間: 公式案内確認\n[主な内容]\n画像で確認した活動\n[申請方法]\n窓口申込'
         adapter, client = adapter_for('[한 줄 요약]\n합성 요약\n[주요 내용]\n검토자가 확인한 활동', ja)
         output = generate_myseoul_output(c, summarize_ko=adapter.summarize_ko, translate_ja=adapter.translate_ja)
-        self.assertEqual(output['contentJa'], ja)
+        self.assertEqual(output['contentJa'], ja.replace('[期間・状況]', '[日程案内]'))
         self.assertEqual(client.messages.create_calls[1]['messages'][0]['content'], f"title_ko: {c['title']}\ncontent_ko:\n{output['contentKo']}")
         data = json.loads(myseoul_input(c))
         self.assertEqual(data['currentFacts']['description'], f['description'])

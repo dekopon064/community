@@ -8,13 +8,14 @@ from typing import Any, Callable
 from uuid import UUID
 
 from ingest.ai_errors import AiJobError
+from ingest.body_sections import normalize_schedule_heading
 from ingest.ai_worker import (KO_SUMMARY_HEADER, KO_SECTION_HEADERS, JA_SUMMARY_HEADER,
                              JA_SECTION_HEADERS, extract_summary_section)
 from ingest.myseoul_db import SCHEMA, evaluate_myseoul_facts
 from ingest.program_ai import ProgramAIAdapter, reviewed_temporal_ready
 from ingest.myseoul_ai_support import section_body, schedule_values, process_program_job
 from ingest.region_ja_glossary import validate_japanese_output
-from ingest.myseoul_content import (schedule_lines, optional_period_section,
+from ingest.myseoul_content import (schedule_lines, announcement_lines, without_replaced_announcements,
     validate_summary_period, participation_constraints, validate_participant_quantities, deduplicate_summary_fees,
     validate_assembled_fees)
 
@@ -152,6 +153,9 @@ def fact_sections(f: dict) -> dict[str, str]:
         period += "\n진행 일정: " + " / ".join(sessions)
     if f["meeting_evidence"]:
         period += "\n집결 안내: " + " / ".join(f["meeting_evidence"])
+    announcements = announcement_lines(f)
+    if announcements:
+        period += "\n" + "\n".join(announcements)
     activity = ("장소: " + f["venue"] + "\n" if f["venue"] else "") + "비용: " + fees
     if f.get("capacity_raw"):
         activity += "\n모집 인원: " + " / ".join(f["capacity_raw"])
@@ -160,7 +164,7 @@ def fact_sections(f: dict) -> dict[str, str]:
     method = " / ".join(f["application_methods"])
     if f["application_links"]:
         method += "\n신청 링크: " + " / ".join(f["application_links"])
-    return {"[대상]": f["target"], "[기간·상태]": period, "activity": activity, "[신청 방법]": method}
+    return {"[대상]": f["target"], "[일정 안내]": period, "activity": activity, "[신청 방법]": method}
 
 
 def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, translate_ja: Callable) -> dict[str, str]:
@@ -170,10 +174,12 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
     content, status, model = summarize(myseoul_input(c), f["official_url"], title=c["title"])
     if status != "success" or not isinstance(content, str):
         raise AiJobError("ai_schema_error")
+    content = normalize_schedule_heading(content, 'ko')
     summary = extract_summary_section(content, KO_SUMMARY_HEADER, KO_SECTION_HEADERS)
     main = section_body(content, "[주요 내용]", KO_SECTION_HEADERS)
     parts = fact_sections(f)
-    validate_summary_period(optional_period_section(content), parts["[기간·상태]"], f)
+    validate_summary_period(content, parts["[일정 안내]"], f)
+    main = without_replaced_announcements(main, f)
     main = deduplicate_summary_fees(main, parts["activity"])
     conditions = [v for v in participation_constraints(f) if v not in main and v not in f["target"]]
     if conditions:
@@ -181,8 +187,8 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
     # Reviewed limits are added deterministically below. Validate the assembled
     # activity, rather than requiring the model to repeat each value in prose.
     validate_participant_quantities(f, main + "\n" + parts["activity"])
-    content = "\n".join([KO_SUMMARY_HEADER, summary, "[대상]", parts["[대상]"], "[기간·상태]",
-        parts["[기간·상태]"], "[주요 내용]", main, parts["activity"], "[신청 방법]", parts["[신청 방법]"]])
+    content = "\n".join([KO_SUMMARY_HEADER, summary, "[대상]", parts["[대상]"], "[일정 안내]",
+        parts["[일정 안내]"], "[주요 내용]", main, parts["activity"], "[신청 방법]", parts["[신청 방법]"]])
     numbers = lambda s: {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", s)}
     constraints = "\n".join([f["target"], *participation_constraints(f)])
     required = numbers("\n".join(parts.values()) + "\n" + constraints)
@@ -192,6 +198,7 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
     title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content)
     if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
         raise AiJobError("ai_schema_error")
+    content_ja = normalize_schedule_heading(content_ja, 'ja')
     for h in JA_SECTION_HEADERS:
         section_body(content_ja, h, JA_SECTION_HEADERS)
     summary_ja = extract_summary_section(content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
