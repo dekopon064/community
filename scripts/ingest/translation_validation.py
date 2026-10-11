@@ -6,6 +6,7 @@ fetch evidence or infer unstated values. Contextual wording remains a review tas
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import re
 import unicodedata
@@ -79,18 +80,54 @@ def _first_come(text: str, *, japanese: bool) -> Counter:
                    for match in re.finditer(pattern, text))
 
 
+def _durations(text: str) -> Counter:
+    # Duration, not a clock (3시간 / 3時間), with equivalent hour/minute units.
+    result = Counter()
+    for match in re.finditer(r'(\d+(?:\.\d+)?)\s*(?:시간|時間)(?:\s*(\d+)\s*(?:분|分))?|'
+                             r'(\d+)\s*(?:분간|分間)', text):
+        minutes = Decimal(match[1]) * 60 + Decimal(match[2] or 0) if match[1] else Decimal(match[3])
+        result[minutes] += 1
+    return result
+
+
 def _entry(text: str, labels: str) -> str | None:
     # Preserve a complete labeled line/clause, not a number found elsewhere.
     match = re.search(rf"(?:^|[\n;；]|(?:비용|費用|料金)\s*[:：])\s*(?:{labels})\s*[:：は]\s*([^\n;；]+)", text)
     return match[1] if match else None
 
 
+def _local_schedule_text(text: str) -> str:
+    """Compare clocks in KST; an explicit ISO offset is not another clock.
+
+    Convert complete zoned timestamps, not loose date/time prose. Other loose
+    zone annotations are rejected rather than silently interpreted as KST.
+    This changes comparison text only, never stored facts or provider output.
+    """
+    def local(match):
+        try:
+            value = datetime.fromisoformat(match[0].replace('Z', '+00:00'))
+        except ValueError:
+            raise AiJobError('ai_schema_error') from None
+        return value.astimezone(timezone(timedelta(hours=9))).replace(tzinfo=None).isoformat()
+    text = re.sub(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})', local, text)
+    def annotation(match):
+        offset = next(v for v in match.groups() if v is not None)
+        if offset.replace(':','') != '+0900':
+            raise AiJobError('ai_schema_error')
+        return ''
+    # +09:00, (UTC+09:00), or an offset attached to a localized clock.
+    return re.sub(r'\((?:UTC|GMT)?([+-]\d{2}:?\d{2})\)|'
+                  r'(?:UTC|GMT)([+-]\d{2}:?\d{2})|'
+                  r'(\+\d{2}:?\d{2})(?!\d)', annotation, text)
+
+
 def _dates_and_times(text: str) -> list[tuple]:
+    text = _local_schedule_text(text)
     text = text.translate(str.maketrans({"年": "년", "月": "월", "日": "일", "時": "시", "分": "분"}))
     pattern = (r"(?P<iso>\d{4}-\d{2}-\d{2})|"
                r"(?:(?P<year>\d{4})\s*년\s*)?(?P<month>\d{1,2})\s*월\s*(?P<day>\d{1,2})\s*일|"
-               r"(?P<colon_hour>\d{1,2}):(?P<colon_minute>\d{2})|"
-               r"(?P<meridiem>오전|오후|午前|午後)?\s*(?P<hour>\d{1,2})\s*시(?:\s*(?P<minute>\d{1,2})\s*분)?")
+               r"(?P<colon_hour>\d{1,2}):(?P<colon_minute>\d{2})(?::(?P<colon_second>\d{2}))?|"
+               r"(?P<meridiem>오전|오후|午前|午後)?\s*(?P<hour>\d{1,2})\s*시(?!간|間)(?:\s*(?P<minute>\d{1,2})\s*분)?(?:\s*(?P<second>\d{1,2})\s*[초秒])?")
     values = []
     year = None
     for match in re.finditer(pattern, text):
@@ -104,9 +141,12 @@ def _dates_and_times(text: str) -> list[tuple]:
         else:
             hour = int(match["colon_hour"] or match["hour"])
             minute = int(match["colon_minute"] or match["minute"] or 0)
+            second = int(match['colon_second'] or match['second'] or 0)
             if match["meridiem"]:
                 hour = hour % 12 + (12 if match["meridiem"] in {"오후", "午後"} else 0)
-            values.append(("time", hour, minute))
+            if hour > 23 or minute > 59 or second > 59:
+                raise AiJobError('ai_schema_error')
+            values.append(("time", hour, minute, second) if second else ("time", hour, minute))
     return values
 
 
@@ -123,6 +163,7 @@ def _validate_field(korean: str, japanese: str) -> None:
     _require_present(_amounts(ko, japanese=False), _amounts(ja, japanese=True))
     _require_present(_quantities(ko, japanese=False), _quantities(ja, japanese=True))
     _require_present(_first_come(ko, japanese=False), _first_come(ja, japanese=True))
+    _require_present(_durations(ko), _durations(ja))
     for ko_label, ja_label in _PERIOD_ROLES:
         source = _entry(ko, ko_label)
         if source is not None and (expected := _dates_and_times(source)):

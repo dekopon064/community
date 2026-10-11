@@ -1,0 +1,1167 @@
+{
+  "provenance": "Completed Pro responses; recorded text only; no live IDs, credentials or transport.",
+  "cases": [
+    {
+      "name": "[가족관계개선 지원 프로그램] 자녀와 함께해요! 2탄",
+      "route": "classified",
+      "context": {
+        "factsVersion": null,
+        "classificationVersion": 2,
+        "publicCategory": null,
+        "facts": {
+          "scope": "unknown",
+          "regions": [],
+          "category": "program",
+          "delivery": "offline",
+          "eventEnd": "",
+          "evidence": "",
+          "deadlineOn": "2026-10-17",
+          "eventStart": "",
+          "productType": "event_program",
+          "deadlineKind": "fixed",
+          "foreignEligibility": "unknown"
+        },
+        "nativeConfirmedFacts": {
+          "gateFacts": null,
+          "programFacts": {
+            "age": [],
+            "fees": [
+              {
+                "evidence": [
+                  "무료"
+                ],
+                "component": "tuition"
+              }
+            ],
+            "venue": "",
+            "issues": [
+              {
+                "code": "category_unresolved",
+                "field": "category_unresolved",
+                "evidence": []
+              },
+              {
+                "code": "delivery_mode_unknown",
+                "field": "delivery_mode_unknown",
+                "evidence": []
+              }
+            ],
+            "target": "중도입국청소년과 부모",
+            "missing": [
+              "description_missing",
+              "category_unresolved",
+              "delivery_mode_unknown"
+            ],
+            "periods": {
+              "operation": [
+                {
+                  "raw": "2026-10-24 13:30\n~\n2026-10-24 17:00",
+                  "label": "교육일시",
+                  "origin": "header",
+                  "status": "ok",
+                  "endpoints": [
+                    {
+                      "value": "2026-10-24T13:30:00+09:00",
+                      "precision": "minute"
+                    },
+                    {
+                      "value": "2026-10-24T17:00:00+09:00",
+                      "precision": "minute"
+                    }
+                  ]
+                }
+              ],
+              "application": [
+                {
+                  "raw": "2026-10-01 10:00\n~\n2026-10-17 18:00",
+                  "label": "신청일시",
+                  "origin": "header",
+                  "status": "ok",
+                  "endpoints": [
+                    {
+                      "value": "2026-10-01T10:00:00+09:00",
+                      "precision": "minute"
+                    },
+                    {
+                      "value": "2026-10-17T18:00:00+09:00",
+                      "precision": "minute"
+                    }
+                  ]
+                }
+              ]
+            },
+            "purpose": "",
+            "evidence": [
+              {
+                "field": "application",
+                "label": "신청일시",
+                "value": "2026-10-01 10:00\n~\n2026-10-17 18:00",
+                "origin": "header"
+              },
+              {
+                "field": "operation",
+                "label": "교육일시",
+                "value": "2026-10-24 13:30\n~\n2026-10-24 17:00",
+                "origin": "header"
+              },
+              {
+                "field": "target",
+                "label": "신청자격",
+                "value": "중도입국청소년과 부모",
+                "origin": "header"
+              },
+              {
+                "field": "application_method",
+                "label": "신청방법",
+                "value": "방문,전화",
+                "origin": "header"
+              },
+              {
+                "field": "tuition",
+                "label": "수강료",
+                "value": "무료",
+                "origin": "header"
+              },
+              {
+                "field": "capacity",
+                "label": "정원",
+                "value": "20명",
+                "origin": "header"
+              },
+              {
+                "field": "status",
+                "label": "모집 배지",
+                "value": "신청중",
+                "origin": "header"
+              }
+            ],
+            "language": [],
+            "companion": [],
+            "conflicts": [],
+            "residence": "",
+            "conditions": [],
+            "description": "**제목:** [서울시글로벌청소년교육센터] 자녀와 함께해요! 2탄 가족 프로그램 참가자 모집\n\n**한 줄 요약:** 서울시글로벌청소년교육센터에서 부모만의 시간과 자녀가 함께하는 활동으로 구성된 가족 프로그램의 참가자를 모집합니다.\n\n**대상:** 가족 단위 참가자 10팀(최대 20명)\n\n**일정:** 2026년 10월 24일(토) 13:30~17:00\n\n**장소:** 서울시글로벌청소년교육센터 강당\n\n**주요 내용:**\n- 13:30~15:00: 부모만의 시간\n- 15:10~17:00: 자녀와 함께하는 시간\n\n**참여 혜택:** 가족 프로그램은 9월부터 11월까지 총 3회 진행되며, 3회 모두 참여한 가족에게는 가족을 위한 선물과 수료증이 제공됩니다.\n\n**신청 방법:** 포스터에 별도 안내 없음(센터 문의 필요)\n\n**문의:** 린겔 선생님(070-4170-0724)\n\n**운영기관:** 서울시글로벌청소년교육센터",
+            "capacity_raw": [
+              "20명"
+            ],
+            "official_url": "https://global.seoul.go.kr/hmpg/ecpr/prgm/prgmDetail.do?cntr_no=336698DCDA344A17B3E966FBE6522D8E&prgrm_no=5D2231CFCBA80114E063C0A8A022567D&lang=ko",
+            "delivery_mode": "unknown",
+            "source_status": [
+              "신청중"
+            ],
+            "capacity_value": null,
+            "parser_version": "myseoul-html-v2-local",
+            "schema_version": "myseoul-program-facts-v1-local",
+            "activity_region": "unknown",
+            "public_category": "unknown",
+            "residence_scope": "unknown",
+            "source_category": "기타",
+            "meeting_evidence": [],
+            "scope_exclusions": [],
+            "session_evidence": [],
+            "activity_evidence": [],
+            "application_actor": "individual",
+            "application_links": [],
+            "revision_contract": "myseoul-semantic-v2",
+            "qualification_note": "",
+            "residence_evidence": [],
+            "application_methods": [
+              "방문,전화"
+            ],
+            "early_close_evidence": []
+          }
+        },
+        "filters": {
+          "topic": {
+            "value": "culture_experience",
+            "status": "known"
+          },
+          "schema": "content-filters-v1",
+          "audience": {
+            "value": "children",
+            "status": "known"
+          },
+          "category": "program",
+          "delivery": {
+            "value": "onsite",
+            "status": "known"
+          },
+          "location": {
+            "value": {
+              "scope": "specific",
+              "venues": [
+                {
+                  "address": "",
+                  "district": "영등포구",
+                  "facility": "",
+                  "province": "11"
+                }
+              ]
+            },
+            "status": "known"
+          },
+          "schedule": {
+            "value": null,
+            "status": "not_applicable"
+          },
+          "spaceKind": {
+            "value": null,
+            "status": "not_applicable"
+          },
+          "application": {
+            "value": {
+              "end": {
+                "value": "2026-10-17T18:00:00+09:00",
+                "precision": "minute"
+              },
+              "start": {
+                "value": "2026-10-01T10:00:00+09:00",
+                "precision": "minute"
+              },
+              "deadlineKind": "fixed",
+              "sourceStatus": "open"
+            },
+            "status": "known"
+          }
+        },
+        "body": "",
+        "title": "[가족관계개선 지원 프로그램] 자녀와 함께해요! 2탄"
+      },
+      "summary": {
+        "content_ko": "[한 줄 요약]\n서울시글로벌청소년교육센터에서 중도입국청소년과 부모가 부모만의 시간과 자녀와 함께하는 활동에 참여하는 가족관계개선 프로그램을 진행합니다.\n\n[대상]\n중도입국청소년과 부모로 구성된 가족 10팀(최대 20명)\n\n[일정 안내]\n- 신청 기간: 2026년 10월 1일 10:00~10월 17일 18:00\n- 프로그램 일시: 2026년 10월 24일 13:30~17:00\n- 장소: 서울시글로벌청소년교육센터 강당\n\n[주요 내용]\n- 13:30~15:00: 부모만의 시간\n- 15:10~17:00: 자녀와 함께하는 시간\n가족 프로그램은 9월부터 11월까지 총 3회 진행되며, 3회 모두 참여한 가족에게는 가족을 위한 선물과 수료증이 제공됩니다.\n\n[신청 방법]\n방문 또는 전화로 신청합니다. 신청 및 문의는 서울시글로벌청소년교육센터 린겔 선생님(070-4170-0724)에게 연락하세요.",
+        "facts": {
+          "audience": "중도입국청소년과 부모, 가족 10팀(최대 20명)",
+          "geo_age_income": "장소: 서울시글로벌청소년교육센터 강당(영등포구)",
+          "amount_period_deadline": "수강료 무료. 신청 기간: 2026년 10월 1일 10:00~10월 17일 18:00. 프로그램: 2026년 10월 24일 13:30~17:00. 부모만의 시간 13:30~15:00, 자녀와 함께하는 시간 15:10~17:00. 가족 프로그램은 9~11월 총 3회이며, 3회 모두 참여한 가족에게 선물과 수료증 제공.",
+          "how_to_apply": "방문 또는 전화 신청. 문의: 서울시글로벌청소년교육센터 린겔 선생님, 070-4170-0724."
+        }
+      },
+      "translation": {
+        "title_ja": "[家族関係改善支援プログラム] 子どもと一緒に参加しましょう！第2弾",
+        "content_ja": "[要約]\nソウル市グローバル青少年教育センターで、中途入国青少年と保護者が、保護者だけの時間と子どもと一緒に行う活動に参加する家族関係改善プログラムを実施します。\n\n[対象]\n中途入国青少年と保護者で構成される家族10組（最大20名）\n\n[日程案内]\n- 申請期間：2026年10月1日10時00分～10月17日18時00分\n- プログラム日時：2026年10月24日13時30分～17時00分\n- 場所：ソウル市グローバル青少年教育センター講堂\n\n[主な内容]\n- 13時30分～15時00分：保護者だけの時間\n- 15時10分～17時00分：子どもと一緒に過ごす時間\n家族プログラムは9月～11月に計3回実施され、3回すべてに参加した家族には、家族のためのプレゼントと修了証が提供されます。\n\n[申請方法]\n来所または電話で申請します。申請・お問い合わせは、ソウル市グローバル青少年教育センターのリンゲル先生（070-4170-0724）までご連絡ください。\n\n確認済みの分類・参加案内\n分類：プログラム\n実施方式：オフライン\n申請締切：2026年10月17日\n申請方法：[\"来所,電話\"]\n費用：[{\"evidence\": [\"無料\"], \"component\": \"tuition\"}]\n募集人数：[\"20名\"]\n実施日程：**日程：** 2026年10月24日（土）13時30分～17時00分 / **参加特典：** 家族プログラムは9月～11月に計3回実施され、3回すべてに参加した家族には、家族のためのプレゼントと修了証が提供されます。\n申請期間：2026年10月1日10時00分～2026年10月17日18時00分（+09:00）\n実施期間：2026年10月24日13時30分～2026年10月24日17時00分"
+      },
+      "previousTranslationInput": {
+        "titleKo": "[가족관계개선 지원 프로그램] 자녀와 함께해요! 2탄",
+        "contentKo": "[한 줄 요약]\n서울시글로벌청소년교육센터에서 중도입국청소년과 부모가 부모만의 시간과 자녀와 함께하는 활동에 참여하는 가족관계개선 프로그램을 진행합니다.\n\n[대상]\n중도입국청소년과 부모로 구성된 가족 10팀(최대 20명)\n\n[일정 안내]\n- 신청 기간: 2026년 10월 1일 10:00~10월 17일 18:00\n- 프로그램 일시: 2026년 10월 24일 13:30~17:00\n- 장소: 서울시글로벌청소년교육센터 강당\n\n[주요 내용]\n- 13:30~15:00: 부모만의 시간\n- 15:10~17:00: 자녀와 함께하는 시간\n가족 프로그램은 9월부터 11월까지 총 3회 진행되며, 3회 모두 참여한 가족에게는 가족을 위한 선물과 수료증이 제공됩니다.\n\n[신청 방법]\n방문 또는 전화로 신청합니다. 신청 및 문의는 서울시글로벌청소년교육센터 린겔 선생님(070-4170-0724)에게 연락하세요.\n\n확인한 분류·참가 안내\n분류: 프로그램\n진행 방식: 오프라인\n신청 마감: 2026-10-17\n신청 방법: [\"방문,전화\"]\n비용: [{\"evidence\": [\"무료\"], \"component\": \"tuition\"}]\n모집 인원: [\"20명\"]\n진행 일정: **일정:** 2026년 10월 24일(토) 13:30~17:00 / **참여 혜택:** 가족 프로그램은 9월부터 11월까지 총 3회 진행되며, 3회 모두 참여한 가족에게는 가족을 위한 선물과 수료증이 제공됩니다.\n신청기간: 2026-10-01T10:00:00+09:00 ~ 2026-10-17T18:00:00+09:00\n진행기간: 2026-10-24 13:30 ~ 2026-10-24 17:00"
+      }
+    },
+    {
+      "name": "글로벌 CX 어드바이저 양성과정",
+      "route": "classified",
+      "context": {
+        "factsVersion": null,
+        "classificationVersion": 1,
+        "publicCategory": null,
+        "facts": {
+          "scope": "unknown",
+          "regions": [],
+          "category": "program",
+          "delivery": "offline",
+          "eventEnd": "",
+          "evidence": "",
+          "deadlineOn": "2026-10-25",
+          "eventStart": "",
+          "productType": "event_program",
+          "deadlineKind": "fixed",
+          "foreignEligibility": "unknown"
+        },
+        "nativeConfirmedFacts": {
+          "gateFacts": null,
+          "programFacts": {
+            "age": [],
+            "fees": [
+              {
+                "evidence": [
+                  "무료"
+                ],
+                "component": "tuition"
+              }
+            ],
+            "venue": "",
+            "issues": [
+              {
+                "code": "category_unresolved",
+                "field": "category_unresolved",
+                "evidence": []
+              },
+              {
+                "code": "delivery_mode_unknown",
+                "field": "delivery_mode_unknown",
+                "evidence": []
+              }
+            ],
+            "target": "고객 서비스 및 고객경험(CX) 분야에 관심이 있는 외국인이라면 누구나",
+            "missing": [
+              "category_unresolved",
+              "delivery_mode_unknown"
+            ],
+            "periods": {
+              "operation": [
+                {
+                  "raw": "2026-10-29 13:00\n~\n2026-10-30 17:30",
+                  "label": "교육일시",
+                  "origin": "header",
+                  "status": "ok",
+                  "endpoints": [
+                    {
+                      "value": "2026-10-29T13:00:00+09:00",
+                      "precision": "minute"
+                    },
+                    {
+                      "value": "2026-10-30T17:30:00+09:00",
+                      "precision": "minute"
+                    }
+                  ]
+                }
+              ],
+              "application": [
+                {
+                  "raw": "2026-10-08 00:00\n~\n2026-10-25 23:50",
+                  "label": "신청일시",
+                  "origin": "header",
+                  "status": "ok",
+                  "endpoints": [
+                    {
+                      "value": "2026-10-08T00:00:00+09:00",
+                      "precision": "minute"
+                    },
+                    {
+                      "value": "2026-10-25T23:50:00+09:00",
+                      "precision": "minute"
+                    }
+                  ]
+                }
+              ]
+            },
+            "purpose": "",
+            "evidence": [
+              {
+                "field": "application",
+                "label": "신청일시",
+                "value": "2026-10-08 00:00\n~\n2026-10-25 23:50",
+                "origin": "header"
+              },
+              {
+                "field": "operation",
+                "label": "교육일시",
+                "value": "2026-10-29 13:00\n~\n2026-10-30 17:30",
+                "origin": "header"
+              },
+              {
+                "field": "target",
+                "label": "신청자격",
+                "value": "고객 서비스 및 고객경험(CX) 분야에 관심이 있는 외국인이라면 누구나",
+                "origin": "header"
+              },
+              {
+                "field": "application_method",
+                "label": "신청방법",
+                "value": "기타 (구글폼)",
+                "origin": "header"
+              },
+              {
+                "field": "tuition",
+                "label": "수강료",
+                "value": "무료",
+                "origin": "header"
+              },
+              {
+                "field": "capacity",
+                "label": "정원",
+                "value": "30명",
+                "origin": "header"
+              },
+              {
+                "field": "status",
+                "label": "모집 배지",
+                "value": "신청중",
+                "origin": "header"
+              }
+            ],
+            "language": [],
+            "companion": [],
+            "conflicts": [],
+            "residence": "",
+            "conditions": [],
+            "description": "고객이 서비스를 이용하면서 느끼는 경험, 어떻게 더 좋게 만들 수 있을까요? 👀\n​\n고객의 입장에서 서비스를 바라보고, 더 나은 경험을 만들어가는 CX(Customer Experience) 직무를 배워보세요! CX 직무의 기본 이해부터 실무 프로젝트와 전문가 멘토링까지 직접 경험할 수 있는 특별한 기회를 준비했습니다! 🚀\n​\nCX 분야 취업을 준비하고 있거나 새로운 직무에 도전해보고 싶은 외국인이라면 누구나 참여할 수 있습니다 🤗\n​\n💡 이런 분들께 추천합니다!\n▪️ 고객 서비스 및 고객경험(CX) 분야 취업에 관심 있는 분\n▪️ 실제 기업에서 활용되는 CX 업무와 프로젝트를 경험해보고 싶은 분\n▪️ 전공·경력과 관계없이 새로운 직무 분야에 도전해보고 싶은 분\n​\n🎁 참여 혜택\n▪️ 우수 수료생 10명 대상 현대백화점 CX 어드바이저 활동 연계\n(소정의 활동비 지원)\n​\n📌 수강 안내\n▪️ 일시: 10월 29일(목) ~ 10월 30일(금) 13:00~17:30\n▪️ 장소: 글로벌유학생지원센터 취업동 교육장(신촌 소재)\n▪️ 참가비: 무료\n​\n📝 신청 안내\n▪️ 신청 기간: 10월 8일(목) ~ 10월 25일(일)\n▪️ 신청 대상: 고객 서비스 및 고객경험(CX) 분야에 관심이 있는 외국인이라면 누구나!\n▪️ 신청 방법: QR 또는 링크를 통해 구글폼 제출\n▪️ 선발자 발표: 선발자에 한해 개별 안내\n​\n🔗 신청링크 :https://forms.gle/SG4i68iNWKWSFWLy8\n​\n🗨 문의\n☎️ [연락처 생략]\n📩 [연락처 생략]",
+            "capacity_raw": [
+              "30명"
+            ],
+            "official_url": "https://global.seoul.go.kr/hmpg/ecpr/prgm/prgmDetail.do?cntr_no=4CD030855FC60050E063C0A8A023A505&prgrm_no=5D5011C7C44B0144E063C0A8A022ED77&lang=ko",
+            "delivery_mode": "unknown",
+            "source_status": [
+              "신청중"
+            ],
+            "capacity_value": null,
+            "parser_version": "myseoul-html-v2-local",
+            "schema_version": "myseoul-program-facts-v1-local",
+            "activity_region": "unknown",
+            "public_category": "unknown",
+            "residence_scope": "unknown",
+            "source_category": "취업",
+            "meeting_evidence": [],
+            "scope_exclusions": [],
+            "session_evidence": [
+              "▪️ 일시: 10월 29일(목) ~ 10월 30일(금) 13:00~17:30"
+            ],
+            "activity_evidence": [],
+            "application_actor": "individual",
+            "application_links": [
+              "https://forms.gle/SG4i68iNWKWSFWLy8"
+            ],
+            "revision_contract": "myseoul-semantic-v2",
+            "qualification_note": "",
+            "residence_evidence": [],
+            "application_methods": [
+              "기타 (구글폼)"
+            ],
+            "early_close_evidence": []
+          }
+        },
+        "filters": {
+          "topic": {
+            "value": "employment_career",
+            "status": "known"
+          },
+          "schema": "content-filters-v1",
+          "audience": {
+            "value": "other",
+            "status": "known"
+          },
+          "category": "program",
+          "delivery": {
+            "value": "onsite",
+            "status": "known"
+          },
+          "location": {
+            "value": {
+              "scope": "specific",
+              "venues": [
+                {
+                  "address": "",
+                  "district": "서대문구",
+                  "facility": "",
+                  "province": "11"
+                }
+              ]
+            },
+            "status": "known"
+          },
+          "schedule": {
+            "value": null,
+            "status": "not_applicable"
+          },
+          "spaceKind": {
+            "value": null,
+            "status": "not_applicable"
+          },
+          "application": {
+            "value": {
+              "end": {
+                "value": "2026-10-25T23:50:00+09:00",
+                "precision": "minute"
+              },
+              "start": {
+                "value": "2026-10-08T00:00:00+09:00",
+                "precision": "minute"
+              },
+              "deadlineKind": "fixed",
+              "sourceStatus": "open"
+            },
+            "status": "known"
+          }
+        },
+        "body": "",
+        "title": "글로벌 CX 어드바이저 양성과정"
+      },
+      "summary": {
+        "content_ko": "[한 줄 요약]\n외국인을 대상으로 CX 직무의 기본 이해부터 실무 프로젝트와 전문가 멘토링까지 경험하는 글로벌 CX 어드바이저 양성과정입니다.\n\n[대상]\n고객 서비스 및 고객경험(CX) 분야에 관심 있는 외국인 누구나 신청할 수 있습니다. 전공·경력과 관계없이 CX 분야 취업을 준비하거나 새로운 직무에 도전하고 싶은 분을 대상으로 하며, 정원은 30명입니다.\n\n[일정 안내]\n- 신청 기간: 2026년 10월 8일~10월 25일 23:50\n- 교육: 2026년 10월 29일~10월 30일, 각일 13:00~17:30\n- 장소: 글로벌유학생지원센터 취업동 교육장(신촌 소재, 서대문구)\n\n[주요 내용]\n고객의 입장에서 서비스를 살펴보고 더 나은 고객경험을 만드는 CX 직무를 배웁니다. CX 직무의 기본 이해, 실제 기업에서 활용되는 업무와 실무 프로젝트, 전문가 멘토링을 경험할 수 있습니다. 우수 수료생 10명에게는 현대백화점 CX 어드바이저 활동을 연계하며, 소정의 활동비를 지원합니다.\n\n[신청 방법]\n안내된 QR 또는 신청 링크를 통해 구글폼을 제출하세요. 선발 결과는 선발자에 한해 개별 안내합니다.\n신청 링크: https://forms.gle/SG4i68iNWKWSFWLy8",
+        "facts": {
+          "audience": "고객 서비스 및 고객경험(CX) 분야에 관심 있는 외국인 누구나. 전공·경력과 관계없이 참여 가능. 정원 30명.",
+          "geo_age_income": "교육 장소: 글로벌유학생지원센터 취업동 교육장(신촌 소재, 서울 서대문구).",
+          "amount_period_deadline": "수강료 무료, 참가비 무료. 신청 기간: 2026년 10월 8일~10월 25일 23:50. 교육 운영 범위: 2026년 10월 29일 13:00~10월 30일 17:30. 실제 교육: 10월 29일~30일 각일 13:00~17:30. 우수 수료생 10명 대상 현대백화점 CX 어드바이저 활동 연계 및 소정의 활동비 지원.",
+          "how_to_apply": "QR 또는 https://forms.gle/SG4i68iNWKWSFWLy8 링크를 통해 구글폼 제출. 선발자에 한해 개별 안내."
+        }
+      },
+      "translation": {
+        "title_ja": "グローバルCXアドバイザー養成課程",
+        "content_ja": "[要約]\n外国人を対象に、CX職種の基礎理解から実務プロジェクト、専門家によるメンタリングまで経験できるグローバルCXアドバイザー養成課程です。\n\n[対象]\nカスタマーサービスおよび顧客体験（CX）分野に関心のある外国人なら、どなたでも申請できます。専攻・経歴に関係なく、CX分野への就職を準備している方や、新しい職種に挑戦したい方を対象とし、定員は30名です。\n\n[日程案内]\n- 申請期間：2026年10月8日～10月25日23時50分\n- 教育：2026年10月29日～10月30日、各日13時00分～17時30分\n- 場所：グローバル留学生支援センター就職棟の研修室（シンチョン所在、ソデムン区）\n\n[主な内容]\n顧客の立場からサービスを見つめ、より良い顧客体験をつくるCX職種について学びます。CX職種の基礎理解、実際の企業で活用される業務と実務プロジェクト、専門家によるメンタリングを経験できます。優秀な修了生10名には、ヒョンデ百貨店のCXアドバイザー活動への参加をつなぎ、所定の活動費を支給します。\n\n[申請方法]\n案内されたQRコードまたは申請リンクからGoogleフォームを提出してください。選考結果は、選ばれた方にのみ個別に案内します。\n申請リンク：https://forms.gle/SG4i68iNWKWSFWLy8\n\n確認済みの分類・参加案内\n分類：プログラム\n実施方式：オフライン\n申請締切：2026年10月25日\n申請方法：[\"その他（Googleフォーム）\"]\n費用：[{\"evidence\": [\"無料\"], \"component\": \"tuition\"}]\n募集人数：[\"30名\"]\n実施日程：[\"▪️ 日時：10月29日（木）～10月30日（金）13時00分～17時30分\"]\n申請期間：2026年10月8日00時00分00秒+09:00～2026年10月25日23時50分00秒+09:00\n実施期間：2026年10月29日13時00分～2026年10月30日17時30分"
+      },
+      "previousTranslationInput": {
+        "titleKo": "글로벌 CX 어드바이저 양성과정",
+        "contentKo": "[한 줄 요약]\n외국인을 대상으로 CX 직무의 기본 이해부터 실무 프로젝트와 전문가 멘토링까지 경험하는 글로벌 CX 어드바이저 양성과정입니다.\n\n[대상]\n고객 서비스 및 고객경험(CX) 분야에 관심 있는 외국인 누구나 신청할 수 있습니다. 전공·경력과 관계없이 CX 분야 취업을 준비하거나 새로운 직무에 도전하고 싶은 분을 대상으로 하며, 정원은 30명입니다.\n\n[일정 안내]\n- 신청 기간: 2026년 10월 8일~10월 25일 23:50\n- 교육: 2026년 10월 29일~10월 30일, 각일 13:00~17:30\n- 장소: 글로벌유학생지원센터 취업동 교육장(신촌 소재, 서대문구)\n\n[주요 내용]\n고객의 입장에서 서비스를 살펴보고 더 나은 고객경험을 만드는 CX 직무를 배웁니다. CX 직무의 기본 이해, 실제 기업에서 활용되는 업무와 실무 프로젝트, 전문가 멘토링을 경험할 수 있습니다. 우수 수료생 10명에게는 현대백화점 CX 어드바이저 활동을 연계하며, 소정의 활동비를 지원합니다.\n\n[신청 방법]\n안내된 QR 또는 신청 링크를 통해 구글폼을 제출하세요. 선발 결과는 선발자에 한해 개별 안내합니다.\n신청 링크: https://forms.gle/SG4i68iNWKWSFWLy8\n\n확인한 분류·참가 안내\n분류: 프로그램\n진행 방식: 오프라인\n신청 마감: 2026-10-25\n신청 방법: [\"기타 (구글폼)\"]\n비용: [{\"evidence\": [\"무료\"], \"component\": \"tuition\"}]\n모집 인원: [\"30명\"]\n진행 일정: [\"▪️ 일시: 10월 29일(목) ~ 10월 30일(금) 13:00~17:30\"]\n신청기간: 2026-10-08T00:00:00+09:00 ~ 2026-10-25T23:50:00+09:00\n진행기간: 2026-10-29 13:00 ~ 2026-10-30 17:30"
+      }
+    },
+    {
+      "name": "일요일 한국어교실 토픽 1반 모집",
+      "route": "myseoul",
+      "context": {
+        "factsVersion": 4,
+        "classificationVersion": null,
+        "publicCategory": "program",
+        "facts": {
+          "age": [],
+          "fees": [
+            {
+              "evidence": [
+                "무료"
+              ],
+              "component": "tuition"
+            }
+          ],
+          "venue": "",
+          "issues": [],
+          "target": "외국인주민",
+          "missing": [
+            "delivery_mode_unknown",
+            "operation_period_unknown"
+          ],
+          "periods": {
+            "operation": [
+              {
+                "raw": "2026-10-18 12:00\n~\n2026-11-08 15:00",
+                "label": "교육일시",
+                "origin": "header",
+                "status": "ok",
+                "endpoints": [
+                  {
+                    "value": "2026-10-18T12:00:00+09:00",
+                    "precision": "minute"
+                  },
+                  {
+                    "value": "2026-11-08T15:00:00+09:00",
+                    "precision": "minute"
+                  }
+                ]
+              }
+            ],
+            "application": [
+              {
+                "raw": "2026-09-28 10:00\n~\n2026-10-15 18:00",
+                "label": "신청일시",
+                "origin": "header",
+                "status": "ok",
+                "endpoints": [
+                  {
+                    "value": "2026-09-28T10:00:00+09:00",
+                    "precision": "minute"
+                  },
+                  {
+                    "value": "2026-10-15T18:00:00+09:00",
+                    "precision": "minute"
+                  }
+                ]
+              }
+            ]
+          },
+          "purpose": "",
+          "evidence": [
+            {
+              "field": "application",
+              "label": "신청일시",
+              "value": "2026-09-28 10:00\n~\n2026-10-15 18:00",
+              "origin": "header"
+            },
+            {
+              "field": "operation",
+              "label": "교육일시",
+              "value": "2026-10-18 12:00\n~\n2026-11-08 15:00",
+              "origin": "header"
+            },
+            {
+              "field": "target",
+              "label": "신청자격",
+              "value": "외국인주민",
+              "origin": "header"
+            },
+            {
+              "field": "application_method",
+              "label": "신청방법",
+              "value": "온라인",
+              "origin": "header"
+            },
+            {
+              "field": "tuition",
+              "label": "수강료",
+              "value": "무료",
+              "origin": "header"
+            },
+            {
+              "field": "capacity",
+              "label": "정원",
+              "value": "20명",
+              "origin": "header"
+            },
+            {
+              "field": "status",
+              "label": "모집 배지",
+              "value": "신청중",
+              "origin": "header"
+            },
+            {
+              "field": "operation",
+              "label": "운영기간",
+              "value": "10월 18일 ~ 11월 8일 / 매주 일요일(4회), 3시간",
+              "origin": "body"
+            }
+          ],
+          "language": [],
+          "companion": [],
+          "conflicts": [],
+          "residence": "",
+          "conditions": [],
+          "description": "<일요일 한국어교실_토픽 1반 모집 안내>\n양천외국인주민센터 일요일 한국어교실 토픽 1반 신청 안내드립니다!\n이 공고는 토픽 1반에 대한 공고이므로\n다른 레벨의 한국어 수업은 신청하실 수 없습니다.\n■ 모집대상 : 외국인 주민\n■ 운영기간 : 10월 18일 ~ 11월 8일 / 매주 일요일(4회), 3시간\n■ 수업방식 : ZOOM(온라인)\nhttps://forms.gle/ziWmG2CKaaD3gu2N9\n많은 관심과 참여 부탁드립니다!\n----------------------------\n<Sunday Korean Language Class – TOPIK Level 1 Registration>\nThe Yangcheon Foreign Residents Center is accepting registrations for the Sunday Korean Language Class – TOPIK Level 1!\nPlease note that this announcement is specifically for the TOPIK Level 1 class. Registration for Korean classes at other levels is not available through this announcement.\n■ Eligibility: Foreign residents\n■ Class Period: October 18 – November 8 / Every Sunday (4 sessions), 3 hours per session\n■ Class Format: Online via ZOOM\nhttps://forms.gle/ziWmG2CKaaD3gu2N9\nWe look forward to your interest and participation!",
+          "capacity_raw": [
+            "20명"
+          ],
+          "official_url": "https://global.seoul.go.kr/hmpg/ecpr/prgm/prgmDetail.do?cntr_no=7059DFD6755844BFA6C0DF314EFD4836&prgrm_no=5C819E4EDB890166E063C0A8A0228BA6&lang=ko",
+          "delivery_mode": "online",
+          "source_status": [
+            "신청중"
+          ],
+          "capacity_value": null,
+          "parser_version": "myseoul-html-v2-local",
+          "schema_version": "myseoul-program-facts-v1-local",
+          "activity_region": "unknown",
+          "public_category": "program",
+          "residence_scope": "nationwide",
+          "source_category": "한국어",
+          "meeting_evidence": [],
+          "scope_exclusions": [],
+          "session_evidence": [
+            "<일요일 한국어교실_토픽 1반 모집 안내>",
+            "양천외국인주민센터 일요일 한국어교실 토픽 1반 신청 안내드립니다!",
+            "■ 운영기간 : 10월 18일 ~ 11월 8일 / 매주 일요일(4회), 3시간"
+          ],
+          "activity_evidence": [],
+          "application_actor": "individual",
+          "application_links": [
+            "https://forms.gle/ziWmG2CKaaD3gu2N9?fbclid=IwZXh0bgNhZW0CMTAAcGRvZgFicmlkETFEVFJMcFZQd2JsSkMyQzVac3J0YwZhcHBfaWQQMjIyMDM5MTc4ODIwMDg5MgABHr70cEf-rnl3As_hNzIezXVoHhqTilygZnkHsb50OLfr9uk7f9trtzhufH_3_aem_KNMYNkZGAKfqkzTSy-h3ZQ",
+            "https://forms.gle/ziWmG2CKaaD3gu2N9?fbclid=IwZXh0bgNhZW0CMTAAcGRvZgFicmlkETFEVFJMcFZQd2JsSkMyQzVac3J0YwZhcHBfaWQQMjIyMDM5MTc4ODIwMDg5MgABHq8GVS1LnLu_z7nM8OwPNNMlQ80BTJMkqptxFhwu3DRZYozQGfKmC3uhLjFU_aem_Oq0Pc_S-URH_10nG1sLi9Q"
+          ],
+          "revision_contract": "myseoul-semantic-v2",
+          "qualification_note": "",
+          "residence_evidence": [],
+          "application_methods": [
+            "온라인"
+          ],
+          "early_close_evidence": []
+        },
+        "nativeConfirmedFacts": null,
+        "filters": null,
+        "body": null,
+        "title": "일요일 한국어교실 토픽 1반 모집"
+      },
+      "summary": {
+        "content_ko": "[한 줄 요약]\n양천외국인주민센터에서 외국인 주민을 위한 일요일 한국어교실 토픽 1반을 온라인으로 운영합니다.\n\n[대상]\n외국인 주민 대상이며, 모집 인원은 20명입니다.\n\n[일정 안내]\n신청 기간: 2026년 9월 28일 10:00~10월 15일 18:00\n교육 기간: 2026년 10월 18일~11월 8일, 매주 일요일 총 4회, 회당 3시간\n교육일시 안내 범위: 2026년 10월 18일 12:00~11월 8일 15:00\n\n[주요 내용]\nZOOM을 이용해 온라인으로 진행하는 토픽 1반 한국어 수업입니다. 이번 공고로는 토픽 1반만 신청할 수 있으며, 다른 레벨의 한국어 수업은 신청할 수 없습니다.\n\n[신청 방법]\n신청 기간 내 온라인 신청서를 제출하세요.\nhttps://forms.gle/ziWmG2CKaaD3gu2N9",
+        "facts": {
+          "audience": "외국인 주민, 모집 인원 20명. 이번 공고는 토픽 1반에 한하며 다른 레벨의 한국어 수업은 신청할 수 없음.",
+          "geo_age_income": "전국 대상, ZOOM 온라인 수업.",
+          "amount_period_deadline": "수강료 무료. 신청 기간: 2026년 9월 28일 10:00~10월 15일 18:00. 교육일시 안내 범위: 2026년 10월 18일 12:00~11월 8일 15:00. 교육은 10월 18일~11월 8일 매주 일요일 총 4회, 회당 3시간.",
+          "how_to_apply": "온라인 신청서 제출: https://forms.gle/ziWmG2CKaaD3gu2N9"
+        }
+      },
+      "translation": null,
+      "previousTranslationInput": null
+    },
+    {
+      "name": "무료 독감 백신 접종",
+      "route": "classified",
+      "context": {
+        "factsVersion": null,
+        "classificationVersion": 1,
+        "publicCategory": null,
+        "facts": {
+          "scope": "unknown",
+          "regions": [],
+          "category": "program",
+          "delivery": "offline",
+          "eventEnd": "",
+          "evidence": "",
+          "deadlineOn": "2026-10-21",
+          "eventStart": "",
+          "productType": "event_program",
+          "deadlineKind": "fixed",
+          "foreignEligibility": "unknown"
+        },
+        "nativeConfirmedFacts": {
+          "gateFacts": null,
+          "programFacts": {
+            "age": [],
+            "fees": [
+              {
+                "evidence": [
+                  "무료"
+                ],
+                "component": "tuition"
+              }
+            ],
+            "venue": "",
+            "issues": [
+              {
+                "code": "category_unresolved",
+                "field": "category_unresolved",
+                "evidence": []
+              },
+              {
+                "code": "delivery_mode_unknown",
+                "field": "delivery_mode_unknown",
+                "evidence": []
+              }
+            ],
+            "target": "서울에 거주하는 외국인주민",
+            "missing": [
+              "category_unresolved",
+              "delivery_mode_unknown"
+            ],
+            "periods": {
+              "operation": [
+                {
+                  "raw": "2026-10-25 14:00\n~\n2026-10-25 16:00",
+                  "label": "교육일시",
+                  "origin": "header",
+                  "status": "ok",
+                  "endpoints": [
+                    {
+                      "value": "2026-10-25T14:00:00+09:00",
+                      "precision": "minute"
+                    },
+                    {
+                      "value": "2026-10-25T16:00:00+09:00",
+                      "precision": "minute"
+                    }
+                  ]
+                }
+              ],
+              "application": [
+                {
+                  "raw": "2026-10-08 01:00\n~\n2026-10-21 18:30",
+                  "label": "신청일시",
+                  "origin": "header",
+                  "status": "ok",
+                  "endpoints": [
+                    {
+                      "value": "2026-10-08T01:00:00+09:00",
+                      "precision": "minute"
+                    },
+                    {
+                      "value": "2026-10-21T18:30:00+09:00",
+                      "precision": "minute"
+                    }
+                  ]
+                }
+              ]
+            },
+            "purpose": "",
+            "evidence": [
+              {
+                "field": "application",
+                "label": "신청일시",
+                "value": "2026-10-08 01:00\n~\n2026-10-21 18:30",
+                "origin": "header"
+              },
+              {
+                "field": "operation",
+                "label": "교육일시",
+                "value": "2026-10-25 14:00\n~\n2026-10-25 16:00",
+                "origin": "header"
+              },
+              {
+                "field": "target",
+                "label": "신청자격",
+                "value": "서울에 거주하는 외국인주민",
+                "origin": "header"
+              },
+              {
+                "field": "application_method",
+                "label": "신청방법",
+                "value": "방문,온라인",
+                "origin": "header"
+              },
+              {
+                "field": "tuition",
+                "label": "수강료",
+                "value": "무료",
+                "origin": "header"
+              },
+              {
+                "field": "capacity",
+                "label": "정원",
+                "value": "20명",
+                "origin": "header"
+              },
+              {
+                "field": "status",
+                "label": "모집 배지",
+                "value": "신청중",
+                "origin": "header"
+              }
+            ],
+            "language": [],
+            "companion": [],
+            "conflicts": [],
+            "residence": "",
+            "conditions": [
+              "* 어린이는 접종이 불가합니다."
+            ],
+            "description": "2026 무료 독감 예방접종 신청\nApply for Free Flu Vaccination\nҮнэгүй томуугийн вакцинд бүртгүүлэх\n申请免费流感疫苗接种\nhttps://forms.gle/ZycTB4k8y6embBMK6\n외국인 주민 100명 대상 독감 예방주사를 무료로 접종해 드립니다.\n아래 사항에 해당되는 성인(만 19세 이상) 외국인 주민에게 우선 지원합니다.\n* 어린이는 접종이 불가합니다.\n* 미등록 외국인(국민건강보험 가입 X) 1순위 접종지원으로\n외국인 주민은 주변의 미등록 외국인 지인에게 양보해주세요.\n- 예방접종 일시\n1차 50명 : 2026년 10월 25일(일) 14:00-16:00 (예정)\n2차 50명 : 2026년 11월 8일(일)14:00-16:00 (예정)\n*정확한 '접종일자'는 변동 될 수 있음\n- 예방접종 장소 : 센터 3층 진료실\n- 접종 대상으로 확정될 시, 접종시간을 포함한 안내문자를 별도 발송해 드립니다.\nFree Flu Vaccination for 100 Foreign Residents\nFree flu vaccinations will be provided for 100 foreign adult residents (age 19 and above).\nPriority will be given to the following groups:\n(children are not eligible for vaccination)\nPlease note: Undocumented foreign residents (not covered by the National Health Insurance) will be given first priority.\nIf you are a registered foreign resident, please consider giving your spot to an undocumented friend.\n-Date & Time\n1st 50people : October 25, 2026 (Sunday), 2:00–4:00 PM (subject to change)\n2nd 50people : November 8, 2026 (Sunday), 2:00–4:00 PM (subject to change)\n-Place: 3F Clinic Room, Dongbu Foreign Resident Center\n- Notice: If you are selected as a vaccination recipient, you will receive a text message with your vaccination time and further details.\n100 гадаад иргэнд үнэгүй томуугийн вакцин хийж өгнө\n19 ба түүнээс дээш насны гадаад иргэдэд томуугийн вакциныг үнэгүй хийнэ.\nДараах дарааллын дагуу дэмжлэг үзүүлнэ:\n(хүүхэд вакцин хийлгэх боломжгүй)\nТайлбар: Бүртгэлгүй (Үндэсний эрүүл мэндийн даатгалд хамрагдаагүй) гадаад иргэдэд нэн тэргүүнд дэмжлэг үзүүлнэ.\nХэрэв та бүртгэлтэй бол, боломжийг бүртгэлгүй найздаа譲ж өгөөрэй.\n- Вакцинжуулалтын цаг\n1-р ээлж 50 хүн : 2026 оны 10-р сарын 25 (ням), 14:00–16:00 (хугацаа өөрчлөгдөж магадгүй)\n2-р ээлж 50 хүн : 2026 оны 11-р сарын 8 (ням), 14:00–16:00 (хугацаа өөрчлөгдөж магадгүй)\n- Байршил: Төвийн 3-р давхар, эмнэлгийн өрөө\n- Мэдэгдэл: Сонгогдсон тохиолдолд вакцин хийх цагийн хамт мессеж илгээнэ.\n我们将为100名外籍居民提供免费流感疫苗接种。\n优先接种对象为符合以下条件的成年外籍居民（19岁及以上）：\n儿童无法接种\n由于无证外国人（未参加国民健康保险）享有第一优先接种权，\n请各位外籍居民将名额让给认识的无证外国人。\n- 疫苗接种日期\n第一场（50人）：2026年10月25日（周日）14:00-16:00（已安排）\n第二场（50人）：2026年11月8日（周日）14:00-16:00（已安排）\n*具体的疫苗接种日期可能会有所变更。\n- 疫苗接种地点：中心三楼检查室\n- 确认符合接种条件后，我们将单独发送短信通知，其中包含接种时间。",
+            "capacity_raw": [
+              "20명"
+            ],
+            "official_url": "https://global.seoul.go.kr/hmpg/ecpr/prgm/prgmDetail.do?cntr_no=A04AAC3315414E8D9C31B40511A2580D&prgrm_no=5D5033616F770106E063C0A8A022190D&lang=ko",
+            "delivery_mode": "unknown",
+            "source_status": [
+              "신청중"
+            ],
+            "capacity_value": null,
+            "parser_version": "myseoul-html-v2-local",
+            "schema_version": "myseoul-program-facts-v1-local",
+            "activity_region": "unknown",
+            "public_category": "unknown",
+            "residence_scope": "unknown",
+            "source_category": "생활",
+            "meeting_evidence": [],
+            "scope_exclusions": [],
+            "session_evidence": [
+              "1차 50명 : 2026년 10월 25일(일) 14:00-16:00 (예정)",
+              "2차 50명 : 2026년 11월 8일(일)14:00-16:00 (예정)",
+              "1st 50people : October 25, 2026 (Sunday), 2:00–4:00 PM (subject to change)",
+              "2nd 50people : November 8, 2026 (Sunday), 2:00–4:00 PM (subject to change)",
+              "1-р ээлж 50 хүн : 2026 оны 10-р сарын 25 (ням), 14:00–16:00 (хугацаа өөрчлөгдөж магадгүй)",
+              "2-р ээлж 50 хүн : 2026 оны 11-р сарын 8 (ням), 14:00–16:00 (хугацаа өөрчлөгдөж магадгүй)",
+              "第一场（50人）：2026年10月25日（周日）14:00-16:00（已安排）",
+              "第二场（50人）：2026年11月8日（周日）14:00-16:00（已安排）"
+            ],
+            "activity_evidence": [],
+            "application_actor": "individual",
+            "application_links": [
+              "https://forms.gle/ZycTB4k8y6embBMK6"
+            ],
+            "revision_contract": "myseoul-semantic-v2",
+            "qualification_note": "",
+            "residence_evidence": [],
+            "application_methods": [
+              "방문,온라인"
+            ],
+            "early_close_evidence": []
+          }
+        },
+        "filters": {
+          "topic": {
+            "value": "daily_safety",
+            "status": "known"
+          },
+          "schema": "content-filters-v1",
+          "audience": {
+            "value": "other",
+            "status": "known"
+          },
+          "category": "program",
+          "delivery": {
+            "value": "onsite",
+            "status": "known"
+          },
+          "location": {
+            "value": {
+              "scope": "specific",
+              "venues": [
+                {
+                  "address": "",
+                  "district": "성동구",
+                  "facility": "",
+                  "province": "11"
+                }
+              ]
+            },
+            "status": "known"
+          },
+          "schedule": {
+            "value": null,
+            "status": "not_applicable"
+          },
+          "spaceKind": {
+            "value": null,
+            "status": "not_applicable"
+          },
+          "application": {
+            "value": {
+              "end": {
+                "value": "2026-10-21T18:30:00+09:00",
+                "precision": "minute"
+              },
+              "start": {
+                "value": "2026-10-08T01:00:00+09:00",
+                "precision": "minute"
+              },
+              "deadlineKind": "fixed",
+              "sourceStatus": "open"
+            },
+            "status": "known"
+          }
+        },
+        "body": "",
+        "title": "무료 독감 백신 접종"
+      },
+      "summary": {
+        "content_ko": "[한 줄 요약]\n서울 거주 성인 외국인주민을 위한 무료 독감 예방접종으로, 국민건강보험에 가입하지 않은 미등록 외국인을 우선 지원합니다.\n\n[대상]\n서울에 거주하는 만 19세 이상 외국인주민이며, 어린이는 접종할 수 없습니다. 국민건강보험 미가입 미등록 외국인이 1순위입니다. 등록 외국인주민에게는 주변 미등록 외국인 지인에게 접종 기회를 양보하도록 요청하고 있습니다.\n\n[일정 안내]\n신청 기간: 2026년 10월 8일 01:00~10월 21일 18:30\n1차 접종: 2026년 10월 25일 14:00~16:00, 50명 예정\n2차 접종: 2026년 11월 8일 14:00~16:00, 50명 예정\n접종 날짜는 변경될 수 있으며, 접종 대상자로 확정되면 개인별 접종시간과 안내사항을 문자로 받습니다.\n\n[주요 내용]\n동부외국인주민센터 3층 진료실에서 외국인주민 대상 독감 예방접종을 진행합니다. 접종 안내상 전체 대상은 100명으로, 1·2차 각 50명입니다. 신청 페이지에는 정원이 20명으로 별도 표기되어 있습니다.\n\n[신청 방법]\n방문 또는 온라인으로 신청할 수 있습니다. 온라인 신청 링크: https://forms.gle/ZycTB4k8y6embBMK6",
+        "facts": {
+          "audience": "서울 거주 만 19세 이상 외국인주민. 어린이 접종 불가. 국민건강보험에 가입하지 않은 미등록 외국인 1순위이며, 등록 외국인주민에게 미등록 외국인 지인에게 기회를 양보하도록 요청. 접종 안내상 총 100명(1·2차 각 50명), 신청 페이지 정원은 20명으로 별도 표기.",
+          "geo_age_income": "서울 거주 조건, 만 19세 이상. 접종 장소: 서울 성동구 동부외국인주민센터 3층 진료실.",
+          "amount_period_deadline": "수강료 무료, 독감 예방접종 무료. 신청: 2026년 10월 8일 01:00~10월 21일 18:30. 접종 예정: 1차 2026년 10월 25일 14:00~16:00, 2차 2026년 11월 8일 14:00~16:00. 접종 날짜는 변경 가능하며, 확정 대상자에게 개별 접종시간을 문자로 안내.",
+          "how_to_apply": "방문 또는 온라인 신청. 온라인 신청 링크: https://forms.gle/ZycTB4k8y6embBMK6"
+        }
+      },
+      "translation": {
+        "title_ja": "無料インフルエンザワクチン接種",
+        "content_ja": "[要約]\nソウル在住の成人外国人住民のための無料インフルエンザ予防接種で、国民健康保険に加入していない未登録外国人を優先して支援します。\n\n[対象]\nソウルに居住する満19歳以上の外国人住民が対象で、子どもは接種できません。国民健康保険未加入の未登録外国人が第1優先です。登録外国人住民には、周囲の未登録外国人の知人に接種の機会を譲るようお願いしています。\n\n[日程案内]\n申請期間：2026年10月8日 01時00分～10月21日 18時30分\n第1回接種：2026年10月25日 14時00分～16時00分、50名予定\n第2回接種：2026年11月8日 14時00分～16時00分、50名予定\n接種日は変更される場合があり、接種対象者として確定すると、個別の接種時間と案内事項がSMSで届きます。\n\n[主な内容]\nトンブ外国人住民センター3階の診療室で、外国人住民を対象としたインフルエンザ予防接種を実施します。接種案内上の対象者は合計100名で、第1回・第2回それぞれ50名です。申請ページには定員が20名と別途記載されています。\n\n[申請方法]\n来所またはオンラインで申請できます。オンライン申請リンク：https://forms.gle/ZycTB4k8y6embBMK6\n\n確認済みの分類・参加案内\n分類：プログラム\n実施方式：対面\n申請締切：2026年10月21日\n参加条件：[\"* 子どもは接種できません。\"]\n申請方法：[\"来所、オンライン\"]\n費用：[{\"evidence\": [\"無料\"], \"component\": \"受講料\"}]\n募集人数：[\"20名\"]\n実施日程：[\"第1回50名：2026年10月25日（日）14時00分～16時00分（予定）\", \"第2回50名：2026年11月8日（日）14時00分～16時00分（予定）\", \"第1回50名：2026年10月25日（日）14時00分～16時00分（変更の可能性あり）\", \"第2回50名：2026年11月8日（日）14時00分～16時00分（変更の可能性あり）\", \"第1回50名：2026年10月25日（日）14時00分～16時00分（日時が変更される可能性あり）\", \"第2回50名：2026年11月8日（日）14時00分～16時00分（日時が変更される可能性あり）\", \"第1回（50名）：2026年10月25日（日）14時00分～16時00分（実施予定確定）\", \"第2回（50名）：2026年11月8日（日）14時00分～16時00分（実施予定確定）\"]\n申請期間：2026年10月8日 01時00分（UTC+09:00）～2026年10月21日 18時30分（UTC+09:00）\n実施期間：2026年10月25日 14時00分～2026年10月25日 16時00分"
+      },
+      "previousTranslationInput": {
+        "titleKo": "무료 독감 백신 접종",
+        "contentKo": "[한 줄 요약]\n서울 거주 성인 외국인주민을 위한 무료 독감 예방접종으로, 국민건강보험에 가입하지 않은 미등록 외국인을 우선 지원합니다.\n\n[대상]\n서울에 거주하는 만 19세 이상 외국인주민이며, 어린이는 접종할 수 없습니다. 국민건강보험 미가입 미등록 외국인이 1순위입니다. 등록 외국인주민에게는 주변 미등록 외국인 지인에게 접종 기회를 양보하도록 요청하고 있습니다.\n\n[일정 안내]\n신청 기간: 2026년 10월 8일 01:00~10월 21일 18:30\n1차 접종: 2026년 10월 25일 14:00~16:00, 50명 예정\n2차 접종: 2026년 11월 8일 14:00~16:00, 50명 예정\n접종 날짜는 변경될 수 있으며, 접종 대상자로 확정되면 개인별 접종시간과 안내사항을 문자로 받습니다.\n\n[주요 내용]\n동부외국인주민센터 3층 진료실에서 외국인주민 대상 독감 예방접종을 진행합니다. 접종 안내상 전체 대상은 100명으로, 1·2차 각 50명입니다. 신청 페이지에는 정원이 20명으로 별도 표기되어 있습니다.\n\n[신청 방법]\n방문 또는 온라인으로 신청할 수 있습니다. 온라인 신청 링크: https://forms.gle/ZycTB4k8y6embBMK6\n\n확인한 분류·참가 안내\n분류: 프로그램\n진행 방식: 오프라인\n신청 마감: 2026-10-21\n참가 조건: [\"* 어린이는 접종이 불가합니다.\"]\n신청 방법: [\"방문,온라인\"]\n비용: [{\"evidence\": [\"무료\"], \"component\": \"tuition\"}]\n모집 인원: [\"20명\"]\n진행 일정: [\"1차 50명 : 2026년 10월 25일(일) 14:00-16:00 (예정)\", \"2차 50명 : 2026년 11월 8일(일)14:00-16:00 (예정)\", \"1st 50people : October 25, 2026 (Sunday), 2:00–4:00 PM (subject to change)\", \"2nd 50people : November 8, 2026 (Sunday), 2:00–4:00 PM (subject to change)\", \"1-р ээлж 50 хүн : 2026 оны 10-р сарын 25 (ням), 14:00–16:00 (хугацаа өөрчлөгдөж магадгүй)\", \"2-р ээлж 50 хүн : 2026 оны 11-р сарын 8 (ням), 14:00–16:00 (хугацаа өөрчлөгдөж магадгүй)\", \"第一场（50人）：2026年10月25日（周日）14:00-16:00（已安排）\", \"第二场（50人）：2026年11月8日（周日）14:00-16:00（已安排）\"]\n신청기간: 2026-10-08T01:00:00+09:00 ~ 2026-10-21T18:30:00+09:00\n진행기간: 2026-10-25 14:00 ~ 2026-10-25 16:00"
+      }
+    },
+    {
+      "name": "한글 키링 만들기 워크샵",
+      "route": "classified",
+      "context": {
+        "factsVersion": null,
+        "classificationVersion": 1,
+        "publicCategory": null,
+        "facts": {
+          "scope": "unknown",
+          "regions": [],
+          "category": "program",
+          "delivery": "offline",
+          "eventEnd": "",
+          "evidence": "",
+          "deadlineOn": "2026-10-13",
+          "eventStart": "",
+          "productType": "event_program",
+          "deadlineKind": "fixed",
+          "foreignEligibility": "unknown"
+        },
+        "nativeConfirmedFacts": {
+          "gateFacts": null,
+          "programFacts": {
+            "age": [],
+            "fees": [
+              {
+                "evidence": [
+                  "무료"
+                ],
+                "component": "tuition"
+              }
+            ],
+            "venue": "",
+            "issues": [
+              {
+                "code": "category_unresolved",
+                "field": "category_unresolved",
+                "evidence": []
+              },
+              {
+                "code": "delivery_mode_unknown",
+                "field": "delivery_mode_unknown",
+                "evidence": []
+              }
+            ],
+            "target": "서울 거주 외국인 (성인)",
+            "missing": [
+              "category_unresolved",
+              "delivery_mode_unknown"
+            ],
+            "periods": {
+              "operation": [
+                {
+                  "raw": "2026-10-15 10:00\n~\n2026-10-15 11:30",
+                  "label": "교육일시",
+                  "origin": "header",
+                  "status": "ok",
+                  "endpoints": [
+                    {
+                      "value": "2026-10-15T10:00:00+09:00",
+                      "precision": "minute"
+                    },
+                    {
+                      "value": "2026-10-15T11:30:00+09:00",
+                      "precision": "minute"
+                    }
+                  ]
+                }
+              ],
+              "application": [
+                {
+                  "raw": "2026-10-08 00:00\n~\n2026-10-13 00:00",
+                  "label": "신청일시",
+                  "origin": "header",
+                  "status": "ok",
+                  "endpoints": [
+                    {
+                      "value": "2026-10-08T00:00:00+09:00",
+                      "precision": "minute"
+                    },
+                    {
+                      "value": "2026-10-13T00:00:00+09:00",
+                      "precision": "minute"
+                    }
+                  ]
+                }
+              ]
+            },
+            "purpose": "",
+            "evidence": [
+              {
+                "field": "application",
+                "label": "신청일시",
+                "value": "2026-10-08 00:00\n~\n2026-10-13 00:00",
+                "origin": "header"
+              },
+              {
+                "field": "operation",
+                "label": "교육일시",
+                "value": "2026-10-15 10:00\n~\n2026-10-15 11:30",
+                "origin": "header"
+              },
+              {
+                "field": "target",
+                "label": "신청자격",
+                "value": "서울 거주 외국인 (성인)",
+                "origin": "header"
+              },
+              {
+                "field": "application_method",
+                "label": "신청방법",
+                "value": "온라인",
+                "origin": "header"
+              },
+              {
+                "field": "tuition",
+                "label": "수강료",
+                "value": "무료",
+                "origin": "header"
+              },
+              {
+                "field": "capacity",
+                "label": "정원",
+                "value": "20명",
+                "origin": "header"
+              },
+              {
+                "field": "status",
+                "label": "모집 배지",
+                "value": "신청중",
+                "origin": "header"
+              }
+            ],
+            "language": [],
+            "companion": [],
+            "conflicts": [],
+            "residence": "",
+            "conditions": [],
+            "description": "Registration Link: https://bit.ly/hangeulkeyring1015",
+            "capacity_raw": [
+              "20명"
+            ],
+            "official_url": "https://global.seoul.go.kr/hmpg/ecpr/prgm/prgmDetail.do?cntr_no=EAFE959EBD664C18B306F8CF54BED01F&prgrm_no=5D4AECEF307101A2E063C0A8A0229FEB&lang=ko",
+            "delivery_mode": "unknown",
+            "source_status": [
+              "신청중"
+            ],
+            "capacity_value": null,
+            "parser_version": "myseoul-html-v2-local",
+            "schema_version": "myseoul-program-facts-v1-local",
+            "activity_region": "unknown",
+            "public_category": "unknown",
+            "residence_scope": "unknown",
+            "source_category": "체험",
+            "meeting_evidence": [],
+            "scope_exclusions": [],
+            "session_evidence": [],
+            "activity_evidence": [],
+            "application_actor": "individual",
+            "application_links": [],
+            "revision_contract": "myseoul-semantic-v2",
+            "qualification_note": "",
+            "residence_evidence": [],
+            "application_methods": [
+              "온라인"
+            ],
+            "early_close_evidence": []
+          }
+        },
+        "filters": {
+          "topic": {
+            "value": "culture_experience",
+            "status": "known"
+          },
+          "schema": "content-filters-v1",
+          "audience": {
+            "value": "other",
+            "status": "known"
+          },
+          "category": "program",
+          "delivery": {
+            "value": "onsite",
+            "status": "known"
+          },
+          "location": {
+            "value": {
+              "scope": "specific",
+              "venues": [
+                {
+                  "address": "",
+                  "district": "용산구",
+                  "facility": "",
+                  "province": "11"
+                }
+              ]
+            },
+            "status": "known"
+          },
+          "schedule": {
+            "value": null,
+            "status": "not_applicable"
+          },
+          "spaceKind": {
+            "value": null,
+            "status": "not_applicable"
+          },
+          "application": {
+            "value": {
+              "end": {
+                "value": "2026-10-13T00:00:00+09:00",
+                "precision": "minute"
+              },
+              "start": {
+                "value": "2026-10-08T00:00:00+09:00",
+                "precision": "minute"
+              },
+              "deadlineKind": "fixed",
+              "sourceStatus": "open"
+            },
+            "status": "known"
+          }
+        },
+        "body": "",
+        "title": "한글 키링 만들기 워크샵"
+      },
+      "summary": {
+        "content_ko": "[한 줄 요약]\n서울 거주 외국인 성인을 위한 한글 키링 만들기 워크샵입니다.\n\n[대상]\n서울 거주 외국인 성인 20명.\n\n[일정 안내]\n신청 기간: 2026년 10월 8일 00:00~10월 13일 00:00\n교육 일시: 2026년 10월 15일 10:00~11:30\n진행 지역: 서울 용산구\n\n[주요 내용]\n한글 키링을 직접 만드는 오프라인 체험 워크샵입니다.\n\n[신청 방법]\n온라인으로 신청합니다.\n신청 링크: https://bit.ly/hangeulkeyring1015",
+        "facts": {
+          "audience": "서울 거주 외국인 성인, 정원 20명",
+          "geo_age_income": "서울 거주 조건, 성인 대상. 진행 지역은 서울 용산구.",
+          "amount_period_deadline": "수강료 무료. 신청 기간: 2026년 10월 8일 00:00~10월 13일 00:00. 교육 일시: 2026년 10월 15일 10:00~11:30.",
+          "how_to_apply": "온라인 신청: https://bit.ly/hangeulkeyring1015"
+        }
+      },
+      "translation": {
+        "title_ja": "ハングルキーリング作りワークショップ",
+        "content_ja": "[要約]\nソウル在住の外国人成人を対象としたハングルキーリング作りワークショップです。\n\n[対象]\nソウル在住の外国人成人20名。\n\n[日程案内]\n申請期間：2026年10月8日 0時00分～10月13日 0時00分\n講習日時：2026年10月15日 10時00分～11時30分\n実施地域：ソウル ヨンサン区\n\n[主な内容]\nハングルキーリングを自分で作る対面の体験ワークショップです。\n\n[申請方法]\nオンラインで申請します。\n申請リンク：https://bit.ly/hangeulkeyring1015\n\n確認済みの分類・参加案内\n分類：プログラム\n実施方式：対面\n申請締切：2026年10月13日\n申請方法：[\"オンライン\"]\n費用：[{\"evidence\": [\"無料\"], \"component\": \"tuition\"}]\n募集人数：[\"20名\"]\n申請期間：2026年10月8日 0時00分～2026年10月13日 0時00分（UTC+09:00）\n実施期間：2026年10月15日 10時00分～2026年10月15日 11時30分"
+      },
+      "previousTranslationInput": {
+        "titleKo": "한글 키링 만들기 워크샵",
+        "contentKo": "[한 줄 요약]\n서울 거주 외국인 성인을 위한 한글 키링 만들기 워크샵입니다.\n\n[대상]\n서울 거주 외국인 성인 20명.\n\n[일정 안내]\n신청 기간: 2026년 10월 8일 00:00~10월 13일 00:00\n교육 일시: 2026년 10월 15일 10:00~11:30\n진행 지역: 서울 용산구\n\n[주요 내용]\n한글 키링을 직접 만드는 오프라인 체험 워크샵입니다.\n\n[신청 방법]\n온라인으로 신청합니다.\n신청 링크: https://bit.ly/hangeulkeyring1015\n\n확인한 분류·참가 안내\n분류: 프로그램\n진행 방식: 오프라인\n신청 마감: 2026-10-13\n신청 방법: [\"온라인\"]\n비용: [{\"evidence\": [\"무료\"], \"component\": \"tuition\"}]\n모집 인원: [\"20명\"]\n신청기간: 2026-10-08T00:00:00+09:00 ~ 2026-10-13T00:00:00+09:00\n진행기간: 2026-10-15 10:00 ~ 2026-10-15 11:30"
+      }
+    }
+  ]
+}

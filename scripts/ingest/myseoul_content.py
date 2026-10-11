@@ -5,11 +5,11 @@ No model calls, calendar expansion, source lookup or inferred sessions.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from ingest.ai_errors import AiJobError
 from ingest.body_sections import normalize_schedule_heading
 from ingest.myseoul_ai_support import schedule_values
-from ingest.translation_validation import _dates_and_times, _entry, _quantities, _amounts
+from ingest.translation_validation import _dates_and_times, _entry, _quantities, _amounts, _durations
 
 _DATED_LINE = (r'^(?:제?\d+\s*(?:회차|차)\s*[:.)-]?\s*)?'
                r'(?:(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일|\d{4}-\d{2}-\d{2})')
@@ -216,16 +216,7 @@ def _validate_dated_schedule_details(line: str, evidence: list[str]) -> None:
 
 
 def _period_values(text: str) -> list[tuple]:
-    # Raw reclassification filters retain ISO offsets. Compare their local KST
-    # date/time, without misreading '+09:00' as a third clock in the range.
-    def local_time(match):
-        try:
-            value = datetime.fromisoformat(match[0].replace('Z', '+00:00'))
-        except ValueError:
-            raise AiJobError('ai_schema_error') from None
-        return value.astimezone(timezone(timedelta(hours=9))).replace(tzinfo=None).isoformat()
-    normalized = re.sub(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})', local_time, text)
-    return _dates_and_times(normalized)
+    return _dates_and_times(text)
 
 
 def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
@@ -233,30 +224,58 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
     # Detect altered explicit ranges by role, not by a shared number bag.
     clauses = re.split(r'(?<=[.!?。])\s+|[\n;；]|(?=실제\s*수업)', summary)
     period_roles = (r'신청\s*기간',
-                    r'진행\s*기간|운영\s*기간|개최\s*기간|교육\s*기간|(?:교육\s*)?운영\s*범위')
+                    r'진행\s*기간|운영\s*기간|개최\s*기간|교육\s*기간|(?:교육\s*)?운영\s*범위|교육일시\s*안내\s*범위|(?:교육|진행|프로그램)\s*일시|교육')
     for labels in period_roles:
         expected = _entry(canonical, labels)
         for clause in clauses:
-            generated = _entry(clause, labels)
+            generated = _entry(_plain_schedule_line(clause), labels)
             if not generated or not expected:
                 continue
             actual_values = _period_values(generated)
             expected_values = _period_values(expected)
+            actual_dates = [v for v in actual_values if v[0] == 'date']
+            expected_dates = [v for v in expected_values if v[0] == 'date']
+            actual_clocks = [v for v in actual_values if v[0] == 'time']
+            expected_clocks = [v for v in expected_values if v[0] == 'time']
+            # Omitted clocks are restored by the deterministic reviewed block.
+            # Any clock the model DOES state must match its own date endpoint.
+            # Shared daily ranges and one-date same-day ranges keep clock order.
+            one_day = len(actual_dates) == 1 and len(expected_dates) == 2 and expected_dates[0] == expected_dates[1]
+            shared_daily = bool(re.search(r'각일|매일|각\s*날', generated))
+            clocks_match = not actual_clocks
+            if one_day or shared_daily:
+                clocks_match = not actual_clocks or actual_clocks == expected_clocks
+            elif actual_clocks:
+                endpoint = -1
+                clocks_match = len(expected_dates) == len(expected_clocks)
+                seen = set()
+                for value in actual_values:
+                    if value[0] == 'date':
+                        endpoint += 1
+                    elif value[0] == 'time':
+                        if endpoint in seen or not 0 <= endpoint < len(expected_clocks) or value != expected_clocks[endpoint]:
+                            clocks_match = False
+                        seen.add(endpoint)
+            if len(actual_dates) == 1 and len(expected_dates) == 2 and expected_dates[0] == expected_dates[1]:
+                actual_dates *= 2
             # Omitted endpoint years are permitted here; canonical output keeps
             # the reviewed year. An explicitly different year remains a conflict.
-            compatible = len(actual_values) == len(expected_values) and all(
+            compatible = len(actual_dates) == len(expected_dates) and all(
                 a == b or a[0] == b[0] == 'date' and a[1] is None and a[2:] == b[2:]
-                for a, b in zip(actual_values, expected_values))
+                for a, b in zip(actual_dates, expected_dates)) and clocks_match
             if actual_values and not compatible:
                 raise AiJobError('ai_schema_error')
     evidence = schedule_lines(f) + f.get('meeting_evidence', [])
     expected = schedule_values('\n'.join(evidence))
+    expected_durations = _durations('\n'.join(evidence))
     for line in clauses:
         if re.search(r'신청|접수|모집|발표|마감', line):
             continue
         if (re.search(r'일정|회차|집결|실제\s*수업|총\s*\d+\s*회', line)
                 or re.match(_DATED_LINE, _plain_schedule_line(line))):
             actual = schedule_values(line)
+            if _durations(line).keys() - expected_durations.keys():
+                raise AiJobError('ai_schema_error')
             if any(not values.issubset(expected[key]) for key, values in actual.items() if key != 'years'):
                 raise AiJobError('ai_schema_error')
             _validate_schedule_years(line, evidence, f, expected['years'])
