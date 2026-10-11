@@ -161,7 +161,7 @@ def parse_seoul_date(raw: str) -> dict[str, str | None]:
     return {"raw": raw, "value": None, "status": "unparsed", "precision": None}
 
 
-def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
+def _source_fields(item: dict[str, Any]) -> dict[str, str]:
     if not isinstance(item, dict):
         raise SeoulContractError("seoul_item_invalid")
     raw: dict[str, str] = {}
@@ -172,6 +172,15 @@ def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
         raw[name] = "" if value is None else str(value).strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", raw["SVCID"]):
         raise SeoulContractError("seoul_id_invalid")
+    return raw
+
+
+def _raw_revision(raw: dict[str, str]) -> str:
+    return hashlib.sha256(json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
+    raw = _source_fields(item)
     if not raw["SVCNM"]:
         raise SeoulContractError("seoul_title_missing")
     if len(raw["DTLCONT"].encode("utf-8")) > 512_000:
@@ -200,7 +209,7 @@ def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
     }
     # Raw content (including table/language structure) participates in the revision.
     # Observed-at, total_count, row/page number and parser version do not.
-    digest = hashlib.sha256(json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    digest = _raw_revision(raw)
     attachment = bool(body["body_has_images"] or body["attachment_links_present"] or raw["IMGURL"])
     return ObservationRecord(
         external_key=raw["SVCID"], revision_hash=digest, disposition="observe_only",
@@ -233,22 +242,27 @@ class SeoulReservationConnector(BatchConnector):
         self._api_key_provider = api_key_provider
         self._expected_total: int | None = None
         self._seen: dict[str, str] = {}
+        self.last_diagnostic: dict[str, Any] = {}
 
     def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:
+        self.last_diagnostic = {"stage": "checkpoint"}
         page = 1 if checkpoint is None else checkpoint.rest_page_num()
         if type(page) is not int or not 1 <= page <= self.max_pages:
             raise SeoulContractError("seoul_checkpoint_out_of_range")
         if page == 1:
             self._seen.clear()
             self._expected_total = None
+        self.last_diagnostic.update(stage="configuration", page=page)
         key = self._api_key_provider() if self._api_key_provider else os.environ.get(SEOUL_API_KEY_ENV, "")
         if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", key):
             raise SeoulContractError("seoul_api_key_missing_or_invalid")
         first, last = (page - 1) * self.page_size + 1, page * self.page_size
+        self.last_diagnostic["stage"] = "api_read"
         payload, status, size = self.http.get_json(
             f"http://openapi.seoul.go.kr:8088/{key}/json/{SERVICE}/{first}/{last}/",
             source_id=SEOUL_SOURCE_ID, page_num=page, sensitive_values=(key,),
         )
+        self.last_diagnostic.update(stage="response_contract", http_status=status, response_bytes=size)
         # Do not retain an echoed credential, even in unexpected provider fields.
         encoded = json.dumps(payload, ensure_ascii=False)
         if key in encoded:
@@ -258,32 +272,49 @@ class SeoulReservationConnector(BatchConnector):
         service = payload.get(SERVICE)
         result = service.get("RESULT") if isinstance(service, dict) else payload.get("RESULT")
         code = result.get("CODE") if isinstance(result, dict) else None
+        if isinstance(code, str) and re.fullmatch(r"(?:INFO|ERROR)-[0-9]{3}", code):
+            self.last_diagnostic["api_code"] = code
         if code == "INFO-200" and page == 1:
             rows, total = [], 0
         elif code == "INFO-000" and isinstance(service, dict):
             rows, total = service.get("row"), service.get("list_total_count")
         else:
             raise SeoulContractError("seoul_api_result_error")
+        self.last_diagnostic["stage"] = "page_contract"
+        if type(rows) is list:
+            self.last_diagnostic["row_count"] = len(rows)
+        if type(total) is int and total >= 0:
+            self.last_diagnostic["total_count"] = total
         if (not isinstance(rows, list) or type(total) is not int or total < 0
                 or len(rows) != max(0, min(self.page_size, total - first + 1))):
             raise SeoulContractError("seoul_page_shape_invalid")
-        records = [normalize_seoul_item(row) for row in rows]
-        ids = [record.external_key for record in records]
+        # Page integrity needs identities/revisions, not accepted source URLs.
+        # Full item validation belongs to planning, where one rejected item
+        # cannot discard the other valid observations in this bounded page.
+        identities = []
+        for index, row in enumerate(rows):
+            self.last_diagnostic.update(stage="row_identity", row_index=index)
+            raw = _source_fields(row)
+            identities.append((raw['SVCID'], _raw_revision(raw)))
+        self.last_diagnostic.pop("row_index", None)
+        self.last_diagnostic["stage"] = "page_identity"
+        ids = [sid for sid, _ in identities]
         if len(set(ids)) != len(ids):
             raise SeoulContractError("seoul_duplicate_id_in_page")
         if ids and all(sid in self._seen for sid in ids):
             raise SeoulContractError("seoul_repeated_page")
-        for record in records:
-            if record.external_key in self._seen and self._seen[record.external_key] != record.revision_hash:
+        for sid, revision in identities:
+            if sid in self._seen and self._seen[sid] != revision:
                 raise SeoulContractError("seoul_revision_changed_during_scan")
         if any(sid in self._seen for sid in ids):
             raise SeoulContractError("seoul_overlapping_pages")
-        for record in records:
-            self._seen[record.external_key] = record.revision_hash
+        for sid, revision in identities:
+            self._seen[sid] = revision
         drift = self._expected_total is not None and total != self._expected_total
         if self._expected_total is None:
             self._expected_total = total
         end = last >= total
+        self.last_diagnostic["stage"] = "read_complete"
         return BatchResult(tuple(rows), None if end else Checkpoint.for_rest_page(page + 1), end,
                            {"page_num": page, "item_count": len(rows), "total_count": total,
                             "total_changed": drift, "ordering_capability": "untrusted"},

@@ -72,7 +72,7 @@ def _log_http_status(
     sensitive_values: tuple[str, ...] = (),
 ) -> None:
     headers = getattr(response, "headers", None)
-    source = source_id if source_id in {"youthcenter_policy", "youthcenter_content"} else "-"
+    source = source_id if source_id in {"youthcenter_policy", "youthcenter_content", "seoul_reservation"} else "-"
     page = page_num if isinstance(page_num, int) and 1 <= page_num <= 100000 else "-"
     secret_values = sensitive_values + tuple(
         str(value) for key, value in (params or {}).items()
@@ -133,6 +133,7 @@ class HttpClient:
     sleep: SleepFn = field(default=PRODUCTION_SLEEP)
     transport: TransportFn | None = None
     request_count: int = 0
+    last_diagnostic: dict[str, Any] = field(default_factory=dict, init=False)
 
     def remaining(self) -> int:
         return max(0, self.budget - self.request_count)
@@ -152,11 +153,16 @@ class HttpClient:
         Returns:
             (payload, http_status, response_bytes)
         """
+        self.last_diagnostic = {"stage": "http_request", "response_bytes": 0}
         last_status: int | None = None
         for attempt in range(1, self.max_attempts + 1):
             if self.request_count >= self.budget:
+                self.last_diagnostic["error_code"] = "http_budget_exhausted"
                 raise HttpBudgetExhausted()
             self.request_count += 1
+            for key in ('http_status', 'error_code', 'declared_bytes', 'json_error_position'):
+                self.last_diagnostic.pop(key, None)
+            self.last_diagnostic.update(stage="http_request", attempt=attempt, response_bytes=0)
             response: Any = None
             failure: str | None = None
             try:
@@ -175,10 +181,12 @@ class HttpClient:
                 except requests.RequestException:
                     failure = "request_failed"
                 if failure is not None:
+                    self.last_diagnostic["error_code"] = failure
                     raise HttpRequestFailed(failure)
 
                 status = int(getattr(response, "status_code", 0) or 0)
                 last_status = status
+                self.last_diagnostic.update(stage="http_status", http_status=status)
                 if status >= 400:
                     _log_http_status(
                         response, source_id=source_id, page_num=page_num,
@@ -187,13 +195,16 @@ class HttpClient:
                     )
                 if status in RETRYABLE_STATUSES:
                     if attempt >= self.max_attempts:
+                        self.last_diagnostic["error_code"] = "http_status_error"
                         raise HttpStatusError(status)
                     backoff_index = min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)
                     self.sleep(RETRY_BACKOFF_SECONDS[backoff_index])
                     continue
                 if status == 403 or status >= 400:
+                    self.last_diagnostic["error_code"] = "http_status_error"
                     raise HttpStatusError(status)
-                payload, size = _read_limited_json(response, self.max_response_bytes)
+                payload, size = _read_limited_json(response, self.max_response_bytes, diagnostic=self.last_diagnostic)
+                self.last_diagnostic.update(stage="http_complete", response_bytes=size)
                 return payload, status, size
             finally:
                 closer = getattr(response, "close", None) if response is not None else None
@@ -217,13 +228,17 @@ def _header_content_length(headers: Any) -> int | None:
         return None
 
 
-def _read_limited_json(response: Any, max_bytes: int) -> tuple[Any, int]:
+def _read_limited_json(response: Any, max_bytes: int, *, diagnostic: dict | None = None) -> tuple[Any, int]:
+    diagnostic = {} if diagnostic is None else diagnostic
+    diagnostic["stage"] = "body_read"
     declared = _header_content_length(getattr(response, "headers", None))
     if declared is not None and declared > max_bytes:
+        diagnostic.update(error_code="response_too_large", declared_bytes=declared)
         raise ResponseTooLarge()
 
     iterator = getattr(response, "iter_content", None)
     if not callable(iterator):
+        diagnostic["error_code"] = "non_json"
         raise HttpRequestFailed("non_json")
 
     chunks: list[bytes] = []
@@ -235,6 +250,7 @@ def _read_limited_json(response: Any, max_bytes: int) -> tuple[Any, int]:
             if not chunk:
                 continue
             size += len(chunk)
+            diagnostic["response_bytes"] = size
             if size > max_bytes:
                 raise ResponseTooLarge()
             chunks.append(chunk)
@@ -243,16 +259,24 @@ def _read_limited_json(response: Any, max_bytes: int) -> tuple[Any, int]:
     except Exception:
         read_failed = True
     if too_large:
+        diagnostic["error_code"] = "response_too_large"
         raise ResponseTooLarge()
     if read_failed:
+        diagnostic["error_code"] = "request_failed"
         raise HttpRequestFailed("request_failed")
 
     parsed_ok = False
     payload: Any = None
+    diagnostic["stage"] = "json_decode"
     try:
         payload = json.loads(b"".join(chunks).decode("utf-8"))
         parsed_ok = True
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
+    except UnicodeDecodeError:
+        diagnostic["error_code"] = "invalid_utf8"
+    except json.JSONDecodeError as exc:
+        diagnostic.update(error_code="invalid_json", json_error_position=exc.pos)
+    except (ValueError, TypeError):
+        diagnostic["error_code"] = "non_json"
         parsed_ok = False
     if not parsed_ok:
         raise HttpRequestFailed("non_json")

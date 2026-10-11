@@ -30,11 +30,12 @@ def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_
     counts = dict(scanned=len(rows), target=0, other_category=0, existing_skipped=0,
                   failed=0, new_planned=0, new_saved=0, review_waiting=None,
                   ai_waiting=None, unprocessed=0, ai_calls=0,
-                  coverage='listing_natural_end' if natural_end else 'bounded_page_only')
+                  coverage='listing_natural_end' if natural_end else 'bounded_page_only', item_errors=[])
     new, seen = [], set()
-    for row in rows:
+    for index, row in enumerate(rows):
         if not isinstance(row, dict):
             counts['failed'] += 1
+            counts['item_errors'].append(dict(row_index=index,stage='row_normalization',error_code='seoul_item_invalid'))
             continue
         if row.get('MAXCLASSNM') != '문화체험':
             counts['other_category'] += 1
@@ -50,8 +51,11 @@ def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_
             seen.add(record.external_key)
             program_rpc_item(record)  # Validate the existing payload, not a new DB schema.
             new.append(record)
-        except (TypeError, ValueError, SeoulContractError):
+        except (TypeError, ValueError, SeoulContractError) as exc:
             counts['failed'] += 1
+            from ingest.seoul_diagnostics import failure_diagnostic
+            diagnostic=failure_diagnostic(None,exc,stage='row_normalization')
+            counts['item_errors'].append(dict(row_index=index,**diagnostic))
     counts['new_planned'] = counts['unprocessed'] = len(new)
     # A per-batch checkpoint is assigned only after that batch is acknowledged;
     # no global checkpoint can skip an unacknowledged second batch.
@@ -82,14 +86,17 @@ def process_seoul_collection(store, adapter, connector) -> dict:
                   failed=0, new_planned=0, new_saved=0, review_waiting=0, ai_waiting=0,
                   unprocessed=0, ai_calls=0, coverage='bounded_page_only', state_unknown=False)
     batches_ok = 0
+    stage = None
     try:
         page = connector.fetch_batch(None)
+        stage = 'planning'
         plan = plan_collection(list(page.items), existing_keys=frozenset(), natural_end=page.natural_end)
         counts.update(plan.counters, review_waiting=0, ai_waiting=0)
         # Empty culture page still acknowledges its scan under the same lease.
         batches = plan.batches or ((),)
         offset = 0
         for records in batches:
+            stage = 'new_only_store'
             result = adapter.observe(run.run_id, list(records), {'kind': 'seoul-new-only-page',
                 'page': 1, 'targetOffset': offset + len(records), 'scanned': len(page.items)})
             for row in result:
@@ -103,18 +110,23 @@ def process_seoul_collection(store, adapter, connector) -> dict:
         complete = page.natural_end and not page.progress.get('total_changed') and not counts['failed']
         status = 'complete' if complete else 'incomplete'
         reason = 'natural_end' if complete else 'invalid_items' if counts['failed'] else 'listing_changed' if page.progress.get('total_changed') else 'page_limit'
+        stage = 'finish_run'
         store.finish_ingest_run(run.run_id, status=status, stop_reason=reason,
             http_request_count=connector.http.request_count, bootstrap_complete=complete, batches_ok=batches_ok)
         counts.update(status=status, reason=reason)
-    except RpcAmbiguous:
-        counts.update(status='state_unknown', state_unknown=True)
+    except RpcAmbiguous as exc:
+        from ingest.seoul_diagnostics import failure_diagnostic
+        counts.update(status='state_unknown', state_unknown=True, diagnostic=failure_diagnostic(connector, exc, stage=stage))
         # Neither retry nor finish-run write follows an unknown write outcome.
-    except Exception:
-        counts.update(status='failed', reason='collection_failed')
+    except Exception as exc:
+        from ingest.seoul_diagnostics import failure_diagnostic
+        counts.update(status='failed', reason='collection_failed', diagnostic=failure_diagnostic(connector, exc, stage=stage))
         try:
             store.finish_ingest_run(run.run_id, status='failed', stop_reason='collection_failed',
                 http_request_count=connector.http.request_count, bootstrap_complete=False, batches_ok=batches_ok)
-        except Exception: counts.update(status='state_unknown', state_unknown=True)
+        except Exception as finish_exc:
+            counts.update(status='state_unknown', state_unknown=True,
+                          finish_diagnostic=failure_diagnostic(connector, finish_exc, stage='finish_run'))
     return counts
 
 
