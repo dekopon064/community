@@ -6,10 +6,19 @@ import os
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--execute',action='store_true')
+    actions=parser.add_mutually_exclusive_group()
+    actions.add_argument('--execute',action='store_true')
+    actions.add_argument('--diagnose-read',action='store_true',help='Read 50 rows once, without DB, retry or storage.')
     from run_seoul_program_ai import project_ref
     parser.add_argument('--project-ref',type=project_ref)
     args=parser.parse_args(argv)
+    if args.diagnose_read:
+        from ingest.connectors.seoul_reservation import SeoulReservationConnector
+        from ingest.http_client import HttpClient
+        from ingest.seoul_diagnostics import diagnose_read
+        result=diagnose_read(SeoulReservationConnector(HttpClient(budget=1,max_attempts=1),page_size=50,max_pages=1))
+        print(json.dumps(result,ensure_ascii=False))
+        return int(result['status']=='failed')
     from ingest.seoul_workflow import PAGE_SIZE,MAX_PAGES,STORE_BATCH_SIZE,process_seoul_collection
     if args.execute:
         if not args.project_ref:
