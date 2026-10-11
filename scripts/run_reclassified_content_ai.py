@@ -7,16 +7,19 @@ from uuid import uuid4
 from run_seoul_program_ai import target_id,revision_hash,project_ref
 
 def execute_target(args):
-    from ingest.ai_provider import require_configured_provider
-    from ingest.ai_claude import ClaudeAdapter,CLAUDE_JOB_USD_CAP,MAX_CREATE_CALLS
+    from ingest.ai_provider import require_configured_provider,create_provider_adapter,close_provider_adapter
+    from ingest.ai_claude import CLAUDE_JOB_USD_CAP,MAX_CREATE_CALLS
     from ingest.program_ai import ProgramAIAdapter
     from ingest.reclassification_ai import process_reclassified_job
     from ingest.supabase_store import create_ingest_client
     if CLAUDE_JOB_USD_CAP!=0.10 or MAX_CREATE_CALLS!=2:raise ValueError('unexpected_cost_contract')
     url=os.environ.get('SUPABASE_URL','');key=os.environ.get('SUPABASE_SERVICE_KEY','')
     if url.rstrip('/')!=f'https://{args.project_ref}.supabase.co' or not key.strip():raise ValueError('invalid_server_configuration')
-    _,provider_key=require_configured_provider();provider=ClaudeAdapter(api_key=provider_key)
-    return process_reclassified_job(ProgramAIAdapter.from_supabase(create_ingest_client(url,key)),source_item_id=args.source_item_id,revision=args.revision,classification_version=args.classification_version,summarize_ko=provider.summarize_ko,translate_ja=provider.translate_ja,worker_id='classification-manual-'+uuid4().hex)
+    provider_name,provider_key=require_configured_provider();provider=create_provider_adapter(provider_name,provider_key)
+    try:
+        return process_reclassified_job(ProgramAIAdapter.from_supabase(create_ingest_client(url,key)),source_item_id=args.source_item_id,revision=args.revision,classification_version=args.classification_version,summarize_ko=provider.summarize_ko,translate_ja=provider.translate_ja,worker_id='classification-manual-'+uuid4().hex)
+    finally:
+        close_provider_adapter(provider)
 
 def main(argv=None,*,execute=None):
     parser=argparse.ArgumentParser(description=__doc__)
@@ -28,7 +31,8 @@ def main(argv=None,*,execute=None):
     args=parser.parse_args(argv)
     if args.classification_version<1:parser.error('invalid_classification_version')
     if not args.execute:
-        print(json.dumps({'mode':'validation_only','target_count':1,'usd_cap':0.10,'automatic_retries':0,'network_calls':0,'publish':False}));return 0
+        from ingest.ai_provider import provider_validation_limits
+        print(json.dumps({'mode':'validation_only','target_count':1,**provider_validation_limits(),'automatic_retries':0,'network_calls':0,'publish':False}));return 0
     try:
         r=(execute or execute_target)(args);success=r.status=='processed' and r.completed==1 and not (r.retried or r.failed or r.state_unknown)
         print(json.dumps({'mode':'execution','completed':success,'status':r.status,'automatic_retries':0,'publish':False}));return 0 if success else 1

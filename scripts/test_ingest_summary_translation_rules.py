@@ -172,10 +172,10 @@ class PromptAndCandidatePathTests(unittest.TestCase):
         self.assertFalse(FORBIDDEN_ENQUEUE_FIELDS & set(captured))
         self.assertEqual(ENQUEUE_RPC_NAME, "enqueue_curation_candidate")
 
-    def test_provider_stays_anthropic_without_gemini_fallback(self) -> None:
+    def test_explicit_providers_without_gemini_fallback(self) -> None:
         source = inspect.getsource(ai_provider)
         self.assertNotIn("gemini", source.lower())
-        self.assertEqual(ALLOWED_PROVIDERS, frozenset({"anthropic"}))
+        self.assertEqual(ALLOWED_PROVIDERS, frozenset({"anthropic", "openai", "chatgpt_plan"}))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""운영 ingest CLI. AI provider는 Anthropic만 허용한다."""
+"""운영 ingest CLI. AI provider는 명시적으로 선택하며 fallback하지 않는다."""
 
 from __future__ import annotations
 
@@ -11,6 +11,9 @@ from typing import Any, Sequence
 from ingest.ai_provider import (
     INVALID_AI_PROVIDER,
     PROVIDER_ANTHROPIC,
+    PROVIDER_OPENAI,
+    PROVIDER_CHATGPT_PLAN,
+    create_provider_adapter,
     ProviderError,
     require_configured_provider,
 )
@@ -320,10 +323,16 @@ def _load_anthropic_ai_helpers(api_key: str) -> dict[str, Any]:
     }
 
 
-def _load_ai_helpers(provider: str, api_key: str) -> dict[str, Any]:
-    if provider != PROVIDER_ANTHROPIC:
+def _load_ai_helpers(provider: str, api_key: str | None) -> dict[str, Any]:
+    if provider == PROVIDER_ANTHROPIC:
+        return _load_anthropic_ai_helpers(api_key)
+    if provider not in {PROVIDER_OPENAI, PROVIDER_CHATGPT_PLAN}:
         raise ProviderError(INVALID_AI_PROVIDER)
-    return _load_anthropic_ai_helpers(api_key)
+    from ingest.ai_queue_rpc import enqueue_curation_candidate, is_latest_source_revision
+    adapter = create_provider_adapter(provider, api_key)
+    return {"summarize_ko": adapter.summarize_ko, "translate_ja": adapter.translate_ja,
+        "enqueue": enqueue_curation_candidate, "revision_precheck": is_latest_source_revision,
+        "close": getattr(adapter, "close", lambda: None)}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -359,16 +368,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(missing, file=sys.stderr)
         return 1
 
+    ai_helpers: dict[str, Any] = {}
     try:
+        if provider is not None:
+            ai_helpers = _load_ai_helpers(provider, provider_key)
         client = create_ingest_client(
             os.environ["SUPABASE_URL"],
             os.environ["SUPABASE_SERVICE_KEY"],
         )
         store = SupabaseIngestStore(client)
-        ai_helpers: dict[str, Any] = {}
-        if provider is not None and provider_key is not None:
-            ai_helpers = _load_ai_helpers(provider, provider_key)
-
         if args.ai_only:
             result = run_ai_only(
                 store=store,
@@ -413,6 +421,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception:
         print(EXECUTION_FAILED_MESSAGE, file=sys.stderr)
         return 1
+    finally:
+        close = ai_helpers.get("close")
+        if close is not None:
+            close()
 
 
 if __name__ == "__main__":
