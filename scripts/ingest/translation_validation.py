@@ -13,6 +13,7 @@ import unicodedata
 
 from ingest.ai_errors import AiJobError
 from ingest.body_sections import normalize_schedule_heading
+from ingest.body_markdown import read_body, inline_text, comparison_text, strong_spans
 
 _HEADERS = {
     "한 줄 요약": "要約", "대상": "対象", "일정 안내": "日程案内",
@@ -24,7 +25,7 @@ _URL = re.compile(r"https?://[^\s<>\"'）)\]。、「」]+")
 # are accepted; unlabeled prose is not interpreted as a new eligibility policy.
 _PERIOD_ROLES = (
     (r"신청\s*기간", r"(?:申請|申込|申し込み|応募|募集|受付)(?:受付)?期間"),
-    (r"진행\s*기간|개최\s*기간", r"(?:実施|開催|実施・開催)期間"),
+    (r"진행\s*기간|개최\s*기간|운영\s*기간", r"(?:実施|開催|運営|実施・開催)期間"),
     (r"집결\s*(?:안내|시간)", r"集合(?:案内|時間|時刻)?"),
     (r"신청\s*마감", r"(?:申請|申込|申し込み|応募|受付)(?:締切(?:日)?|期限)|締切(?:日)?"),
 )
@@ -92,6 +93,7 @@ def _durations(text: str) -> Counter:
 
 def _entry(text: str, labels: str) -> str | None:
     # Preserve a complete labeled line/clause, not a number found elsewhere.
+    text = comparison_text(text)
     match = re.search(rf"(?:^|[\n;；]|(?:비용|費用|料金)\s*[:：])\s*(?:{labels})\s*[:：は]\s*([^\n;；]+)", text)
     return match[1] if match else None
 
@@ -156,6 +158,7 @@ def _require_present(required: Counter, actual: Counter) -> None:
 
 
 def _validate_field(korean: str, japanese: str) -> None:
+    korean, japanese = comparison_text(korean), comparison_text(japanese)
     # URLs are opaque. Do not NFKC-normalize their path, query or identifiers.
     if Counter(_URL.findall(korean)) - Counter(_URL.findall(japanese)):
         raise AiJobError("ai_schema_error")
@@ -185,11 +188,71 @@ def _validate_field(korean: str, japanese: str) -> None:
                     raise AiJobError("ai_schema_error")
 
 
+def _validate_cell(korean: str, japanese: str) -> None:
+    ko, ja = inline_text(korean), inline_text(japanese)
+    _validate_field(ko, ja)
+    # Within one cell/item a date or time cannot be recovered from another row.
+    if _dates_and_times(_normal(ko)) != _dates_and_times(_normal(ja)):
+        raise AiJobError('ai_schema_error')
+    for check in (_amounts, _quantities):
+        if check(_normal(ko), japanese=False) != check(_normal(ja), japanese=True):
+            raise AiJobError('ai_schema_error')
+    # Class IDs/visa numbers without a recognized amount/date/unit still belong
+    # to this cell. This is a bounded numeric check, not meaning interpretation.
+    if not (_dates_and_times(ko) or _amounts(ko, japanese=False) or _quantities(ko, japanese=False) or _durations(ko)):
+        if Counter(re.findall(r'\d+', ko)) != Counter(re.findall(r'\d+', ja)):
+            raise AiJobError('ai_schema_error')
+    for source, target in ((r'필수|의무', r'必須|必要|義務'),
+                           (r'(?:신청|참가|참여)\s*불가|금지', r'不可|禁止|できません')):
+        if re.search(source, ko) and not re.search(target, ja):
+            raise AiJobError('ai_schema_error')
+
+
+def _validate_markdown(korean: str, japanese: str) -> None:
+    ko, ja = read_body(korean), read_body(japanese)
+    if len(ko.tables) != len(ja.tables) or len(ko.items) != len(ja.items):
+        raise AiJobError('ai_schema_error')
+    for source, target in zip(ko.tables, ja.tables):
+        if (source.section != target.section or len(source.headers) != len(target.headers)
+                or len(source.rows) != len(target.rows)):
+            raise AiJobError('ai_schema_error')
+        for source_header, target_header in zip(source.headers, target.headers):
+            _validate_role_label(source_header, target_header)
+        for source_row, target_row in zip(source.rows, target.rows):
+            _validate_role_label(source_row[0], target_row[0])
+            for source_cell, target_cell in zip(source_row, target_row):
+                _validate_cell(source_cell, target_cell)
+    for source, target in zip(ko.items, ja.items):
+        if (source.section, source.indent, source.number) != (target.section, target.indent, target.number):
+            raise AiJobError('ai_schema_error')
+        _validate_cell(source.text, target.text)
+    source_bold, target_bold = strong_spans(korean), strong_spans(japanese)
+    if source_bold and not target_bold:
+        raise AiJobError('ai_schema_error')
+    if len(source_bold) == len(target_bold):
+        for source, target in zip(source_bold, target_bold):
+            _validate_cell(source, target)
+    # Recognized emphasized fact labels must keep their translated emphasis.
+    # Arbitrary natural-language emphasis remains a model/human review task.
+    for ko_label, ja_label in (*_PERIOD_ROLES, *_FEE_ROLES):
+        if any(re.search(ko_label, span) for span in source_bold) and not any(
+                re.search(ja_label, span) for span in target_bold):
+            raise AiJobError('ai_schema_error')
+
+
+def _validate_role_label(korean: str, japanese: str) -> None:
+    for ko_label, ja_label in (*_PERIOD_ROLES, *_FEE_ROLES):
+        if re.fullmatch(r'(?:' + ko_label + r')(?:\s*\([^)]*\))?', inline_text(korean)):
+            if not re.fullmatch(r'(?:' + ja_label + r')(?:\s*[（(][^）)]*[）)])?', inline_text(japanese)):
+                raise AiJobError('ai_schema_error')
+
+
 def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str, content_ja: str) -> None:
     content_ko = normalize_schedule_heading(content_ko, 'ko')
     content_ja = normalize_schedule_heading(content_ja, 'ja')
     for korean, japanese in ((title_ko, title_ja), (content_ko, content_ja)):
         _validate_field(korean, japanese)
+    _validate_markdown(content_ko, content_ja)
     expected = [_HEADERS[h] for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ko) if h in _HEADERS]
     actual = [h for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ja) if h in _HEADERS.values()]
     if actual != expected:

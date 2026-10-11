@@ -36,11 +36,12 @@ def _load_json(relative: str) -> dict[str, Any]:
     return json.loads(_load_text(relative))
 
 
-SUMMARY_SYSTEM = _load_text("claude_prompts/summary_system.txt")
+BODY_FORMAT_RULES = _load_text("claude_prompts/body_format_rules.txt")
+SUMMARY_SYSTEM = _load_text("claude_prompts/summary_system.txt").rstrip() + "\n\n" + BODY_FORMAT_RULES
 MYSEOUL_FEE_RULES = _load_text("claude_prompts/myseoul_fee_rules.txt")
-MYSEOUL_SUMMARY_SYSTEM = _load_text("claude_prompts/myseoul_summary_system.txt").rstrip() + "\n\n" + MYSEOUL_FEE_RULES
-PROGRAM_SUMMARY_SYSTEM = _load_text("claude_prompts/program_summary_system.txt")
-TRANSLATION_SYSTEM = _load_text("claude_prompts/translation_system.txt")
+MYSEOUL_SUMMARY_SYSTEM = _load_text("claude_prompts/myseoul_summary_system.txt").rstrip() + "\n\n" + MYSEOUL_FEE_RULES + "\n\n" + BODY_FORMAT_RULES
+PROGRAM_SUMMARY_SYSTEM = _load_text("claude_prompts/program_summary_system.txt").rstrip() + "\n\n" + BODY_FORMAT_RULES
+TRANSLATION_SYSTEM = _load_text("claude_prompts/translation_system.txt").rstrip() + "\n\n" + BODY_FORMAT_RULES
 SUMMARY_SCHEMA = _load_json("claude_schemas/summary.schema.json")
 TRANSLATION_SCHEMA = _load_json("claude_schemas/translation.schema.json")
 
@@ -95,6 +96,8 @@ def validate_summary_payload(payload: object) -> str:
     if extra:
         raise AiJobError("ai_schema_error")
     content_ko = _require_string(payload.get("content_ko"), "content_ko")
+    from ingest.body_markdown import read_body, require_plain_summary
+    read_body(content_ko)
     facts = payload.get("facts")
     if not isinstance(facts, dict):
         raise AiJobError("ai_schema_error")
@@ -109,6 +112,7 @@ def validate_summary_payload(payload: object) -> str:
     for key in required_facts:
         if not isinstance(facts[key], str):
             raise AiJobError("ai_schema_error")
+        require_plain_summary(facts[key])
     return normalize_schedule_heading(content_ko, 'ko')
 
 
@@ -120,6 +124,9 @@ def validate_translation_payload(payload: object) -> tuple[str, str]:
         raise AiJobError("ai_schema_error")
     title_ja = _require_string(payload.get("title_ja"), "title_ja")
     content_ja = _require_string(payload.get("content_ja"), "content_ja")
+    from ingest.body_markdown import read_body, require_plain_summary
+    require_plain_summary(title_ja)
+    read_body(content_ja)
     return title_ja, normalize_schedule_heading(content_ja, 'ja')
 
 

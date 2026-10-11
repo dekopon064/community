@@ -2,7 +2,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 // B 셸의 읽기 화면에 맞춘 마크다운 요소 스타일.
-const components: Components = {
+export const markdownComponents: Components = {
   h1: (props) => (
     <h1
       className="mt-10 mb-4 break-words text-2xl font-bold leading-tight tracking-[-0.035em] text-primary-text"
@@ -83,7 +83,7 @@ export default function Markdown({ children }: { children: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
-      components={components}
+      components={markdownComponents}
     >
       {children}
     </ReactMarkdown>

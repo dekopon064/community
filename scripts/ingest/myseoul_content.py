@@ -8,6 +8,7 @@ import re
 from datetime import date
 from ingest.ai_errors import AiJobError
 from ingest.body_sections import normalize_schedule_heading
+from ingest.body_markdown import comparison_text, inline_text, read_body, schedule_table_lines, schedule_tables
 from ingest.myseoul_ai_support import schedule_values
 from ingest.translation_validation import _dates_and_times, _entry, _quantities, _amounts, _durations
 
@@ -16,7 +17,7 @@ _DATED_LINE = (r'^(?:제?\d+\s*(?:회차|차)\s*[:.)-]?\s*)?'
 
 
 def _plain_schedule_line(line: str) -> str:
-    return re.sub(r'^[^\w가-힣\[]+', '', line).strip('[]:： ')
+    return re.sub(r'^[^\w가-힣\[]+', '', inline_text(line)).strip('[]:： ')
 
 
 def _schedule_display_line(line: str) -> str:
@@ -133,6 +134,77 @@ def optional_period_section(content: str) -> str:
     return match[1].strip() if match else ''
 
 
+def retained_schedule_tables(content: str) -> str:
+    """Call after schedule validation; keep original cells, not reconstructed prose.
+
+    Only session tables in the replaced period section need rescuing. Tables in
+    the activity section already survive. Reviewed period/session rows stay too.
+    """
+    return '\n\n'.join(table.markdown for table in schedule_tables(optional_period_section(content)))
+
+
+def deduplicate_summary_venue(main: str, venue: str) -> str:
+    """Remove an equal bare venue row only, retaining directions/conditions.
+
+    No place-name inference or global replacement; mixed prose/table cells and
+    different place values remain subject to the existing source checks.
+    """
+    if not venue:
+        return main
+    same = lambda value: re.sub(r'\s+', '', inline_text(value))
+    kept = []
+    for line in main.splitlines():
+        plain = re.sub(r'^\s*[-+*]\s+', '', inline_text(line)).strip()
+        match = re.fullmatch(r'(?:장소|개최 장소)\s*[:：]\s*(.+)', plain)
+        if not match or same(match[1]) != same(venue):
+            kept.append(line)
+    return '\n'.join(kept).strip()
+
+
+def _validate_session_table_rows(summary: str, f: dict) -> None:
+    """Bind explicit session IDs to their own dates, clocks and labeled activities.
+
+    The existing validator checks periods and years. This prevents values valid
+    in the global number set being moved to another session. No inferred cells.
+    """
+    evidence = schedule_lines(f)
+    identity = lambda text: re.search(r'(\d+)\s*(?:회(?:차)?|차)', inline_text(text))
+    source = [(int(m[1]), line) for line in evidence if (m := identity(line))]
+    source_ids = [key for key, _ in source]
+    for table in schedule_tables(summary):
+        headers = [inline_text(h) for h in table.headers]
+        if '회차' not in headers:
+            continue
+        last = -1
+        for row in table.rows:
+            label = inline_text(row[headers.index('회차')]).strip()
+            m = identity(label) or re.fullmatch(r'(\d+)', label)
+            if not m or int(m[1]) not in source_ids:
+                raise AiJobError('ai_schema_error')
+            key = int(m[1])
+            position = source_ids.index(key)
+            if position <= last:
+                raise AiJobError('ai_schema_error')
+            last = position
+            expected = [line for source_id, line in source if source_id == key]
+            line = ' '.join(inline_text(cell) for cell in row)
+            values = schedule_values(line)
+            if not any(all(not values[k] or values[k].issubset(schedule_values(text)[k])
+                           for k in ('dates', 'times', 'weekdays')) for text in expected):
+                raise AiJobError('ai_schema_error')
+            # Compare only an explicitly labeled source activity, not arbitrary
+            # narrative semantics. The original cell is retained without repair.
+            activity_columns = [i for i, h in enumerate(headers) if h in {'활동', '활동 내용'}]
+            activity_evidence = expected + [text for text in f.get('description', '').splitlines()
+                if (m := identity(text)) and int(m[1]) == key
+                and any(schedule_values(text)['dates'] == schedule_values(item)['dates'] for item in expected)]
+            activities = [m[1].strip() for text in activity_evidence
+                if (m := re.search(r'(?:^|[/;])\s*활동(?: 내용)?\s*[:：]\s*(.+)$', text))]
+            for index in activity_columns:
+                if activities and inline_text(row[index]).strip() not in activities:
+                    raise AiJobError('ai_schema_error')
+
+
 def _operation_date_bounds(f: dict) -> list[tuple[date, date]]:
     bounds = []
     for period in f.get('periods', {}).get('operation', []):
@@ -220,6 +292,10 @@ def _period_values(text: str) -> list[tuple]:
 
 
 def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
+    _validate_session_table_rows(summary, f)
+    session_rows = schedule_table_lines(summary)
+    summary = comparison_text(summary) + '\n' + '\n'.join(session_rows)
+    canonical = comparison_text(canonical)
     _validate_announcements(summary, f)
     # Detect altered explicit ranges by role, not by a shared number bag.
     clauses = re.split(r'(?<=[.!?。])\s+|[\n;；]|(?=실제\s*수업)', summary)
@@ -314,6 +390,7 @@ def participation_constraints(f: dict) -> list[str]:
 
 
 def validate_participant_quantities(f: dict, main: str) -> None:
+    main = comparison_text(main)
     required = _quantities('\n'.join([f['target'], *participation_constraints(f),
                                       *f.get('capacity_raw', [])]), japanese=False)
     actual = _quantities(f['target'] + '\n' + main, japanese=False)
@@ -333,6 +410,7 @@ _FEE_VALUE = re.compile(
 
 
 def validate_summary_fees(main: str, activity: str) -> None:
+    main, activity = comparison_text(main), comparison_text(activity)
     for label in ('수강료', '입장료', '재료비', '기타 비용'):
         generated, expected = _entry(main, label), _entry(activity, label)
         if generated is not None:
@@ -358,7 +436,7 @@ def _fee_sentences(text: str):
 
 
 def _simple_fee_sentence(sentence: str) -> bool:
-    text = re.sub(r'^\s*비용\s*[:：]\s*', '', sentence.strip())
+    text = re.sub(r'^\s*비용\s*[:：]\s*', '', comparison_text(sentence).strip())
     matches = list(_FEE_VALUE.finditer(text))
     if not matches or any(match['per_person'] for match in matches):
         return False
@@ -378,7 +456,7 @@ def deduplicate_summary_fees(main: str, activity: str) -> str:
     """
     validate_summary_fees(main, activity)
     return ''.join(sentence for sentence in _fee_sentences(main)
-                   if not _simple_fee_sentence(sentence)).strip()
+                   if '|' in sentence or not _simple_fee_sentence(sentence)).strip()
 
 
 def validate_assembled_fees(content: str, activity: str, *, canonical_block: str | None = None) -> None:
@@ -392,5 +470,17 @@ def validate_assembled_fees(content: str, activity: str, *, canonical_block: str
         raise AiJobError('ai_schema_error')
     generated = content.replace(block, '', 1)
     validate_summary_fees(generated, activity)
-    if any(_simple_fee_sentence(sentence) for sentence in _fee_sentences(generated)):
+    # Never remove table cells. A pure repeat fails before translation; a row
+    # containing an inseparable refund/discount/activity condition stays intact.
+    table_rows = []
+    for table in read_body(generated).tables:
+        for row in table.rows:
+            first = inline_text(row[0])
+            if re.fullmatch(r'수강료|입장료|재료비|기타\s*비용', first):
+                table_rows.append(first + ': ' + '; '.join(inline_text(c) for c in row[1:]))
+            else:
+                table_rows.append('; '.join(inline_text(h) + ': ' + inline_text(c)
+                    for h, c in zip(table.headers, row)))
+    if any(_simple_fee_sentence(sentence) for sentence in [
+            *[s for s in _fee_sentences(generated) if '|' not in s], *table_rows]):
         raise AiJobError('ai_schema_error')

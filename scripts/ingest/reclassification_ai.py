@@ -122,7 +122,8 @@ def protected_information(c:dict)->str:
         if native.get('schema_version')=='myseoul-program-facts-v1-local':
             from ingest.myseoul_ai import period_text
             lines.append('진행기간: '+period_text(native,'operation'))
-    return '\n'.join(lines)
+    from ingest.body_markdown import format_reviewed_block
+    return format_reviewed_block('\n'.join(lines))
 
 def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revision:str,classification_version:int,
         summarize_ko:Callable,translate_ja:Callable,worker_id:str,lease_seconds:int=300)->AiWorkerResult:

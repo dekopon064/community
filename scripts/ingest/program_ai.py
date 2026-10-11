@@ -116,11 +116,12 @@ def validate_context(c: Any, target: str, revision: str, worker: str) -> dict[st
 
 
 def protected_facts(f: dict[str, Any]) -> str:
+    from ingest.body_markdown import format_reviewed_block
     periods = f["periods"]
     def period(a: str, b: str) -> str:
         label = {"day": "날짜 기준", "second": "시각 기준"}
         return f'{periods[a]["value"]} ({label[periods[a]["precision"]]}) ~ {periods[b]["value"]} ({label[periods[b]["precision"]]})'
-    return "\n".join([
+    return format_reviewed_block("\n".join([
         "확인한 참여 안내 (한국 시간)",
         "대상: " + f["target_raw"], "명시 조건: " + " / ".join(f["conditions"]),
         "진행 방식: " + {"online": "온라인", "offline": "오프라인", "hybrid": "온·오프라인 혼합"}[f["delivery_mode"]], "개최지 근거: " + " / ".join(f["activity_evidence"]),
@@ -129,7 +130,7 @@ def protected_facts(f: dict[str, Any]) -> str:
         "비용 구분: " + {"free": "무료", "paid": "유료", "unknown": "미확인"}[f["fee_kind"]] + "; 원문 금액: " + (" / ".join(f["fee_amounts"]) or ("무료" if f["fee_kind"] == "free" else "금액 미확인")),
         "신청 기간: " + period("RCPTBGNDT", "RCPTENDDT"),
         "운영 기간: " + period("SVCOPNBGNDT", "SVCOPNENDDT"), "접수 상태: 접수중",
-    ])
+    ]))
 
 
 def program_input(c: dict[str, Any]) -> str:

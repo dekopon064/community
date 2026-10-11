@@ -380,6 +380,8 @@ def extract_summary_section(
     if not found:
         raise AiJobError("ai_schema_error")
     body = "\n".join(parts).strip()
+    from ingest.body_markdown import require_plain_summary
+    require_plain_summary(body)
     if not body or len(body) > SUMMARY_MAX_CHARS:
         raise AiJobError("ai_schema_error")
     return body

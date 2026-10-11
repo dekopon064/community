@@ -1,5 +1,6 @@
 """Promotional questions are observed candidates, not participation requirements."""
 import copy
+from ingest.body_markdown import comparison_text
 import json
 import socket
 import unittest
@@ -66,8 +67,8 @@ class ParticipationPromotionTests(unittest.TestCase):
                               'success','fake-translation'))
         output=generate_myseoul_output(c,summarize_ko=Mock(return_value=(RECORDED_SUMMARY,'success','recorded-response')),
                                       translate_ja=ja)
-        self.assertIn('참가 조건: '+condition,output['contentKo'])
-        self.assertNotIn(QUESTION,output['contentKo'])
+        self.assertIn('참가 조건: '+condition,comparison_text(output['contentKo']))
+        self.assertNotIn(QUESTION,comparison_text(output['contentKo']))
         self.assertEqual(ja.call_args.args[1],output['contentKo'])
         self.assertEqual(c,before)
 
@@ -104,8 +105,8 @@ class ParticipationPromotionTests(unittest.TestCase):
         self.assertEqual(result.completed,1)
         self.assertEqual(calls,['claim_reclassified_content_ai','finish_reclassified_content_ai'])
         self.assertIn(condition,protected_information(c))
-        self.assertNotIn(QUESTION,output['contentKo'])
-        self.assertIn(condition,output['contentKo'])
+        self.assertNotIn(QUESTION,comparison_text(output['contentKo']))
+        self.assertIn(condition,comparison_text(output['contentKo']))
         self.assertEqual(ja.call_args.args[1],output['contentKo'])
         self.assertEqual(json.loads(ko.call_args.args[0])['nativeConfirmedFacts'],c['nativeConfirmedFacts'])
         self.assertEqual(c,before)
@@ -147,13 +148,13 @@ class ParticipationPromotionTests(unittest.TestCase):
         self.assertEqual(result.completed,1)
         self.assertEqual(names,['claim_myseoul_program_ai','admin_myseoul_program_detail','finish_myseoul_program_ai'])
         self.assertEqual((ko.call_count,ja.call_count),(1,1))
-        self.assertNotIn(QUESTION,output['contentKo'])
-        self.assertNotIn('참가 조건:',output['contentKo'])
-        self.assertNotIn('200%',output['contentKo'])
+        self.assertNotIn(QUESTION,comparison_text(output['contentKo']))
+        self.assertNotIn('참가 조건:',comparison_text(output['contentKo']))
+        self.assertNotIn('200%',comparison_text(output['contentKo']))
         self.assertEqual(ja.call_args.args[1],output['contentKo'])
         self.assertEqual(c,before)
         for value in ['10월 27일','10월 30일','11월 3일','25명','수강료: 무료']:
-            self.assertIn(value,output['contentKo'])
+            self.assertIn(value,comparison_text(output['contentKo']))
 
 
 if __name__=='__main__':
