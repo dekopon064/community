@@ -10,6 +10,7 @@ from typing import Any, Callable
 from ingest.models import ObservationRecord
 from ingest.program_scope import extract_program_facts
 from ingest.content_filters import SCHEMA, extract_filter_facts
+from ingest.rpc_errors import RpcAmbiguous, RpcError
 
 
 def program_rpc_item(record: ObservationRecord) -> dict[str, Any]:
@@ -45,3 +46,41 @@ class ProgramObservationAdapter:
             })
         except Exception:
             raise RuntimeError("program_observation_failed") from None
+
+
+class ProgramNewOnlyObservationAdapter:
+    """Separate opt-in RPC; the existing refresh observation contract is intact."""
+    def __init__(self, rpc: Callable[[str, dict[str, Any]], Any]):
+        self.rpc = rpc
+
+    def require_contract(self):
+        contract = self.rpc('seoul_collection_contract', {})
+        if contract != {'contract': 'seoul-new-only-v1', 'maxBatch': 40, 'category': '문화체험'}:
+            raise ValueError('seoul_atomic_new_only_observation_contract_required')
+
+    def observe(self, run_id: str, records: list[ObservationRecord], checkpoint: dict | None):
+        if len(records) > 40:
+            raise ValueError('program_batch_size_invalid')
+        try:
+            result = self.rpc('observe_seoul_program_new_only', {
+                'p_run_id': run_id, 'p_items': [program_rpc_item(r) for r in records],
+                'p_next_checkpoint': checkpoint,
+            })
+        except RpcError: raise
+        except Exception: raise RpcAmbiguous() from None
+        if type(result) is not list or len(result) != len(records):
+            raise RpcAmbiguous()
+        from uuid import UUID
+        import re
+        for index, (record, row) in enumerate(zip(records, result)):
+            if (type(row) is not dict or type(row.get('inputIndex')) is not int or row['inputIndex'] != index
+                    or row.get('externalKey') != record.external_key
+                    or row.get('outcome') not in ('new_saved', 'existing_skipped')
+                    or type(row.get('revision')) is not str or not re.fullmatch('[a-f0-9]{64}', row['revision'])):
+                raise RpcAmbiguous()
+            try: UUID(row['id'])
+            except (ValueError, TypeError, KeyError): raise RpcAmbiguous() from None
+            if row['outcome'] == 'new_saved' and (row['revision'] != record.revision_hash
+                    or type(row.get('reviewWaiting')) is not bool or type(row.get('aiWaiting')) is not bool):
+                raise RpcAmbiguous()
+        return result

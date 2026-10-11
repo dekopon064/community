@@ -338,8 +338,9 @@ class PagingAndTransportTests(unittest.TestCase):
     def test_production_runner_does_not_register_source(self):
         from ingest.run import build_youthcenter_connectors
         from ingest.source_identity import canonical_source_id
-        with self.assertRaises(ValueError):
-            canonical_source_id("seoul_reservation")
+        # Identity is known to native review/AI contracts; this does not opt the
+        # Seoul connector into the existing scheduled youth collector.
+        self.assertEqual(canonical_source_id("seoul_reservation"), "seoul_reservation")
         with patch("requests.get", side_effect=AssertionError("network prohibited")):
             self.assertNotIn("seoul_reservation", [c.canonical_source_id for c in build_youthcenter_connectors()])
 

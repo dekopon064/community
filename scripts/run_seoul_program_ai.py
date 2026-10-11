@@ -46,6 +46,8 @@ def execute_target(args: argparse.Namespace):
     if url.rstrip("/") != f"https://{args.project_ref}.supabase.co" or not key.strip():
         raise ValueError("invalid_server_configuration")
     provider_name, provider_key = require_configured_provider()
+    if provider_name != 'chatgpt_plan':
+        raise ValueError('explicit_chatgpt_plan_required')
     provider = create_provider_adapter(provider_name, provider_key)
     try:
         client = create_ingest_client(url, key)
@@ -58,20 +60,53 @@ def execute_target(args: argparse.Namespace):
         close_provider_adapter(provider)
 
 
+def execute_queue(args: argparse.Namespace):
+    from ingest.ai_provider import require_configured_provider,create_provider_adapter,close_provider_adapter
+    from ingest.program_ai import ProgramAIAdapter
+    from ingest.seoul_workflow import process_seoul_queue
+    from ingest.supabase_store import create_ingest_client
+    url=os.environ.get('SUPABASE_URL','');key=os.environ.get('SUPABASE_SERVICE_KEY','')
+    if url.rstrip('/')!=f'https://{args.project_ref}.supabase.co' or not key.strip():
+        raise ValueError('invalid_server_configuration')
+    name,provider_key=require_configured_provider()
+    if name!='chatgpt_plan':
+        raise ValueError('explicit_chatgpt_plan_required')
+    provider=create_provider_adapter(name,provider_key)
+    try:
+        client=create_ingest_client(url,key)
+        return process_seoul_queue(ProgramAIAdapter.from_supabase(client),max_jobs=args.max_jobs,
+            queue_pages=args.queue_pages,summarize_ko=provider.summarize_program_ko,
+            translate_ja=provider.translate_ja,worker_id='program-manual-'+uuid4().hex)
+    finally:close_provider_adapter(provider)
+
+
 def main(argv: Sequence[str] | None = None, *, execute: Callable | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-item-id", required=True, type=target_id)
-    parser.add_argument("--revision", required=True, type=revision_hash)
+    parser.add_argument("--source-item-id", type=target_id)
+    parser.add_argument("--revision", type=revision_hash)
+    parser.add_argument('--max-jobs',type=int)
+    parser.add_argument('--queue-pages',type=int)
     parser.add_argument("--project-ref", required=True, type=project_ref)
     parser.add_argument("--execute", action="store_true", help="Explicitly allow one claim and provider job; separate approval required.")
     args = parser.parse_args(argv)
+    queue=args.max_jobs is not None or args.queue_pages is not None
+    if queue:
+        if args.source_item_id or args.revision or args.max_jobs is None or args.queue_pages is None or not 1<=args.max_jobs<=25 or not 1<=args.queue_pages<=5:
+            parser.error('Choose explicit target OR bounded --max-jobs (1..25) AND --queue-pages (1..5).')
+    elif not args.source_item_id or not args.revision:
+        parser.error('An explicit target/revision or bounded queue scope is required.')
     if not args.execute:
         from ingest.ai_provider import provider_validation_limits
         print(json.dumps({"mode": "validation_only", "source": "seoul_reservation",
-                          "target_count": 1, **provider_validation_limits(), "automatic_retries": 0,
+                          "target_count": args.max_jobs if queue else 1, "queue_pages":args.queue_pages,
+                          **provider_validation_limits(), "automatic_retries": 0,
                           "network_calls": 0, "publish": False}))
         return 0
     try:
+        if queue:
+            result=(execute or execute_queue)(args)
+            print(json.dumps({'mode':'execution',**result}))
+            return 1 if result['failed'] or result['state_unknown'] else 0
         result = (execute or execute_target)(args)
         success = (result.status == "processed" and result.claimed == 1 and result.completed == 1
                    and not (result.failed or result.retried or result.state_unknown))

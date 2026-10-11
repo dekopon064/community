@@ -9,7 +9,7 @@ from ingest.ai_worker import (AiWorkerResult, extract_summary_section, KO_SUMMAR
     KO_SECTION_HEADERS, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
 from ingest.program_ai import ProgramAIAdapter
 from ingest.region_ja_glossary import validate_japanese_output
-from ingest.content_filters import validate_filters, program_application_complete
+from ingest.content_filters import validate_filters, program_application_complete, KEYS
 from ingest.body_sections import normalize_schedule_heading
 from ingest.application_links import application_link_facts_view, normalize_application_link_text
 
@@ -43,6 +43,9 @@ def validate_context(value: Any, target: str, revision: str, version: int, worke
         if f['category'] in {'program','event','youth_space'}:
             validate_filters(c['filters'])
             if c['filters']['category']!=f['category']:raise ValueError()
+            # Mirrors classification_filter_missing, where a district is
+            # optional but an unknown required field is not AI-ready.
+            if any(c['filters'][key]['status']=='unknown' for key in KEYS):raise ValueError()
             if uses_venue and c['filters']['location']['status']!='known':raise ValueError()
             if not program_application_complete(c['filters']):raise ValueError()
             if f['category']=='program' and (f['deadlineKind']!='fixed' or
@@ -173,6 +176,30 @@ def protected_sections(c:dict)->dict[str,str]:
             if value not in represented and value not in native.get('target',''):
                 sections['[대상]'].append(format_reviewed_block('참가 조건: '+value))
         if native.get('venue'):sections['[주요 내용]'].append(format_reviewed_block('장소: '+native['venue']))
+    if native.get('schema_version')=='program-scope-v1-local':
+        from ingest.seoul_content import reviewed_sections, public_date, period_text
+        from ingest.body_markdown import format_reviewed_block
+        seoul=reviewed_sections({**native,'delivery_mode':c['facts']['delivery']})
+        # The current classification controls the public application/event
+        # bounds. Native schedule/fees/eligibility retain their own evidence.
+        seoul['[일정 안내]']='\n'.join(line for line in seoul['[일정 안내]'].splitlines()
+            if not line.startswith(('- **신청기간:', '- **진행기간:')))
+        dates=[]
+        category=c['facts']['category']
+        if category=='program':
+            application=c['filters']['application']['value']
+            dates += ['신청기간: '+public_date(application['start'])+' ~ '+public_date(application['end']),
+                      '진행기간: '+period_text(native,'operation')]
+        elif category=='event':
+            # Event endpoints are current reviewed values, not old program dates.
+            dates.append('개최 기간: '+' ~ '.join(public_date({'value':c['facts'][key],
+                'precision':'day' if len(c['facts'][key])==10 else 'minute'}) for key in ('eventStart','eventEnd')))
+        elif category=='policy':
+            facts=c['facts']
+            dates.append('신청 마감: '+(facts['deadlineOn'] if facts['deadlineKind']=='fixed'
+                else {'none':'정해진 마감 없음','closed':'접수 종료'}[facts['deadlineKind']]))
+        for header,value in seoul.items():
+            sections[header]=[value] if header!='[일정 안내]' else [format_reviewed_block('\n'.join(dates)),value]
     return {h:'\n'.join(lines) for h,lines in sections.items()}
 
 def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revision:str,classification_version:int,
@@ -210,7 +237,18 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             content=re.sub(r'(?ms)(^\s*\[주요 내용\][ \t]*)(.*?)(?=^\s*(?:'+boundary+r')|\Z)',
                 lambda match:match[1]+'\n'+main+'\n',content,count=1)
         from ingest.myseoul_content import merge_reviewed_sections
-        content=merge_reviewed_sections(content,protected_sections(c))
+        if native.get('schema_version')=='program-scope-v1-local':
+            from ingest.seoul_content import assemble_seoul_body
+            periods={}
+            if c['facts']['category']=='program':
+                application=c['filters']['application']['value']
+                periods['application']=[{'status':'ok','endpoints':[application['start'],application['end']]}]
+            elif c['facts']['category']=='event':
+                periods['operation']=[{'status':'ok','endpoints':[{'value':c['facts'][key],'precision':'day'}
+                    for key in ('eventStart','eventEnd')]}]
+            content=assemble_seoul_body(content,native,reviewed=protected_sections(c),periods=periods)
+        else:
+            content=merge_reviewed_sections(content,protected_sections(c))
         if native.get('schema_version')=='myseoul-program-facts-v1-local':
             from ingest.body_markdown import format_reviewed_block
             fee_block=format_reviewed_block('비용: '+_public_fees(native['fees'])) if native['fees'] else ''
@@ -218,10 +256,17 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         title_ja,content_ja,status_ja,_=translate_ja(c['title'],content)
         if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise ValueError()
         content_ja=normalize_schedule_heading(content_ja,'ja')
+        if native.get('schema_version')=='program-scope-v1-local':
+            from ingest.seoul_content import validate_public_body
+            validate_public_body(content_ja)
         summary_ja=extract_summary_section(content_ja,JA_SUMMARY_HEADER,JA_SECTION_HEADERS)
         validate_japanese_output(title_ja,content_ja,korean_source=c['title']+'\n'+content)
-        numbers=lambda v:{int(x.replace(',','')) for x in re.findall(r'\d[\d,]*',v)}
-        if not numbers(verified).issubset(numbers(content_ja)):raise ValueError()
+        if native.get('schema_version')=='program-scope-v1-local':
+            from ingest.translation_validation import validate_translation_fidelity
+            validate_translation_fidelity(c['title'],content,title_ja,content_ja)
+        else:
+            numbers=lambda v:{int(x.replace(',','')) for x in re.findall(r'\d[\d,]*',v)}
+            if not numbers(verified).issubset(numbers(content_ja)):raise ValueError()
         output={'titleKo':c['title'],'summaryKo':summary,'contentKo':content,'titleJa':title_ja,'summaryJa':summary_ja,'contentJa':content_ja,'aiModel':model}
         result=adapter.invoke('finish_reclassified_content_ai',{**fence,'p_output':output})
         if not isinstance(result,dict) or result.get('outcome') not in {'inserted','duplicate'}:raise ValueError()

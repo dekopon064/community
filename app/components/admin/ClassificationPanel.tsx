@@ -22,7 +22,7 @@ async function request(id:string,body?:unknown,signal?:AbortSignal) {
 function initialDraft(item:ClassificationDetail) {
   return !item.active&&item.category?classificationSelection(item,item.facts,item.filters,item.category):{facts:item.facts,filters:item.filters};
 }
-export default function ClassificationPanel({id,disabled,onBlocked,onActive,onSaved,reference,overview}:{id:string;disabled:boolean;onBlocked:(v:boolean)=>void;onActive:(v:boolean)=>void;onSaved?:()=>Promise<void>;reference?:ReactNode;overview?:ReactNode}) {
+export default function ClassificationPanel({id,disabled,onBlocked,onActive,onSaved,reference,overview,sourceReasonLabel}:{id:string;disabled:boolean;onBlocked:(v:boolean)=>void;onActive:(v:boolean)=>void;onSaved?:()=>Promise<void>;reference?:ReactNode;overview?:ReactNode;sourceReasonLabel?:(code:string)=>string}) {
   const[item,setItem]=useState<ClassificationDetail|null>(null),[facts,setFacts]=useState<Facts|null>(null),[filters,setFilters]=useState<ContentFilters|null>(null);
   const[opened,setOpened]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[note,setNote]=useState('');
   const[errors,setErrors]=useState<Record<string,string>>({}),[pending,setPending]=useState(false),[uncertain,setUncertain]=useState(false);
@@ -75,7 +75,7 @@ export default function ClassificationPanel({id,disabled,onBlocked,onActive,onSa
       <label className="block font-semibold">{mode==='initial'?'카테고리 확정':mode==='confirm'?'현재 카테고리 확인':'변경할 카테고리'}<select id="classification-category" className={fieldClass} value={facts.category} disabled={busy||uncertain||rowEdit!==null} form={`classification-form-${id}`} required onChange={e=>{const cat=e.target.value as Category;drafts.current[facts.category]={facts:structuredClone(facts),filters:structuredClone(filters)};const restored=drafts.current[cat];const next=restored?structuredClone(restored):classificationSelection(item,facts,filters,cat);setFacts(next.facts);setFilters(next.filters);setEditing([]);setPending(false);setEditorKey(k=>k+1);setChecked(false);}}><option value="" disabled>선택해 주세요</option>{classificationCategories.map(c=><option key={c} value={c}>{categories[c]}</option>)}</select></label>
       <section className={reviewOverview} aria-label="재분류 확인사항"><h3 className="font-bold">이번에 확인할 사항 · {missing.length}개</h3><p className="mt-2 text-sm leading-6">{!facts.category?'카테고리를 선택하면 해당 분류에 부족한 입력을 표시합니다.':mode==='initial'?'미정 분류를 확정합니다. 기존 값은 보존하고 해당 분류에 부족한 항목만 확인합니다.':mode==='confirm'?'현재 분류를 유지합니다. 기존 값은 보존하고 누락된 항목만 확인합니다.':'기존 값은 유지하고 새 분류에 부족한 항목만 표시합니다. 신청 기간과 행사 일정은 서로 바꾸지 않습니다.'} 분류별 작성 중인 입력도 보존합니다.</p>
         {missing.length?<ul className="mt-3 flex flex-wrap gap-x-4 gap-y-2">{missing.map(k=><li key={k}><button type="button" disabled={busy||uncertain||rowEditing} className="min-h-11 py-2 font-semibold underline underline-offset-4 disabled:opacity-45" onClick={()=>jump(k)}>{label(k)} · 확인 필요</button></li>)}</ul>:<p className="mt-3">필수 입력이 채워졌습니다. 저장 전 원문 근거를 확인해 주세요.</p>}
-        {item.sourceReasons.length>0&&<p className="mt-3 text-sm leading-6">남은 사실 확인: {[...new Set(item.sourceReasons.map(r=>reasonText(r).title))].join(' · ')}. 분류 선택만으로 확인 완료가 되지 않습니다.</p>}
+        {item.sourceReasons.length>0&&<p className="mt-3 text-sm leading-6">남은 사실 확인: {[...new Set(item.sourceReasons.map(r=>sourceReasonLabel?.(r)??reasonText(r).title))].join(' · ')}. 분류 선택만으로 확인 완료가 되지 않습니다.</p>}
       </section>
     </div>}
     {!opened&&overview}
