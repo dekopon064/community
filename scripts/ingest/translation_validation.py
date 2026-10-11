@@ -188,8 +188,80 @@ def _validate_field(korean: str, japanese: str) -> None:
                     raise AiJobError("ai_schema_error")
 
 
+def _cell_ordinal(text: str) -> tuple[int | None, str]:
+    # A leading session label, separate from a total count such as '총 3회'.
+    patterns = (r'^(?:제|第)?(\d+)\s*(?:회차|차|次)(?![A-Za-z가-힣])',
+                r'^(?:제|第)(\d+)\s*(?:회|回)',
+                r'^(\d+)\s*(?:회|回)(?=\s*[:：]|\s*$)',
+                r'^(\d+)(?:st|nd|rd|th)\b', r'^(\d+)-р\s*ээлж\b')
+    for pattern in patterns:
+        match = re.match(pattern, text)
+        if match:
+            return int(match[1]), text[match.end():]
+    match = re.match(r'^第([一二三四五六七八九十])场', text)
+    if match:
+        return '一二三四五六七八九十'.index(match[1]) + 1, text[match.end():]
+    return None, text
+
+
+def _explicit_source_cell(text: str) -> str:
+    """Comparison only: explicit multilingual dates/units in reviewed records.
+
+    No date lookup, omitted-year/calendar expansion or stored-text rewriting.
+    Unknown expressions remain subject to the existing strict comparisons.
+    """
+    urls = list(_URL.finditer(text))
+    if urls:
+        # Query/path bytes may resemble a date or unit; they are opaque data.
+        parts, start = [], 0
+        for url in urls:
+            parts.extend((_explicit_source_cell(text[start:url.start()]), url[0]))
+            start = url.end()
+        parts.append(_explicit_source_cell(text[start:]))
+        return ''.join(parts)
+    months = {name: number for number, name in enumerate((
+        'January','February','March','April','May','June','July','August',
+        'September','October','November','December'), 1)}
+    def english_date(match):
+        year, month, day = int(match[3]), months[match[1]], int(match[2])
+        try:
+            datetime(year, month, day)
+        except ValueError:
+            raise AiJobError('ai_schema_error') from None
+        return f'{year}년 {month}월 {day}일'
+    text = re.sub(r'\b('+'|'.join(months)+r')\s+(\d{1,2}),\s*(\d{4})\b', english_date, text)
+    def mongolian_date(match):
+        year, month, day = map(int, match.groups())
+        try:
+            datetime(year, month, day)
+        except ValueError:
+            raise AiJobError('ai_schema_error') from None
+        return f'{year}년 {month}월 {day}일'
+    text = re.sub(r'\b(\d{4})\s+оны\s+(\d{1,2})-р\s+сарын\s+(\d{1,2})\b', mongolian_date, text)
+    def english_clock_range(match):
+        values = []
+        for hour, minute in ((match[1],match[2]), (match[3],match[4])):
+            hour, minute = int(hour), int(minute)
+            if not 1 <= hour <= 12 or not 0 <= minute <= 59:
+                raise AiJobError('ai_schema_error')
+            hour = hour % 12 + (12 if match[5] == 'PM' else 0)
+            values.append(f'{hour}시{minute:02}분')
+        return '~'.join(values)
+    text = re.sub(r'(?<!\d)(\d{1,2}):(\d{2})\s*[~～〜–—-]\s*'
+                  r'(\d{1,2}):(\d{2})\s*(AM|PM)\b', english_clock_range, text)
+    return re.sub(r'(\d[\d,]*)\s*(?:people\b|хүн\b|人)', r'\1명', text)
+
+
 def _validate_cell(korean: str, japanese: str) -> None:
-    ko, ja = inline_text(korean), inline_text(japanese)
+    raw_ko, raw_ja = inline_text(korean), inline_text(japanese)
+    # Check opaque URLs before NFKC/source notation normalization.
+    _validate_field(raw_ko, raw_ja)
+    ko, ja = _normal(raw_ko), _normal(raw_ja)
+    source_id, source_text = _cell_ordinal(ko)
+    target_id, target_text = _cell_ordinal(ja)
+    if source_id != target_id:
+        raise AiJobError('ai_schema_error')
+    ko, ja = _explicit_source_cell(source_text), target_text
     _validate_field(ko, ja)
     # Within one cell/item a date or time cannot be recovered from another row.
     if _dates_and_times(_normal(ko)) != _dates_and_times(_normal(ja)):

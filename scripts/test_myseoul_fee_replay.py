@@ -16,6 +16,7 @@ from ingest.ai_openai import OpenAIAdapter, bounded_cost, GPT_JOB_USD_CAP
 from ingest.ai_provider import create_provider_adapter
 from ingest.ai_errors import AiJobError
 from ingest.body_sections import normalize_schedule_heading
+from ingest.body_markdown import comparison_text
 from ingest.chatgpt_plan_probe import synthetic_context
 from ingest.myseoul_ai import myseoul_input
 from ingest.reclassification_ai import classification_input, process_reclassified_job
@@ -53,22 +54,65 @@ RECORDED_TRANSLATION = {
 
 
 def edited_translation_fixture():
+    # Handwritten fixture for today's list structure, not a new AI response.
     value = copy.deepcopy(RECORDED_TRANSLATION)
-    value['content_ja'] = value['content_ja'].replace(
-        '受講料は10,000ウォンで、材料費2,000ウォンが別途かかります。', '', 1)
+    value['content_ja'] = '''[要約]
+合成デジタル事務教育クラス1は、ソンナム市に居住する18歳以上のF-2ビザを持つ外国人住民のための、オンラインのデジタル事務ツール実習教育です。
+[対象]
+18歳以上の外国人住民
+[日程案内]
+- **申請期間:** 2027年1月5日～2027年1月12日
+- **実施期間:** 2027年2月3日～2027年2月17日
+
+**実施日程:**
+- 2月3日、2月10日、2月17日 9時30分～11時00分、全3回
+[主な内容]
+デジタル事務ツールについて読み、聞き、復唱しながら実習するオンライン教育です。案内では、業務効率を173%向上させる教育として紹介されています。飲み水を準備してください。
+- **参加条件:** ソンナム市の住民のみ申請可能 / F-2ビザ所持者のみ申請可能 / 先着25名、定員に達し次第締め切ります / 英語で行われます
+- **費用:** 受講料: 10,000ウォン; 材料費: 2,000ウォン
+- **募集人数:** 先着25名
+- **実施方式:** オンライン
+[申請方法]
+電話相談後、窓口で申請を受け付けます。
+- **申請リンク:** https://synthetic.invalid/apply?a=1'''
     return value
 
 
 def edited_classified_translation_fixture():
     # Reclassification retains its existing source sections and protected block,
     # unlike the native worker's reconstructed audience/period sections.
-    value = edited_translation_fixture()
-    value['content_ja'] = value['content_ja'].replace('18歳以上の外国人住民\n',
-        'ソンナム市に居住する18歳以上のF-2ビザ所持外国人住民のみ申請可能です。'
-        '英語で行われ、先着25名で定員に達し次第締め切ります。\n')
-    value['content_ja'] += ('\n確認済み分類：プログラム\n申請締切：2027年1月12日\n'
-        '参加対象の根拠：合成の全国申請条件\n居住条件の根拠：ソンナム市の住民のみ申請可能\n'
-        '実施日程：2月3日、2月10日、2月17日 9時30分～11時00分、全3回')
+    value = copy.deepcopy(RECORDED_TRANSLATION)
+    value['content_ja'] = '''[要約]
+合成デジタル事務教育クラス1は、ソンナム市に居住する18歳以上のF-2ビザを持つ外国人住民のための、オンラインのデジタル事務ツール実習教育です。
+[対象]
+ソンナム市に居住する18歳以上のF-2ビザ所持外国人住民のみ申請可能です。英語で行われ、先着25名で定員に達し次第締め切ります。
+[日程案内]
+申請期間: 2027年1月5日～1月12日
+実施期間: 2027年2月3日～2月17日
+実際の授業: 2月3日、2月10日、2月17日 各9時30分～11時00分、全3回
+[主な内容]
+デジタル事務ツールについて読み、聞き、復唱しながら実習するオンライン教育です。案内では、業務効率を173%向上させる教育として紹介されています。飲み水を準備してください。
+[申請方法]
+電話相談後、窓口で申請を受け付けます。
+
+確認済みの分類・参加案内
+- **分類:** プログラム
+- **実施方式:** オンライン
+- **参加対象の根拠:** 合成の全国申請条件
+- **申請締切:** 2027年1月12日
+- **参加条件:** ソンナム市の住民のみ申請可能 / F-2ビザ所持者のみ申請可能 / 先着25名、定員に達し次第締め切ります
+- **申請方法:** 電話相談後、窓口で申請
+- **居住条件:** ソンナム市の住民のみ申請可能
+- **居住条件の根拠:** ソンナム市の住民のみ申請可能
+- **費用:** 受講料: 10,000ウォン; 材料費: 2,000ウォン
+- **募集人数:** 先着25名
+
+**実施日程:**
+- 2月3日、2月10日、2月17日 9時30分～11時00分、全3回
+
+- **申請リンク:** https://synthetic.invalid/apply?a=1
+- **申請期間:** 2027年1月5日～2027年1月12日
+- **実施期間:** 2027年2月3日～2027年2月17日'''
     return value
 
 
@@ -133,6 +177,7 @@ class RecordedFeeReplayTests(unittest.TestCase):
         self.assertEqual(result.completed, 1)
         self.assertEqual(c, before)
         output = calls[-1][1]['p_output']
+        plain = comparison_text(output['contentKo'])
         for label in ('수강료','재료비'):
             self.assertEqual(output['contentKo'].count(label), 1)
         for label in ('受講料','材料費'):
@@ -143,7 +188,7 @@ class RecordedFeeReplayTests(unittest.TestCase):
                           '신청기간: 2027-01-05 ~ 2027-01-12','진행기간: 2027-02-03 ~ 2027-02-17',
                           '2월 3일, 2월 10일, 2월 17일 09:30~11:00, 총 3회',
                           '비용: 수강료: 10,000원; 재료비: 2,000원'):
-            self.assertIn(protected, output['contentKo'])
+            self.assertIn(protected, plain)
         self.assertIn(output['contentKo'], client.calls[1]['input'][0]['content'])
         self.assertEqual(len(client.calls), 2)
         self.assertEqual(client.calls[0]['instructions'], MYSEOUL_SUMMARY_SYSTEM)
@@ -250,13 +295,22 @@ class RecordedFeeReplayTests(unittest.TestCase):
             adapter, client = self.plan_pair()
             adapter.summarize_ko(body, None)
             self.assertEqual(client.calls[0]['instructions'], SUMMARY_SYSTEM)
-        # Offline conservative upper bound for the added UTF-8 text only.
+        # Bytes are a conservative diagnostic bound, not a token counter result.
+        # It need not fit every provider's budget; an overflow must block creation.
         input_bound = 1136 + len(MYSEOUL_FEE_RULES.encode('utf-8')) + 2  # Joining newlines too.
         translation_bound = input_bound + SUMMARY_MAX_TOKENS + CLAUDE_TRANSLATION_INPUT_RESERVE_TOKENS
         self.assertLessEqual(conservative_cost_usd(input_bound, SUMMARY_MAX_TOKENS)
             + conservative_cost_usd(translation_bound, TRANSLATION_MAX_TOKENS), CLAUDE_JOB_USD_CAP)
-        self.assertLessEqual(bounded_cost(input_bound, SUMMARY_MAX_TOKENS)
+        self.assertGreater(bounded_cost(input_bound, SUMMARY_MAX_TOKENS)
             + bounded_cost(translation_bound, TRANSLATION_MAX_TOKENS), GPT_JOB_USD_CAP)
+        client = FakeClient()
+        client.responses.count_values[0] = input_bound
+        adapter = OpenAIAdapter(client=client)
+        with self.assertRaises(AiJobError) as failure:
+            adapter.summarize_myseoul_ko(myseoul_input(recorded_packet()), None)
+        self.assertEqual(failure.exception.code, 'ai_blocked_cost_cap')
+        self.assertEqual(client.responses.requests, [])
+        self.assertEqual(len(client.responses.counts), 1)
         for factory, client in ((ClaudeAdapter, ClaudeClient()), (OpenAIAdapter, FakeClient())):
             if factory is ClaudeAdapter:
                 client.messages.count_values[0] = 100000
@@ -268,6 +322,40 @@ class RecordedFeeReplayTests(unittest.TestCase):
                 adapter.summarize_myseoul_ko(myseoul_input(recorded_packet()), None)
             self.assertEqual(failure.exception.code, 'ai_blocked_cost_cap')
             self.assertFalse(client.messages.create_calls if factory is ClaudeAdapter else client.responses.requests)
+
+    def test_current_myseoul_request_token_boundary_protects_both_paid_providers(self):
+        self.assertEqual(GPT_JOB_USD_CAP, .10)
+        self.assertEqual(CLAUDE_JOB_USD_CAP, .10)
+        reserve = SUMMARY_MAX_TOKENS + CLAUDE_TRANSLATION_INPUT_RESERVE_TOKENS
+        for factory, cost in ((ClaudeAdapter, conservative_cost_usd), (OpenAIAdapter, bounded_cost)):
+            total = lambda n: cost(n, SUMMARY_MAX_TOKENS) + cost(n + reserve, TRANSLATION_MAX_TOKENS)
+            boundary = next(n for n in range(100000) if total(n) > .10)
+            self.assertLessEqual(total(boundary - 1), .10)
+            self.assertGreater(total(boundary), .10)
+            for tokens, blocked in ((boundary - 1, False), (boundary, True), (boundary + 1, True)):
+                with self.subTest(provider=factory.__name__, tokens=tokens):
+                    if factory is ClaudeAdapter:
+                        client = ClaudeClient()
+                        client.messages.count_values[0] = tokens
+                        client.messages.messages[0] = _message(json.dumps(RECORDED_SUMMARY))
+                        adapter = factory(api_key='synthetic-unused', client=client)
+                        counts, creates = client.messages.count_calls, client.messages.create_calls
+                    else:
+                        client = FakeClient()
+                        client.responses.count_values[0] = tokens
+                        client.responses.results[0] = response(json.dumps(RECORDED_SUMMARY))
+                        adapter = factory(client=client)
+                        counts, creates = client.responses.counts, client.responses.requests
+                    if blocked:
+                        with self.assertRaises(AiJobError) as failure:
+                            adapter.summarize_myseoul_ko(myseoul_input(recorded_packet()), None)
+                        self.assertEqual(failure.exception.code, 'ai_blocked_cost_cap')
+                        self.assertEqual(creates, [])
+                    else:
+                        adapter.summarize_myseoul_ko(myseoul_input(recorded_packet()), None)
+                        self.assertEqual(len(creates), 1)
+                    self.assertEqual(len(counts), 1)
+                    self.assertIn(MYSEOUL_FEE_RULES, counts[0]['system'] if factory is ClaudeAdapter else counts[0]['instructions'])
 
 
 if __name__ == '__main__':

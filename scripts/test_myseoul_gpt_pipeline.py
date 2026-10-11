@@ -47,10 +47,10 @@ def native_packet():
 def native_client(c):
     client = FakeClient()
     ko = '[한 줄 요약]\n합성 교육입니다.\n[주요 내용]\n선착순 25명 교육입니다.'
-    ranges = japanese_dates(fact_sections(c['facts'])['[일정 안내]'].split('\n진행 일정:')[0])
+    ranges = japanese_dates(fact_sections(c['facts'])['[일정 안내]'].split('\n\n**진행 일정:**')[0])
     ranges = ranges.replace('신청기간:', '- **申請期間:**').replace('진행기간:', '- **実施期間:**')
     ja = ('[要約]\n合成教育です。\n[対象]\n保護者同伴\n[期間・状況]\n' + ranges +
-          '\n- **実施日程:** 10月3日(土)、10月10日(土)、10月17日(土)、全3回\n[主な内容]\n'
+          '\n\n**実施日程:**\n- 10月3日(土)、10月10日(土)、10月17日(土)、全3回\n[主な内容]\n'
           '先着25名。\n- **費用:** 受講料: 無料; 入場料: 3,000ウォン\n- **募集人数:** 先着25名\n[申請方法]\n窓口申込')
     client.responses.results = [summary_response(ko), response(json.dumps({'title_ja': '合成教育', 'content_ja': ja}))]
     return client
