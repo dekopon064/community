@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any, Iterator
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
+from ingest.application_links import normalize_application_link
 
 import requests
 
@@ -359,7 +360,7 @@ def safe_application_link(href: str, label: str) -> str | None:
             or re.search(r"\.(?:pdf|hwp|hwpx|png|jpe?g|gif)(?:$|/)", url.path, re.I)
             or re.search(r"token|secret|password|email|phone|key", url.query, re.I)):
         return None
-    return url.geturl() if len(url.geturl()) <= 2048 else None
+    return normalize_application_link(url.geturl()) if len(url.geturl()) <= 2048 else None
 
 
 def representative_image(body: Node, base_url: str) -> tuple[str | None, str]:
