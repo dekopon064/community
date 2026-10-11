@@ -136,13 +136,14 @@ class GPTPipelineTests(unittest.TestCase):
             c['nativeConfirmedFacts']['programFacts'] = {'description': '합성 이미지 보완 설명',
                 'capacity_raw': ['선착순 25명'], 'session_evidence': ['10월 3일, 10월 10일, 총 2회'],
                 'conditions': ['보호자 동반']}
-            ja = ('[要約]\n合成\n[主な内容]\n合成活動\n確認した分類・参加案内\n'
-                  '- **分類:** 合成\n- **実施方式:** オンライン\n- **参加対象の根拠:** 合成の全国対象')
-            if category == 'program': ja += '\n- **申請締切:** 2099年10月15日'
+            # Handwritten Japanese fixture matching public section placement.
+            ja = ('[要約]\n合成\n[対象]\n- **参加対象の根拠:** 合成の全国対象\n'
+                  '- **参加条件:** 保護者同伴\n- **募集人数:** 先着25名\n[日程案内]')
             if category == 'policy': ja += '\n- **申請締切:** 締切なし'
             if category == 'event': ja += '\n- **開催期間:** 2099年10月9日～2099年10月9日'
-            ja += '\n- **参加条件:** 保護者同伴\n- **募集人数:** 先着25名\n- **実施日程:** 10月3日、10月10日、全2回'
+            ja += '\n- **実施日程:** 10月3日、10月10日、全2回'
             if category == 'program': ja += '\n- **申請期間:** 2099年10月1日～2099年10月15日'
+            ja += '\n[主な内容]\n合成活動\n- **実施方式:** オンライン'
             client = FakeClient(); client.responses.results = [summary_response('[한 줄 요약]\n합성\n[주요 내용]\n합성 활동'),
                 response(json.dumps({'title_ja': '合成', 'content_ja': ja}))]
             calls = []
@@ -158,7 +159,8 @@ class GPTPipelineTests(unittest.TestCase):
             self.assertEqual(result.completed, 1, category)
             output = calls[-1][1]['p_output']
             self.assertEqual(output['aiModel'], GPT_MODEL)
-            self.assertIn(protected_information(c), output['contentKo'])
+            from test_reclassification_ai import assert_public_facts
+            assert_public_facts(self, c, output['contentKo'])
             self.assertIn('합성 이미지 보완 설명', client.responses.requests[0]['input'][0]['content'])
             self.assertIn('Contextual terminology', client.responses.requests[1]['instructions'])
             self.assertEqual(len(client.responses.requests), 2)

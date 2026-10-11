@@ -325,15 +325,16 @@ class PlanWorkerTests(unittest.TestCase):
     def test_reclassified_categories_preserve_contract_and_do_not_publish(self):
         for category in ('program','event','youth_space','policy','living'):
             c = classified_context(category)
-            ja = ('[要約]\n合成\n[主な内容]\n合成活動\n確認した分類・参加案内\n'
-                  '- **分類:** 合成\n- **実施方式:** オンライン\n- **参加対象の根拠:** 合成の全国対象')
-            if category == 'program':
-                ja += '\n- **申請締切:** 2099年10月15日'
+            # Handwritten response; no model call or legacy public checklist.
+            ja = ('[要約]\n合成\n[対象]\n- **参加対象の根拠:** 合成の全国対象\n'
+                  '- **参加条件:** 合成保護者同伴条件')
+            if category in {'program','policy','event'}:ja += '\n[日程案内]'
             if category == 'policy': ja += '\n- **申請締切:** 締切なし'
             if category == 'event':
                 ja += '\n- **開催期間:** 2099年10月9日～2099年10月9日'
-            ja += '\n- **参加条件:** 合成保護者同伴条件\n- **申請方法:** 合成申請方法\n- **費用:** 10,000ウォン'
             if category == 'program': ja += '\n- **申請期間:** 2099年10月1日～2099年10月15日'
+            ja += '\n[主な内容]\n合成活動\n- **実施方式:** オンライン\n- **費用:** 10,000ウォン'
+            ja += '\n[申請方法]\n- **申請方法:** 合成申請方法'
             client = streamed([summary_response('[한 줄 요약]\n합성\n[주요 내용]\n합성 활동'),
                 response(json.dumps({'title_ja':'合成','content_ja':ja}))])
             adapter, _, _ = self.adapter(client)
@@ -351,7 +352,8 @@ class PlanWorkerTests(unittest.TestCase):
             self.assertEqual(result.completed,1,category)
             output = calls[-1][1]['p_output']
             self.assertEqual(output['aiModel'],GPT_MODEL)
-            self.assertIn(protected_information(c),output['contentKo'])
+            from test_reclassification_ai import assert_public_facts
+            assert_public_facts(self,c,output['contentKo'])
             self.assertEqual(len(client.calls),2)
             self.assertEqual(c['classificationVersion'],calls[-1][1]['p_classification_version'])
             self.assertEqual(set(output),{'titleKo','summaryKo','contentKo','titleJa','summaryJa','contentJa','aiModel'})

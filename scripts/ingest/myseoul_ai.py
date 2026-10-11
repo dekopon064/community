@@ -19,7 +19,7 @@ from ingest.myseoul_ai_support import section_body, schedule_values, process_pro
 from ingest.region_ja_glossary import validate_japanese_output
 from ingest.myseoul_content import (schedule_lines, schedule_block, announcement_lines, without_replaced_announcements,
     validate_summary_period, participation_constraints, validate_participant_quantities, deduplicate_summary_fees,
-    validate_assembled_fees, retained_schedule_tables, deduplicate_summary_venue)
+    validate_assembled_fees, retained_schedule_tables, deduplicate_summary_venue, merge_reviewed_sections)
 
 SOURCE = "myseoul_program"
 PROFILE = "myseoul-program-v1-local"
@@ -198,8 +198,16 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
     validate_participant_quantities(f, main + "\n" + parts["activity"])
     parts = {key: format_reviewed_block(value) for key, value in parts.items()}
     main = format_reviewed_block(main)
-    content = "\n\n".join([KO_SUMMARY_HEADER, summary, "[대상]", parts["[대상]"], "[일정 안내]",
-        parts["[일정 안내]"], "[주요 내용]", main, parts["activity"], "[신청 방법]", parts["[신청 방법]"]])
+    # Preserve generated contact/payment/application instructions. Reviewed
+    # method/links are merged by complete row, rather than replacing the section.
+    boundary = '|'.join(re.escape(h) for h in KO_SECTION_HEADERS)
+    method_match = re.search(r'(?ms)^\s*\[신청 방법\][ \t]*(.*?)(?=^\s*(?:'+boundary+r')|\Z)', content)
+    method = method_match[1].strip() if method_match else ''
+    content = "\n\n".join([KO_SUMMARY_HEADER, summary, "[주요 내용]", main or parts['activity'],
+                          "[신청 방법]", method])
+    content = merge_reviewed_sections(content, {'[대상]': parts['[대상]'],
+        '[일정 안내]': parts['[일정 안내]'], '[주요 내용]': parts['activity'],
+        '[신청 방법]': parts['[신청 방법]']})
     numbers = lambda s: {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", s)}
     constraints = "\n".join([f["target"], *participation_constraints(f)])
     required = numbers("\n".join(parts.values()) + "\n" + constraints)
