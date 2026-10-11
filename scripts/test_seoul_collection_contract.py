@@ -56,6 +56,30 @@ class SeoulCollectionContractTests(unittest.TestCase):
         self.assertEqual(result['new_saved'],0);self.assertEqual(result['target'],0)
         self.assertEqual(result['other_category'],1);self.assertEqual(result['status'],'complete')
         self.assertEqual(next(e[1]['p_items'] for e in events if isinstance(e,tuple) and e[0]=='observe_seoul_program_new_only'),[])
+    def test_external_detail_link_is_rejected_without_discarding_other_rows(self):
+        from ingest.connectors.seoul_reservation import SeoulReservationConnector
+        from ingest.http_client import HttpClient
+        from test_seoul_reservation import TEST_KEY,Response,envelope
+        rows=[row(sid=f'synthetic_{i}') for i in range(50)]
+        rows[13]=row(sid='XML-synthetic-3',SVCURL='https://example.test/tour/touristSiteView.do?tourist_cd=SYNTHETIC')
+        calls=[]
+        def transport(*_a,**_kw):calls.append(1);return Response(envelope(rows,100))
+        c=SeoulReservationConnector(HttpClient(budget=1,max_attempts=1,transport=transport),api_key_provider=lambda:TEST_KEY)
+        page=c.fetch_batch(None)
+        self.assertEqual(len(calls),1);self.assertEqual(len(page.items),50)
+        result,events=self.flow(rows=list(page.items))
+        self.assertEqual(result['status'],'incomplete');self.assertEqual(result['reason'],'invalid_items')
+        self.assertEqual(result['failed'],1);self.assertEqual(result['new_saved'],48)
+        self.assertEqual(result['existing_skipped'],1);self.assertEqual(result['unprocessed'],0)
+        self.assertEqual(result['item_errors'],[dict(row_index=13,stage='row_normalization',error_code='seoul_link_invalid')])
+        writes=[e[1]['p_items'] for e in events if isinstance(e,tuple) and e[0]=='observe_seoul_program_new_only']
+        self.assertEqual([len(items) for items in writes],[40,9])
+        self.assertFalse(any(i['external_key']=='XML-synthetic-3' for items in writes for i in items))
+    def test_other_category_external_link_never_enters_observation(self):
+        result,events=self.flow(rows=[row(MAXCLASSNM='교육강좌',SVCURL='https://example.test/'),row(sid='valid_culture')],natural=True)
+        self.assertEqual(result['other_category'],1);self.assertEqual(result['failed'],0)
+        items=next(e[1]['p_items'] for e in events if isinstance(e,tuple) and e[0]=='observe_seoul_program_new_only')
+        self.assertEqual([i['external_key'] for i in items],['valid_culture'])
     def test_missing_server_capability_blocks_before_run_and_http(self):
         adapter=ProgramNewOnlyObservationAdapter(lambda *_:{'contract':'old'})
         forbidden=SimpleNamespace(start_ingest_run=lambda *_a,**_k:self.fail('write forbidden'))
