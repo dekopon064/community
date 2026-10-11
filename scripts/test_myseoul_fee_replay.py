@@ -15,6 +15,7 @@ from ingest.ai_claude import (ClaudeAdapter, MYSEOUL_FEE_RULES, MYSEOUL_SUMMARY_
 from ingest.ai_openai import OpenAIAdapter, bounded_cost, GPT_JOB_USD_CAP
 from ingest.ai_provider import create_provider_adapter
 from ingest.ai_errors import AiJobError
+from ingest.body_sections import normalize_schedule_heading
 from ingest.chatgpt_plan_probe import synthetic_context
 from ingest.myseoul_ai import myseoul_input
 from ingest.reclassification_ai import classification_input, process_reclassified_job
@@ -159,8 +160,8 @@ class RecordedFeeReplayTests(unittest.TestCase):
         self.assertEqual(result.completed, 1)
         output = calls[-1][1]['p_output']
         self.assertNotIn(FEE_SENTENCE, output['contentKo'])
-        self.assertIn('"component": "tuition", "evidence": ["10,000원"]', output['contentKo'])
-        self.assertIn('"component": "materials", "evidence": ["2,000원"]', output['contentKo'])
+        self.assertIn('수강료: 10,000원; 재료비: 2,000원', output['contentKo'])
+        self.assertNotRegex(output['contentKo'], r'"component"|"evidence"|\["|\{\s*"')
         self.assertIn('총 3회', output['contentKo'])
         self.assertIn('성남시 주민만 신청 가능', output['contentKo'])
         self.assertIn(output['contentKo'], client.calls[1]['input'][0]['content'])
@@ -226,7 +227,10 @@ class RecordedFeeReplayTests(unittest.TestCase):
                     else:
                         adapter, client = self.plan_pair()
                     method = adapter.summarize_myseoul_ko if native else adapter.summarize_ko
-                    self.assertEqual(method(body, 'https://synthetic.invalid', '합성')[0], RECORDED_SUMMARY['content_ko'])
+                    # Keep the recorded raw response unchanged, while respecting
+                    # the already deployed legacy-heading normalization.
+                    self.assertEqual(method(body, 'https://synthetic.invalid', '합성')[0],
+                                     normalize_schedule_heading(RECORDED_SUMMARY['content_ko'], 'ko'))
                     if transport == 'claude':
                         request = client.messages.create_calls[0]
                         instructions = request['system']
