@@ -36,11 +36,29 @@ def _load_json(relative: str) -> dict[str, Any]:
 
 
 SUMMARY_SYSTEM = _load_text("claude_prompts/summary_system.txt")
-MYSEOUL_SUMMARY_SYSTEM = _load_text("claude_prompts/myseoul_summary_system.txt")
+MYSEOUL_FEE_RULES = _load_text("claude_prompts/myseoul_fee_rules.txt")
+MYSEOUL_SUMMARY_SYSTEM = _load_text("claude_prompts/myseoul_summary_system.txt").rstrip() + "\n\n" + MYSEOUL_FEE_RULES
 PROGRAM_SUMMARY_SYSTEM = _load_text("claude_prompts/program_summary_system.txt")
 TRANSLATION_SYSTEM = _load_text("claude_prompts/translation_system.txt")
 SUMMARY_SCHEMA = _load_json("claude_schemas/summary.schema.json")
 TRANSLATION_SCHEMA = _load_json("claude_schemas/translation.schema.json")
+
+
+def summary_system_prompt(body: str, program: bool | str = False) -> str:
+    if program == "myseoul":
+        return MYSEOUL_SUMMARY_SYSTEM
+    base = PROGRAM_SUMMARY_SYSTEM if program else SUMMARY_SYSTEM
+    # Only the full native MySeoul snapshot has deterministic component fee rows.
+    # Other sources and legacy/minimal packets retain their current instructions.
+    try:
+        packet = json.loads(body)
+        native = packet.get("nativeConfirmedFacts", {}).get("programFacts") or {}
+        if (packet.get("inputContract") == "review-classification-ai-v1"
+                and native.get("schema_version") == "myseoul-program-facts-v1-local"):
+            return base.rstrip() + "\n\n" + MYSEOUL_FEE_RULES
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return base
 
 
 def translation_system_prompt() -> str:
@@ -121,7 +139,7 @@ def build_summary_create_kwargs(*, title: str, body: str, source_url: str | None
     return {
         "model": SONNET_MODEL,
         "max_tokens": SUMMARY_MAX_TOKENS,
-        "system": MYSEOUL_SUMMARY_SYSTEM if program == "myseoul" else PROGRAM_SUMMARY_SYSTEM if program else SUMMARY_SYSTEM,
+        "system": summary_system_prompt(body, program),
         "messages": [{"role": "user", "content": user}],
         "thinking": _thinking_disabled(),
         "output_config": _output_config(SUMMARY_SCHEMA),

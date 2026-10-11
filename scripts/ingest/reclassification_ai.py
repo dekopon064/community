@@ -65,8 +65,23 @@ def protected_information(c:dict)->str:
     if f['evidence']:lines.append('참가 대상 근거: '+f['evidence'])
     if f['category'] in {'policy','program'}:lines.append('신청 마감: '+(f['deadlineOn'] if f['deadlineKind']=='fixed' else {'none':'정해진 마감 없음','closed':'접수 종료'}[f['deadlineKind']]))
     if f['category']=='event':lines.append('개최 기간: '+f['eventStart']+' ~ '+f['eventEnd'])
-    for key,label in [('target_raw','대상'),('conditions','참가 조건'),('application_methods','신청 방법'),('residence','거주 조건'),('residence_evidence','거주 조건 근거'),('fees','비용'),('fee_amounts','비용 안내')]:
-        if native.get(key):lines.append(label+': '+json.dumps(native[key],ensure_ascii=False))
+    for key,label in [('target_raw','대상'),('conditions','참가 조건'),('application_methods','신청 방법'),('residence','거주 조건'),('residence_evidence','거주 조건 근거'),('fees','비용'),('fee_amounts','비용 안내'),('capacity_raw','모집 인원'),('session_evidence','진행 일정'),('meeting_evidence','집결 안내')]:
+        value=native.get(key)
+        if key=='conditions' and native.get('schema_version')=='myseoul-program-facts-v1-local':
+            from ingest.myseoul_content import participation_constraints
+            protected=participation_constraints(native)
+            value=[v for v in (value or []) if v in protected]
+        if value:lines.append(label+': '+json.dumps(value,ensure_ascii=False))
+    if native.get('schema_version') == 'myseoul-program-facts-v1-local':
+        from ingest.myseoul_content import schedule_lines
+        if not native.get('session_evidence') and schedule_lines(native):
+            lines.append('진행 일정: '+' / '.join(schedule_lines(native)))
+    if f['category']=='program':
+        application=c['filters']['application']['value']
+        lines.append('신청기간: '+application['start']['value']+' ~ '+application['end']['value'])
+        if native.get('schema_version')=='myseoul-program-facts-v1-local':
+            from ingest.myseoul_ai import period_text
+            lines.append('진행기간: '+period_text(native,'operation'))
     return '\n'.join(lines)
 
 def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revision:str,classification_version:int,
@@ -83,7 +98,26 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         content,status,model=summarize_ko(classification_input(c),c['sourceUrl'],title=c['title'])
         if status!='success' or not isinstance(content,str):raise ValueError()
         summary=extract_summary_section(content,KO_SUMMARY_HEADER,KO_SECTION_HEADERS)
-        verified=protected_information(c);content+='\n\n'+verified
+        verified=protected_information(c)
+        verified_in_main=False
+        native=c['nativeConfirmedFacts']['programFacts'] or {}
+        if native.get('schema_version')=='myseoul-program-facts-v1-local':
+            from ingest.myseoul_content import optional_period_section,validate_summary_period,validate_participant_quantities,deduplicate_summary_fees,validate_assembled_fees
+            from ingest.myseoul_ai_support import section_body
+            from ingest.myseoul_ai import fact_sections
+            validate_summary_period(optional_period_section(content),verified,native)
+            main=section_body(content,'[주요 내용]',KO_SECTION_HEADERS)
+            validate_participant_quantities(native,main+'\n'+verified)
+            main=deduplicate_summary_fees(main,fact_sections(native)['activity'])
+            if not main:
+                main=verified
+                verified_in_main=True
+            boundary='|'.join(re.escape(header) for header in KO_SECTION_HEADERS)
+            content=re.sub(r'(?ms)(^\s*\[주요 내용\][ \t]*)(.*?)(?=^\s*(?:'+boundary+r')|\Z)',
+                lambda match:match[1]+'\n'+main+'\n',content,count=1)
+        if not verified_in_main:content+='\n\n'+verified
+        if native.get('schema_version')=='myseoul-program-facts-v1-local':
+            validate_assembled_fees(content,fact_sections(native)['activity'],canonical_block=verified)
         title_ja,content_ja,status_ja,_=translate_ja(c['title'],content)
         if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise ValueError()
         summary_ja=extract_summary_section(content_ja,JA_SUMMARY_HEADER,JA_SECTION_HEADERS)

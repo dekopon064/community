@@ -10,6 +10,8 @@ from ingest.ai_provider import (
     MISSING_AI_PROVIDER,
     MISSING_ANTHROPIC_API_KEY,
     PROVIDER_ANTHROPIC,
+    PROVIDER_OPENAI,
+    MISSING_OPENAI_API_KEY,
     ProviderError,
     require_ai_provider,
     require_configured_provider,
@@ -30,7 +32,7 @@ class ProviderSelectionTests(unittest.TestCase):
         self.assertNotIn("gemini-secret-marker", str(caught.exception))
 
     def test_invalid_provider_is_fail_closed(self) -> None:
-        for value in ("claude", "gemini", "openai", "Gemini"):
+        for value in ("claude", "gemini", "gpt", "Gemini"):
             env = {"AI_PROVIDER": value, "ANTHROPIC_API_KEY": "x"}
             with self.assertRaises(ProviderError) as caught:
                 require_ai_provider(env)
@@ -61,10 +63,19 @@ class ProviderSelectionTests(unittest.TestCase):
         self.assertEqual(anthropic, (PROVIDER_ANTHROPIC, "anthropic-ok"))
 
     def test_provider_key_rejects_unknown_provider(self) -> None:
-        for provider in ("openai", "gemini"):
+        for provider in ("unknown", "gemini"):
             with self.assertRaises(ProviderError) as caught:
                 require_provider_key(provider, {"ANTHROPIC_API_KEY": "x"})
             self.assertEqual(caught.exception.code, INVALID_AI_PROVIDER, provider)
+
+    def test_openai_uses_only_its_own_key_and_explicit_selection(self):
+        self.assertEqual(require_configured_provider({'AI_PROVIDER': 'openai',
+            'OPENAI_API_KEY': 'synthetic-openai', 'ANTHROPIC_API_KEY': 'unused'}),
+            (PROVIDER_OPENAI, 'synthetic-openai'))
+        with self.assertRaises(ProviderError) as caught:
+            require_configured_provider({'AI_PROVIDER': 'openai', 'ANTHROPIC_API_KEY': 'unused'})
+        self.assertEqual(caught.exception.code, MISSING_OPENAI_API_KEY)
+        self.assertNotIn('unused', str(caught.exception))
 
     def test_module_has_no_network_imports(self) -> None:
         import ingest.ai_provider as module

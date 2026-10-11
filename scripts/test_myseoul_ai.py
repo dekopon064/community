@@ -79,9 +79,9 @@ class MyAITests(unittest.TestCase):
         with self.assertRaises(AiJobError): generate_myseoul_output(c, summarize_ko=ko, translate_ja=ja)
         self.assertEqual(ja.call_count, 1)
 
-    def test_period_numbers_do_not_replace_participant_limit(self):
+    def test_period_number_and_wrong_unit_do_not_replace_participant_limit(self):
         c = context(); c["facts"]["conditions"] = ["회차당 10명"]
-        ko = Mock(return_value=("[한 줄 요약]\n체험입니다.\n[주요 내용]\n체험 활동입니다.", "success", "fake"))
+        ko = Mock(return_value=("[한 줄 요약]\n체험입니다.\n[주요 내용]\n10월의 10세 대상 체험 활동입니다.", "success", "fake"))
         ja = Mock()
         with self.assertRaises(AiJobError): generate_myseoul_output(c, summarize_ko=ko, translate_ja=ja)
         ja.assert_not_called()

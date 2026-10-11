@@ -202,7 +202,7 @@ class OfflineTests(unittest.TestCase):
                 c['nativeConfirmedFacts']['programFacts'] = {'description': '합성 이미지 보완 설명', 'conditions': ['보호자 동반']}
                 before = copy.deepcopy(c)
                 ja = '[要約]\n合成案内\n[主な内容]\n合成活動\n確認した分類・参加案内\n保護者同伴'
-                if category == 'program': ja += '\n申請締切: 2099年10月15日'
+                if category == 'program': ja += '\n申請締切: 2099年10月15日\n申請期間: 2099年10月1日～2099年10月15日'
                 if category == 'event': ja += '\n開催期間: 2099年10月9日～2099年10月9日'
                 adapter, client = adapter_for('[한 줄 요약]\n합성 안내\n[주요 내용]\n합성 활동', ja)
                 calls = []

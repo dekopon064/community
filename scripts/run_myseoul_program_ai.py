@@ -33,8 +33,8 @@ def project_ref(value: str) -> str:
 
 def execute_target(args: argparse.Namespace):
     # Dependencies, credentials, and clients are created only in explicit execution.
-    from ingest.ai_provider import require_configured_provider
-    from ingest.ai_claude import ClaudeAdapter, CLAUDE_JOB_USD_CAP, MAX_CREATE_CALLS
+    from ingest.ai_provider import require_configured_provider, create_provider_adapter, close_provider_adapter
+    from ingest.ai_claude import CLAUDE_JOB_USD_CAP, MAX_CREATE_CALLS
     from ingest.program_ai import ProgramAIAdapter
     from ingest.myseoul_ai import process_myseoul_job
     from ingest.supabase_store import create_ingest_client
@@ -46,14 +46,17 @@ def execute_target(args: argparse.Namespace):
     # Also rejects embedded credentials, a different project, paths, and HTTP.
     if url.rstrip("/") != f"https://{args.project_ref}.supabase.co" or not key.strip():
         raise ValueError("invalid_server_configuration")
-    _, provider_key = require_configured_provider()
-    provider = ClaudeAdapter(api_key=provider_key)
-    client = create_ingest_client(url, key)
-    return process_myseoul_job(
-        ProgramAIAdapter.from_supabase(client), source_item_id=args.source_item_id,
-        revision=args.revision, summarize_ko=provider.summarize_myseoul_ko,
-        translate_ja=provider.translate_ja, worker_id="myseoul-manual-" + uuid4().hex,
-    )
+    provider_name, provider_key = require_configured_provider()
+    provider = create_provider_adapter(provider_name, provider_key)
+    try:
+        client = create_ingest_client(url, key)
+        return process_myseoul_job(
+            ProgramAIAdapter.from_supabase(client), source_item_id=args.source_item_id,
+            revision=args.revision, summarize_ko=provider.summarize_myseoul_ko,
+            translate_ja=provider.translate_ja, worker_id="myseoul-manual-" + uuid4().hex,
+        )
+    finally:
+        close_provider_adapter(provider)
 
 
 def main(argv: Sequence[str] | None = None, *, execute: Callable | None = None) -> int:
@@ -64,8 +67,9 @@ def main(argv: Sequence[str] | None = None, *, execute: Callable | None = None) 
     parser.add_argument("--execute", action="store_true", help="Explicitly allow one claim and provider job; separate approval required.")
     args = parser.parse_args(argv)
     if not args.execute:
+        from ingest.ai_provider import provider_validation_limits
         print(json.dumps({"mode": "validation_only", "source": "myseoul_program",
-                          "target_count": 1, "usd_cap": 0.10, "automatic_retries": 0,
+                          "target_count": 1, **provider_validation_limits(), "automatic_retries": 0,
                           "network_calls": 0, "publish": False}))
         return 0
     try:
