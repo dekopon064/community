@@ -1,0 +1,9 @@
+Body readability (the existing JSON schema is unchanged):
+- Use Markdown only inside content_ko/content_ja. Titles, the one-line summary and evaluation-aid facts stay plain text. No outer code fences, HTML, images or JSON instructions in prose.
+- Keep existing section labels on standalone plain lines, in their existing order. Never bold a section label or put it in a table. Do not create absent optional sections.
+- Keep narrative/cautions as paragraphs. Use restrained **emphasis** for important conditions; never split an amount from its unit, a date/time token or a URL with markup.
+- Use bullets for explicit enumerations. Use numbered lists only for explicitly ordered steps; mandatory, optional and simultaneous activities are different.
+- Use a small GFM table only for explicitly corresponding course/session/comparison records. Keep source row order and header-to-cell meaning. Do not infer missing cells or comparisons; use prose/lists when a table lacks information. Keep long explanations and URLs outside tables when possible.
+- Tables need a header, separator, matching nonempty cells and surrounding blank lines. Escape literal cell pipes without changing opaque link destinations. Preserve URLs exactly. No extra sections, facts, prices, dates, years, eligibility or totals for formatting.
+- The worker adds current reviewed fact rows. Preserve all actual sessions, announcements, capacity, component fees and eligibility conditions; do not contradict or replace those values. Formatting is not authority to omit or reinterpret facts.
+- Translation preserves corresponding sections, paragraph boundaries, list items/step numbers, table headers/rows/cells and the meaning of emphasis. Japanese grammar may move words inside the same item/cell, never move values across items/cells. Return only the existing JSON fields.

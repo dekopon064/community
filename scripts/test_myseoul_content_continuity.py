@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from ingest.ai_errors import AiJobError
+from ingest.body_markdown import comparison_text
 from ingest.myseoul_ai import myseoul_input, generate_myseoul_output, fact_sections
 from ingest.reclassification_ai import classification_input, protected_information
 from test_myseoul_ai import context, providers
@@ -133,10 +134,10 @@ class ContentContinuityTests(unittest.TestCase):
             '마실 물을 준비하세요.', 'success', 'fake'))
         out = generate_myseoul_output(c, summarize_ko=ko, translate_ja=ja)
         self.assertEqual(c, before)
-        self.assertEqual(out['contentKo'].count('수강료'), 1)
-        self.assertEqual(out['contentKo'].count('재료비'), 1)
-        self.assertIn('비용: 수강료: 10,000원; 재료비: 2,000원', out['contentKo'])
-        self.assertIn('마실 물을 준비하세요.', out['contentKo'])
+        self.assertEqual(comparison_text(out['contentKo']).count('수강료'), 1)
+        self.assertEqual(comparison_text(out['contentKo']).count('재료비'), 1)
+        self.assertIn('비용: 수강료: 10,000원; 재료비: 2,000원', comparison_text(out['contentKo']))
+        self.assertIn('마실 물을 준비하세요.', comparison_text(out['contentKo']))
         self.assertEqual(ja.call_args.args[1], out['contentKo'])
         self.assertEqual(ko.call_count, 1)
         self.assertEqual(ja.call_count, 1)
@@ -291,7 +292,7 @@ class ContentContinuityTests(unittest.TestCase):
         ko, ja = providers(c)
         ko = Mock(return_value=('[한 줄 요약]\n교육입니다.\n[주요 내용]\n교육과 문화 활동입니다.', 'success', 'fake'))
         out = generate_myseoul_output(c, summarize_ko=ko, translate_ja=ja)
-        self.assertNotIn('173%', out['contentKo'])
+        self.assertNotIn('173%', comparison_text(out['contentKo']))
         self.assertEqual(c, before)
         c['facts']['conditions'] = ['회차당 10명, 18세 이상']
         # Confirmed limits are supplied by body assembly, not required twice in
@@ -300,7 +301,7 @@ class ContentContinuityTests(unittest.TestCase):
         ja = Mock(side_effect=ja)
         ko = Mock(return_value=('[한 줄 요약]\n교육입니다.\n[주요 내용]\n교육입니다.', 'success', 'fake'))
         out = generate_myseoul_output(c, summarize_ko=ko, translate_ja=ja)
-        self.assertIn('회차당 10명, 18세 이상',out['contentKo'])
+        self.assertIn('회차당 10명, 18세 이상',comparison_text(out['contentKo']))
         self.assertIn('회차당 10명, 18세 이상',ja.call_args.args[1])
 
     def test_capacity_only_in_generated_audience_is_preserved_in_assembled_body(self):
@@ -310,8 +311,8 @@ class ContentContinuityTests(unittest.TestCase):
         ko=Mock(return_value=('[한 줄 요약]\n교육입니다.\n[대상]\n선착순 25명입니다.\n'
             '[주요 내용]\n디지털 사무 교육입니다.','success','fake'))
         out=generate_myseoul_output(c,summarize_ko=ko,translate_ja=ja)
-        self.assertIn('모집 인원: 선착순 25명',out['contentKo'])
-        self.assertIn('모집 인원: 선착순 25명',ja.call_args.args[1])
+        self.assertIn('모집 인원: 선착순 25명',comparison_text(out['contentKo']))
+        self.assertIn('모집 인원: 선착순 25명',comparison_text(ja.call_args.args[1]))
 
     def test_conflicting_generated_schedule_stops_before_translation(self):
         c = context()

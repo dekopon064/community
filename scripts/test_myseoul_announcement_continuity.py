@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from ingest.ai_errors import AiJobError
+from ingest.body_markdown import comparison_text
 from ingest.myseoul_ai import generate_myseoul_output, process_myseoul_job, fact_sections
 from ingest.myseoul_content import schedule_lines, announcement_lines, validate_summary_period
 from ingest.program_ai import ProgramAIAdapter
@@ -45,7 +46,7 @@ class AnnouncementContinuityTests(unittest.TestCase):
         ja = Mock(return_value=('合成研修', FAKE_JA+'\n合格者発表：10月21日（水）個別案内', 'success', 'fake-translation'))
         output = generate_myseoul_output(c, summarize_ko=Mock(return_value=(RECORDED_SUMMARY, 'success', 'recorded-response')),
                                         translate_ja=ja)
-        self.assertIn('합격자 발표: 10월 21일(수) 개별 안내', output['contentKo'])
+        self.assertIn('합격자 발표: 10월 21일(수) 개별 안내', comparison_text(output['contentKo']))
         self.assertEqual(ja.call_args.args[1], output['contentKo'])
         self.assertEqual(c, before)
 
@@ -57,8 +58,8 @@ class AnnouncementContinuityTests(unittest.TestCase):
         ja = Mock(return_value=('合成研修', FAKE_JA.replace('21日(水)', '22日(木)'), 'success', 'fake-translation'))
         output = generate_myseoul_output(c, summarize_ko=Mock(return_value=(summary, 'success', 'recorded-response')),
                                         translate_ja=ja)
-        self.assertIn('합격자 발표: 10월 22일(목) 개별 안내', output['contentKo'])
-        self.assertNotIn('10월 21일', output['contentKo'])
+        self.assertIn('합격자 발표: 10월 22일(목) 개별 안내', comparison_text(output['contentKo']))
+        self.assertNotIn('10월 21일', comparison_text(output['contentKo']))
         self.assertEqual(c, before)
 
     def test_unavailable_notice_does_not_create_new_announcement(self):
@@ -74,7 +75,7 @@ class AnnouncementContinuityTests(unittest.TestCase):
         summary = RECORDED_SUMMARY.replace('교육 장소는', '합격자 발표: 10월 21일 개별 안내.\n교육 장소는')
         output = generate_myseoul_output(c, summarize_ko=Mock(return_value=(summary, 'success', 'recorded-response')),
             translate_ja=Mock(return_value=('合成研修', FAKE_JA, 'success', 'fake-translation')))
-        self.assertEqual(output['contentKo'].count('합격자 발표:'), 1)
+        self.assertEqual(comparison_text(output['contentKo']).count('합격자 발표:'), 1)
 
     def test_missing_notice_date_in_fake_translation_cannot_complete_candidate(self):
         c = recorded_context()
@@ -162,9 +163,9 @@ class AnnouncementContinuityTests(unittest.TestCase):
         self.assertEqual(json.loads(ko.call_args.args[0])['currentFacts']['description'], c['facts']['description'])
         self.assertIn('合格者発表: 10月21日(水)、個別案内', output['contentJa'])
         self.assertIn('合格者発表', ja.return_value[1])
-        self.assertIn('합격자 발표: 10월 21일(수) 개별 안내', output['contentKo'])
-        self.assertEqual(output['contentKo'].count('합격자 발표:'), 1)
-        self.assertNotIn('거듭날 기회', output['contentKo'])
+        self.assertIn('합격자 발표: 10월 21일(수) 개별 안내', comparison_text(output['contentKo']))
+        self.assertEqual(comparison_text(output['contentKo']).count('합격자 발표:'), 1)
+        self.assertNotIn('거듭날 기회', comparison_text(output['contentKo']))
         self.assertEqual(ja.call_args.args[1], output['contentKo'])
         self.assertEqual(c, before)
 
@@ -199,9 +200,9 @@ class AnnouncementContinuityTests(unittest.TestCase):
             classification_version=c['classificationVersion'], worker_id=c['workerId'], summarize_ko=ko, translate_ja=ja)
         self.assertEqual(result.completed, 1)
         self.assertEqual(calls, ['claim_reclassified_content_ai','finish_reclassified_content_ai'])
-        self.assertIn('합격자 발표: 10월 21일(수) 개별 안내', output['contentKo'])
-        self.assertNotIn('거듭날 기회', output['contentKo'])
-        self.assertEqual(output['contentKo'].count('합격자 발표:'), 1)
+        self.assertIn('합격자 발표: 10월 21일(수) 개별 안내', comparison_text(output['contentKo']))
+        self.assertNotIn('거듭날 기회', comparison_text(output['contentKo']))
+        self.assertEqual(comparison_text(output['contentKo']).count('합격자 발표:'), 1)
         self.assertEqual(ja.call_args.args[1], output['contentKo'])
         self.assertEqual(json.loads(ko.call_args.args[0])['currentFilters'], c['filters'])
         self.assertEqual(c, before)

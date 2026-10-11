@@ -16,6 +16,7 @@ from ingest.ai_chatgpt_plan import ChatGPTPlanAdapter, plan_request
 from ingest.ai_claude import (SUMMARY_SYSTEM, MYSEOUL_SUMMARY_SYSTEM, PROGRAM_SUMMARY_SYSTEM,
     SUMMARY_MAX_TOKENS, TRANSLATION_MAX_TOKENS)
 from ingest.ai_errors import AiJobError
+from ingest.body_markdown import comparison_text
 from ingest.ai_openai import GPT_MODEL
 from ingest.ai_provider import (PROVIDER_CHATGPT_PLAN, ProviderError, require_configured_provider,
     create_provider_adapter, provider_validation_limits)
@@ -259,7 +260,7 @@ class PlanWorkerTests(unittest.TestCase):
         self.assertEqual(output['contentKo'].count('재료비'),1)
         self.assertEqual(output['contentJa'].count('受講料'),1)
         self.assertEqual(output['contentJa'].count('材料費'),1)
-        self.assertIn('비용: 수강료: 10,000원; 재료비: 2,000원',output['contentKo'])
+        self.assertIn('비용: 수강료: 10,000원; 재료비: 2,000원',comparison_text(output['contentKo']))
         self.assertIn(output['contentKo'],client.calls[1]['input'][0]['content'])
         self.assertEqual(output['aiModel'],GPT_MODEL)
         self.assertTrue(all(record['billing']=='chatgpt_plan' for record in adapter._usage_records))
@@ -324,11 +325,15 @@ class PlanWorkerTests(unittest.TestCase):
     def test_reclassified_categories_preserve_contract_and_do_not_publish(self):
         for category in ('program','event','youth_space','policy','living'):
             c = classified_context(category)
-            ja = '[要約]\n合成\n[主な内容]\n合成活動\n保護者同伴条件\n費用: 10,000ウォン'
+            ja = ('[要約]\n合成\n[主な内容]\n合成活動\n確認した分類・参加案内\n'
+                  '- **分類:** 合成\n- **実施方式:** オンライン\n- **参加対象の根拠:** 合成の全国対象')
             if category == 'program':
-                ja += '\n申請締切: 2099年10月15日\n申請期間: 2099年10月1日～2099年10月15日'
+                ja += '\n- **申請締切:** 2099年10月15日'
+            if category == 'policy': ja += '\n- **申請締切:** 締切なし'
             if category == 'event':
-                ja += '\n開催期間: 2099年10月9日～2099年10月9日'
+                ja += '\n- **開催期間:** 2099年10月9日～2099年10月9日'
+            ja += '\n- **参加条件:** 合成保護者同伴条件\n- **申請方法:** 合成申請方法\n- **費用:** 10,000ウォン'
+            if category == 'program': ja += '\n- **申請期間:** 2099年10月1日～2099年10月15日'
             client = streamed([summary_response('[한 줄 요약]\n합성\n[주요 내용]\n합성 활동'),
                 response(json.dumps({'title_ja':'合成','content_ja':ja}))])
             adapter, _, _ = self.adapter(client)

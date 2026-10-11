@@ -9,6 +9,7 @@ from uuid import UUID
 
 from ingest.ai_errors import AiJobError
 from ingest.body_sections import normalize_schedule_heading
+from ingest.body_markdown import format_reviewed_block, comparison_text
 from ingest.ai_worker import (KO_SUMMARY_HEADER, KO_SECTION_HEADERS, JA_SUMMARY_HEADER,
                              JA_SECTION_HEADERS, extract_summary_section)
 from ingest.myseoul_db import SCHEMA, evaluate_myseoul_facts
@@ -17,7 +18,7 @@ from ingest.myseoul_ai_support import section_body, schedule_values, process_pro
 from ingest.region_ja_glossary import validate_japanese_output
 from ingest.myseoul_content import (schedule_lines, announcement_lines, without_replaced_announcements,
     validate_summary_period, participation_constraints, validate_participant_quantities, deduplicate_summary_fees,
-    validate_assembled_fees)
+    validate_assembled_fees, retained_schedule_tables, deduplicate_summary_venue)
 
 SOURCE = "myseoul_program"
 PROFILE = "myseoul-program-v1-local"
@@ -179,15 +180,21 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
     main = section_body(content, "[주요 내용]", KO_SECTION_HEADERS)
     parts = fact_sections(f)
     validate_summary_period(content, parts["[일정 안내]"], f)
+    tables = retained_schedule_tables(content)
+    if tables:
+        parts["[일정 안내]"] += '\n\n' + tables
     main = without_replaced_announcements(main, f)
     main = deduplicate_summary_fees(main, parts["activity"])
-    conditions = [v for v in participation_constraints(f) if v not in main and v not in f["target"]]
+    main = deduplicate_summary_venue(main, f["venue"])
+    conditions = [v for v in participation_constraints(f) if v not in comparison_text(main) and v not in f["target"]]
     if conditions:
         main += "\n참가 조건: " + " / ".join(conditions)
     # Reviewed limits are added deterministically below. Validate the assembled
     # activity, rather than requiring the model to repeat each value in prose.
     validate_participant_quantities(f, main + "\n" + parts["activity"])
-    content = "\n".join([KO_SUMMARY_HEADER, summary, "[대상]", parts["[대상]"], "[일정 안내]",
+    parts = {key: format_reviewed_block(value) for key, value in parts.items()}
+    main = format_reviewed_block(main)
+    content = "\n\n".join([KO_SUMMARY_HEADER, summary, "[대상]", parts["[대상]"], "[일정 안내]",
         parts["[일정 안내]"], "[주요 내용]", main, parts["activity"], "[신청 방법]", parts["[신청 방법]"]])
     numbers = lambda s: {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", s)}
     constraints = "\n".join([f["target"], *participation_constraints(f)])

@@ -48,10 +48,10 @@ def native_client(c):
     client = FakeClient()
     ko = '[한 줄 요약]\n합성 교육입니다.\n[주요 내용]\n선착순 25명 교육입니다.'
     ranges = japanese_dates(fact_sections(c['facts'])['[일정 안내]'].split('\n진행 일정:')[0])
-    ranges = ranges.replace('신청기간', '申請期間').replace('진행기간', '実施期間')
+    ranges = ranges.replace('신청기간:', '- **申請期間:**').replace('진행기간:', '- **実施期間:**')
     ja = ('[要約]\n合成教育です。\n[対象]\n保護者同伴\n[期間・状況]\n' + ranges +
-          '\n実施日程: 10月3日(土)、10月10日(土)、10月17日(土)、全3回\n[主な内容]\n'
-          '先着25名。\n受講料: 無料; 入場料: 3,000ウォン\n募集人数: 先着25名\n[申請方法]\n窓口申込')
+          '\n- **実施日程:** 10月3日(土)、10月10日(土)、10月17日(土)、全3回\n[主な内容]\n'
+          '先着25名。\n- **費用:** 受講料: 無料; 入場料: 3,000ウォン\n- **募集人数:** 先着25名\n[申請方法]\n窓口申込')
     client.responses.results = [summary_response(ko), response(json.dumps({'title_ja': '合成教育', 'content_ja': ja}))]
     return client
 
@@ -136,9 +136,13 @@ class GPTPipelineTests(unittest.TestCase):
             c['nativeConfirmedFacts']['programFacts'] = {'description': '합성 이미지 보완 설명',
                 'capacity_raw': ['선착순 25명'], 'session_evidence': ['10월 3일, 10월 10일, 총 2회'],
                 'conditions': ['보호자 동반']}
-            ja = '[要約]\n合成\n[主な内容]\n先着25名。保護者同伴。10月3日、10月10日、全2回'
-            if category == 'program': ja += '\n申請締切: 2099年10月15日\n申請期間: 2099年10月1日～2099年10月15日'
-            if category == 'event': ja += '\n開催期間: 2099年10月9日～2099年10月9日'
+            ja = ('[要約]\n合成\n[主な内容]\n合成活動\n確認した分類・参加案内\n'
+                  '- **分類:** 合成\n- **実施方式:** オンライン\n- **参加対象の根拠:** 合成の全国対象')
+            if category == 'program': ja += '\n- **申請締切:** 2099年10月15日'
+            if category == 'policy': ja += '\n- **申請締切:** 締切なし'
+            if category == 'event': ja += '\n- **開催期間:** 2099年10月9日～2099年10月9日'
+            ja += '\n- **参加条件:** 保護者同伴\n- **募集人数:** 先着25名\n- **実施日程:** 10月3日、10月10日、全2回'
+            if category == 'program': ja += '\n- **申請期間:** 2099年10月1日～2099年10月15日'
             client = FakeClient(); client.responses.results = [summary_response('[한 줄 요약]\n합성\n[주요 내용]\n합성 활동'),
                 response(json.dumps({'title_ja': '合成', 'content_ja': ja}))]
             calls = []

@@ -3,6 +3,7 @@ import {ReviewStatus,reviewAttention} from './ReviewStates';
 
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
+import BodyEditor from './BodyEditor';
 import type { Facts, CandidateContent } from "@/app/lib/review/contracts";
 import { categories } from "@/app/lib/review/presentation";
 const FactContext = createContext<{editable: (keyof Facts)[];prefix:string;missing?:string[];saved?:Facts;current?:Facts;confirmed?:boolean} | null>(null);
@@ -82,12 +83,14 @@ export function FactsEditor({ value, onChange, errors, disabled, editableFields,
   </div></FactContext.Provider>;
 }
 
-export function CandidateEditor({ value, onChange, errors, disabled }: { value: CandidateContent; onChange: (value: CandidateContent) => void; errors: Record<string, string>; disabled: boolean }) {
+export function CandidateEditor({ value, onChange, errors, disabled, formattedBody=false }: { value: CandidateContent; onChange: (value: CandidateContent) => void; errors: Record<string, string>; disabled: boolean; formattedBody?:boolean }) {
   return <div className="grid gap-10 xl:grid-cols-2">
     {([{ name: "한국어", lang: "ko", suffix: "Ko" }, { name: "일본어", lang: "ja", suffix: "Ja" }] as const).map(({ name, lang, suffix }) => <fieldset key={lang} lang={lang} className="min-w-0 space-y-6">
       <legend className="mb-4 border-b border-info-rule pb-3 text-xl font-bold" lang="ko">{name} 내용</legend>
       {([{ prefix: "title", label: "제목", max: 300, rows: 2 }, { prefix: "summary", label: "요약", max: 1000, rows: 4 }, { prefix: "content", label: "상세", max: 200000, rows: 14 }] as const).map(({ prefix, label, max, rows }) => {
         const key = `${prefix}${suffix}` as keyof CandidateContent;
+        if(prefix==='content'&&formattedBody)return <BodyEditor key={key} id={key} label={`${name} 상세`} locale={lang}
+          value={value[key]} onChange={next=>onChange({...value,[key]:next})} disabled={disabled} error={errors[key]}/>;
         return <Field key={key} name={key} label={`${name} ${label}`} error={errors[key]}>
           <textarea id={key} aria-invalid={Boolean(errors[key])} aria-describedby={errors[key] ? `${key}-error` : undefined} className={`${fieldClass} resize-y leading-7`} disabled={disabled} maxLength={max} rows={rows} value={value[key]} onChange={(e) => onChange({ ...value, [key]: e.target.value })} />
         </Field>;
