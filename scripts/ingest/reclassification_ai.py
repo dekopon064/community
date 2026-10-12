@@ -45,7 +45,7 @@ def validate_context(value: Any, target: str, revision: str, version: int, worke
             if c['filters']['category']!=f['category']:raise ValueError()
             # Mirrors classification_filter_missing, where a district is
             # optional but an unknown required field is not AI-ready.
-            if any(c['filters'][key]['status']=='unknown' for key in KEYS):raise ValueError()
+            if any(c['filters'][key]['status']=='unknown' for key in KEYS if key!='foreignerProgram'):raise ValueError()
             if uses_venue and c['filters']['location']['status']!='known':raise ValueError()
             if not program_application_complete(c['filters']):raise ValueError()
             if f['category']=='program' and (f['deadlineKind']!='fixed' or

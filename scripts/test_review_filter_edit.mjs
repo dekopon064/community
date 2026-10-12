@@ -33,7 +33,7 @@ const ok = a => { assert.ok(a); checks++; };
 const {SavedFilterValues,confirmedFilterFields,changedFilterFields,FilterInputs,filterValueLabel,filterEndpointLabel}=load('app/components/admin/FilterReviewPanel.tsx');
 const {ReviewStatus}=load('app/components/admin/ReviewStates.tsx');
 const known=value=>({status:'known',value}),na={status:'not_applicable',value:null};
-const saved={schema:'content-filters-v1',category:'program',topic:known('culture_experience'),location:known({scope:'specific',venues:[{province:'11',district:'강서구',facility:'',address:''}]}),delivery:known('onsite'),audience:known('other'),spaceKind:na,application:known({deadlineKind:'none',start:null,end:null,sourceStatus:'unknown'}),schedule:na};
+const saved={schema:'content-filters-v1',category:'program',topic:known('culture_experience'),location:known({scope:'specific',venues:[{province:'11',district:'강서구',facility:'',address:''}]}),delivery:known('onsite'),audience:known('other'),foreignerProgram:{status:'unknown',value:null},spaceKind:na,application:known({deadlineKind:'none',start:null,end:null,sourceStatus:'unknown'}),schedule:na};
 const info={schema:saved.schema,revision:'a'.repeat(64),filterVersion:1,data:saved,missing:[],origins:{topic:'operator',location:'confirmed_facts',delivery:'automatic',audience:'source_change'}};
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : tree.type?.name==='ReviewValueRow'?nodes(tree.type(tree.props)):[tree,...React.Children.toArray(tree.props?.children).flatMap(nodes)];
 const text = tree => typeof tree === 'string' || typeof tree === 'number' ? String(tree) : tree?.type?.name==='ReviewValueRow'?text(tree.type(tree.props)):React.Children.toArray(tree?.props?.children).map(text).join('');

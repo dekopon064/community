@@ -11,15 +11,16 @@ export function publicCurationItem(item: LocalizedCuration): PublicCurationItem 
 export type Province = keyof typeof provinceLabels;
 export const deliveries = ['online', 'onsite', 'mixed'] as const;
 export const audiences = ['children', 'other'] as const;
+export const foreignerPrograms = ['foreigner', 'other'] as const;
 export const applicationStates = ['not_started', 'open', 'closed'] as const;
 export const spaceKinds = ['introduction', 'news'] as const;
 export type ApplicationState = typeof applicationStates[number] | 'unknown';
 export type ExplorationQuery = {
   topics: string[]; provinces: Province[]; districts: string[];
-  deliveries: string[]; audiences: string[]; states: string[]; spaceKinds: string[];
+  deliveries: string[]; audiences: string[]; foreignerPrograms: string[]; states: string[]; spaceKinds: string[];
   date: string; sort: 'default'|'latest';
 };
-export const explorationKeys = ['topic','region','district','delivery','audience','status','space','date','sort'] as const;
+export const explorationKeys = ['topic','region','district','delivery','audience','foreigner','status','space','date','sort'] as const;
 export function supportsExploration(category?: string): category is FilterCategory {
   return category === 'program' || category === 'event' || category === 'youth_space';
 }
@@ -39,6 +40,7 @@ export function readExplorationQuery(params: URLSearchParams, category?: string)
     provinces, districts: choices(params,'district',validDistricts),
     deliveries: category === 'program' ? choices(params,'delivery',deliveries) : [],
     audiences: category === 'program' ? choices(params,'audience',audiences) : [],
+    foreignerPrograms: category === 'program' ? choices(params,'foreigner',foreignerPrograms) : [],
     states: category === 'program' ? choices(params,'status',applicationStates) : [],
     spaceKinds: category === 'youth_space' ? choices(params,'space',spaceKinds) : [],
     date: category === 'event' ? day(params.get('date')) ?? '' : '',
@@ -49,10 +51,10 @@ export function writeExplorationQuery(current: URLSearchParams, query: Explorati
   const next = new URLSearchParams(current);
   explorationKeys.forEach(k => next.delete(k));
   next.delete('page');
-  const values: Record<string,string[]> = { topic:query.topics,region:query.provinces,district:query.districts,delivery:query.deliveries,audience:query.audiences,status:query.states,space:query.spaceKinds,date:query.date?[query.date]:[],sort:query.sort==='latest'?['latest']:[] };
+  const values: Record<string,string[]> = { topic:query.topics,region:query.provinces,district:query.districts,delivery:query.deliveries,audience:query.audiences,foreigner:query.foreignerPrograms,status:query.states,space:query.spaceKinds,date:query.date?[query.date]:[],sort:query.sort==='latest'?['latest']:[] };
   for (const [key,items] of Object.entries(values)) items.forEach(v => next.append(key,v));
   const valid = readExplorationQuery(next,category);
-  for (const [key,items] of Object.entries({ topic:valid.topics,region:valid.provinces,district:valid.districts,delivery:valid.deliveries,audience:valid.audiences,status:valid.states,space:valid.spaceKinds,date:valid.date?[valid.date]:[],sort:valid.sort==='latest'?['latest']:[] })) {
+  for (const [key,items] of Object.entries({ topic:valid.topics,region:valid.provinces,district:valid.districts,delivery:valid.deliveries,audience:valid.audiences,foreigner:valid.foreignerPrograms,status:valid.states,space:valid.spaceKinds,date:valid.date?[valid.date]:[],sort:valid.sort==='latest'?['latest']:[] })) {
     next.delete(key); items.forEach(v => next.append(key,v));
   }
   return next;
@@ -153,6 +155,7 @@ export function matchesExploration(item: PublicCurationItem, q: ExplorationQuery
   if (q.topics.length && (!data || data.topic.status!=='known' || !q.topics.includes(data.topic.value))) return false;
   if (q.deliveries.length && (!data || data.delivery.status!=='known' || !q.deliveries.includes(data.delivery.value))) return false;
   if (q.audiences.length && (!data || data.audience.status!=='known' || !q.audiences.includes(data.audience.value))) return false;
+  if (q.foreignerPrograms.length && (!data || data.foreignerProgram.status!=='known' || !q.foreignerPrograms.includes(data.foreignerProgram.value))) return false;
   if (q.spaceKinds.length && (!data || data.spaceKind.status!=='known' || !q.spaceKinds.includes(data.spaceKind.value))) return false;
   if (q.states.length && !q.states.includes(programTiming(item,now).state)) return false;
   if (!matchesRegion(item,data,q)) return false;

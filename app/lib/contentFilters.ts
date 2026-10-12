@@ -26,12 +26,13 @@ export type ContentFilters = {
   topic: FilterField<string>; location: FilterField<FilterLocation>;
   delivery: FilterField<"online" | "onsite" | "mixed">;
   audience: FilterField<"children" | "other">;
+  foreignerProgram: FilterField<"foreigner" | "other">;
   spaceKind: FilterField<"introduction" | "news">;
   application: FilterField<FilterApplication>; schedule: FilterField<FilterSchedule>;
 };
 export type FilterKey = Exclude<keyof ContentFilters, "schema" | "category">;
-export const filterKeys: FilterKey[] = ["topic", "location", "delivery", "audience", "spaceKind", "application", "schedule"];
-export const filterLabels: Record<FilterKey, string> = { topic: "대표 분야", location: "실제 개최·이용 지역", delivery: "진행 방식", audience: "어린이 프로그램 구분", spaceKind: "공간 소개·관련 소식", application: "신청 기간·마감", schedule: "실제 개최 일정" };
+export const filterKeys: FilterKey[] = ["topic", "location", "delivery", "audience", "foreignerProgram", "spaceKind", "application", "schedule"];
+export const filterLabels: Record<FilterKey, string> = { topic: "대표 분야", location: "실제 개최·이용 지역", delivery: "진행 방식", audience: "어린이 프로그램 구분", foreignerProgram: "외국인 프로그램 구분", spaceKind: "공간 소개·관련 소식", application: "신청 기간·마감", schedule: "실제 개최 일정" };
 
 function object(v: unknown): Record<string, unknown> {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw Error("invalid_content_filters");
@@ -90,7 +91,10 @@ export function expandFilterRecurrence(v: unknown): { recurrence: FilterRecurren
   return {recurrence:{from,through,weekdays,startTime,endTime,precision,exceptions},occurrences};
 }
 export function parseContentFilters(v: unknown): ContentFilters {
-  const o=object(v); exact(o,["schema","category",...filterKeys]);
+  const raw=object(v);
+  // Normalize only at the read boundary; never backfill an operator decision.
+  const o=Object.hasOwn(raw,'foreignerProgram')?raw:{...raw,foreignerProgram:{status:raw.category==='program'?'unknown':'not_applicable',value:null}};
+  exact(o,["schema","category",...filterKeys]);
   if (o.schema !== contentFilterSchema) throw Error("invalid_content_filters");
   const category=choice(o.category,["program","event","youth_space"] as const);
   const result: Record<string,unknown>={schema:contentFilterSchema,category};
@@ -102,6 +106,7 @@ export function parseContentFilters(v: unknown): ContentFilters {
     if (key === "topic") value=choice(f.value,Object.keys(category === "program" ? programTopics : eventTopics));
     else if (key === "delivery") value=choice(f.value,["online","onsite","mixed"] as const);
     else if (key === "audience") value=choice(f.value,["children","other"] as const);
+    else if (key === "foreignerProgram") value=choice(f.value,["foreigner","other"] as const);
     else if (key === "spaceKind") value=choice(f.value,["introduction","news"] as const);
     else if (key === "location") {
       const x=object(f.value);exact(x,["scope","venues"]);const scope=choice(x.scope,["specific","nationwide"] as const);
@@ -126,8 +131,8 @@ export function parseContentFilters(v: unknown): ContentFilters {
     result[key]={status,value};
   }
   const d=result as unknown as ContentFilters;
-  const required:FilterKey[]=category === "program" ? ["topic","delivery","audience","application"] : category === "event" ? ["topic","schedule"] : ["spaceKind"];
-  const irrelevant:FilterKey[]=category === "program" ? ["spaceKind","schedule"] : category === "event" ? ["delivery","audience","spaceKind","application"] : ["topic","delivery","audience","application","schedule"];
+  const required:FilterKey[]=category === "program" ? ["topic","delivery","audience","foreignerProgram","application"] : category === "event" ? ["topic","schedule"] : ["spaceKind"];
+  const irrelevant:FilterKey[]=category === "program" ? ["spaceKind","schedule"] : category === "event" ? ["delivery","audience","foreignerProgram","spaceKind","application"] : ["topic","delivery","audience","foreignerProgram","application","schedule"];
   if(required.some(k=>d[k].status === "not_applicable") || irrelevant.some(k=>d[k].status !== "not_applicable")) throw Error("invalid_content_filters");
   const locationRequired=category === "event" || (category === "program" && !(d.delivery.status === "known" && d.delivery.value === "online")) || (category === "youth_space" && d.spaceKind.status === "known" && d.spaceKind.value === "introduction");
   if(locationRequired && d.location.status === "not_applicable") throw Error("invalid_content_filters");
@@ -137,7 +142,7 @@ export function parseContentFilters(v: unknown): ContentFilters {
 }
 export function emptyContentFilters(category: FilterCategory): ContentFilters {
   const unknown={status:"unknown",value:null} as const,na={status:"not_applicable",value:null} as const;
-  return {schema:contentFilterSchema,category,topic:category === "youth_space"?na:unknown,location:unknown,delivery:category === "program"?unknown:na,audience:category === "program"?unknown:na,spaceKind:category === "youth_space"?unknown:na,application:category === "program"?unknown:na,schedule:category === "event"?unknown:na};
+  return {schema:contentFilterSchema,category,topic:category === "youth_space"?na:unknown,location:unknown,delivery:category === "program"?unknown:na,audience:category === "program"?unknown:na,foreignerProgram:category === "program"?unknown:na,spaceKind:category === "youth_space"?unknown:na,application:category === "program"?unknown:na,schedule:category === "event"?unknown:na};
 }
 // Stored legacy snapshots remain readable; completion and writes use this guard.
 export function programApplicationComplete(d:ContentFilters):boolean {
@@ -146,7 +151,7 @@ export function programApplicationComplete(d:ContentFilters):boolean {
     && d.application.value.start !== null && d.application.value.end !== null);
 }
 export function missingContentFilters(d:ContentFilters):FilterKey[] {
-  const keys=filterKeys.filter(k=>d[k].status === "unknown");
+  const keys=filterKeys.filter(k=>k!=='foreignerProgram'&&d[k].status === "unknown");
   if(d.location.status === "known" && d.location.value.venues.some(v=>!v.district)) keys.push("location");
   if(!programApplicationComplete(d)) keys.push("application");
   return [...new Set(keys)];

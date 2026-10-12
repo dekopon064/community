@@ -17,7 +17,7 @@ export function classificationUsesVenue(f: Facts, filters: ContentFilters | null
     && !(f.category === 'youth_space' && filters?.spaceKind.status === 'known' && filters.spaceKind.value === 'news');
 }
 export const classificationFields = (category: Category): FilterKey[] => category === 'program'
-  ? ['topic', 'delivery', 'audience', 'location', 'application'] : category === 'event'
+  ? ['topic', 'delivery', 'audience', 'foreignerProgram', 'location', 'application'] : category === 'event'
     ? ['topic', 'location', 'schedule'] : category === 'youth_space' ? ['spaceKind', 'location'] : [];
 export type ClassificationDetail = {
   id: string; revision: string; version: string; classificationVersion: number; active: boolean;
@@ -131,6 +131,7 @@ export function classificationMissing(f: Facts, filters: ContentFilters | null):
     if (!filters || filters.category !== f.category) missing.push('filters');
     // Province-only locations and optional times need no fabricated detail.
     else missing.push(...classificationFields(f.category).filter(k=>{
+      if(k==='foreignerProgram')return false;
       if(filters[k].status==='unknown')return true;
       if(k==='application'&&!programApplicationComplete(filters))return true;
       const candidate={...emptyContentFilters(filters.category),[k]:filters[k]};
