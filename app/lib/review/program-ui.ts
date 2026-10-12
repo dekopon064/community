@@ -46,9 +46,12 @@ export function programValueMissing(value:unknown):boolean {
  return value===null||value===undefined||value===""||value==="unknown"||Array.isArray(value)&&!value.some(v=>String(v).trim());
 }
 export function programInputFields(item:{facts:ProgramFacts;editableFields:string[];result:{reasons:string[]}}):string[] {
- return item.editableFields.filter(key=>programValueMissing(item.facts[key as ProgramField])||
-  item.result.reasons.some(reason=>(reasonPatchFields[reason]??[]).includes(key)&&
-    (/conflict|period|weekday|invalid_body_date/.test(reason)||key==="description")));
+ const held=item.result.reasons.includes('ai_recheck_requested');
+ // Held editing permission is broader than the list of facts that need input.
+ // Empty optional evidence/free-fee fields are edited from saved rows, not demanded.
+ return item.editableFields.filter(key=>(!held||item.result.reasons.some(reason=>(reasonPatchFields[reason]??[]).includes(key)))&&
+  (programValueMissing(item.facts[key as ProgramField])||item.result.reasons.some(reason=>(reasonPatchFields[reason]??[]).includes(key)&&
+    (/conflict|period|weekday|invalid_body_date/.test(reason)||key==="description"))));
 }
 export function preserveProgramDraft(saved:ProgramFacts,draft:ProgramFacts,next:ProgramFacts,editable:string[]):ProgramFacts {
  return {...structuredClone(next),...structuredClone(programPatch(saved,draft,editable))};

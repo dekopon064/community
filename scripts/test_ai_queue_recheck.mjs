@@ -16,7 +16,7 @@ let checks=0;const eq=(a,b)=>{assert.deepEqual(a,b);checks++;};const ok=x=>{asse
 const fixtures=name=>JSON.parse(execFileSync(process.env.MACHIMOA_TEST_PYTHON,['-X','utf8',name,'--fixtures'],{cwd:fileURLToPath(new URL('./',import.meta.url)),encoding:'utf8'}));
 const id='10000000-0000-4000-8000-000000000001',sid='20000000-0000-4000-8000-000000000001',actor='30000000-0000-4000-8000-000000000001',requestId='40000000-0000-4000-8000-000000000001';
 const p=fixtures('test_program_db.py').fixtures[0].item.program_facts;
-let raw={jobId:id,sourceItemId:sid,sourceName:'seoul_reservation',revision:'a'.repeat(64),version:'b'.repeat(64),status:'queued',canRecheck:true,recheckPending:false,note:'',review:{id:sid,revision:'a'.repeat(64),version:'b'.repeat(64),schema:'program-scope-v1-local',profile:'program_capital_v1_local',factsVersion:1,source:{name:'seoul_reservation',title:'합성',url:p.official_url,body:'합성 원문\n보호자 동반 필요'},facts:p,observedFacts:p,result:{decision:'in_scope',disposition:'target',reasons:[]},status:'resolved',aiStatus:'queued',editableFields:[],history:[],secret:'DO_NOT_ECHO'}};
+let raw={jobId:id,sourceItemId:sid,sourceName:'seoul_reservation',revision:'a'.repeat(64),version:'b'.repeat(64),status:'queued',canRecheck:true,canExclude:true,recheckPending:false,note:'',review:{id:sid,revision:'a'.repeat(64),version:'b'.repeat(64),schema:'program-scope-v1-local',profile:'program_capital_v1_local',factsVersion:1,source:{name:'seoul_reservation',title:'합성',url:p.official_url,body:'합성 원문\n보호자 동반 필요'},facts:p,observedFacts:p,result:{decision:'in_scope',disposition:'target',reasons:[]},status:'resolved',aiStatus:'queued',editableFields:[],history:[],secret:'DO_NOT_ECHO'}};
 let view=aiReview(raw,id);ok(view.values.some(r=>r.label==='신청 시작'));eq(view.source.body,'합성 원문\n보호자 동반 필요');ok(!JSON.stringify(view).includes('DO_NOT_ECHO'));
 eq(aiReviewView(view,id),view);
 for(const bad of [null,[],{...view,sourceName:'fake'},{...view,status:'claimed',canRecheck:true},{...view,recheckPending:true},{...view,values:Array(61).fill({label:'x',value:'x'})}]){assert.throws(()=>aiReviewView(bad,id));checks++;}
@@ -89,4 +89,20 @@ assert.throws(()=>aiSnapshot({...snap,held:[snap.items[0]]}));checks++;
 assert.throws(()=>aiSnapshot({...snap,held:Array(26).fill(snap.held[0])}));checks++;
 const h=await fixture.get(id);await fixture.execute(id,{...complete,version:h.version},actor);eq((await fixture.read()).held.length,0);eq((await fixture.get(id)).status,'cancelled');
 await assert.rejects(()=>fixture.execute('10000000-0000-4000-8000-000000000003',c,actor),e=>e instanceof ReviewFailure&&e.code==='conflict');checks++;
+// Optional notes still bind the authenticated actor, version and request receipt.
+eq(aiRecheckCommand({...c,note:'   '}).note,'');
+const exclusion={action:'exclude',revision:raw.revision,version:raw.version,requestId:'50000000-0000-4000-8000-000000000001',reasonCode:'service_not_suitable'};
+eq(aiRecheckCommand(exclusion),exclusion);
+for(const bad of [{...exclusion,note:''},{...exclusion,reasonCode:'custom'},{...exclusion,actor},{...exclusion,revision:'bad'},{...exclusion,requestId:'bad'}]){assert.throws(()=>aiRecheckCommand(bad),e=>e.code==='invalid_input');checks++;}
+let excludedCalls=[];const excludedRaw={...raw,status:'cancelled',canRecheck:false,canExclude:false,recheckPending:false,note:''};
+const excludeStore=new DatabaseAiReviewStore({async rpc(name,args){excludedCalls.push({name,args});return {data:excludedRaw,error:null};}});
+r=await aiReviewRequest(post(exclusion),id,{...deps,store:()=>excludeStore});eq(r.status,200);
+eq(excludedCalls.length,1);eq(excludedCalls[0].name,'admin_ai_queue_exclude');eq(excludedCalls[0].args.p_reason,'service_not_suitable');eq(excludedCalls[0].args.p_actor,actor);ok(!Object.hasOwn(excludedCalls[0].args,'p_note'));
+const invalidExclude=new DatabaseAiReviewStore({async rpc(){return {data:{...excludedRaw,recheckPending:true},error:null};}});
+eq((await aiReviewRequest(post(exclusion),id,{...deps,store:()=>invalidExclude})).status,503);
+const timeoutCalls=[];const timeoutExclude=new DatabaseAiReviewStore({async rpc(...a){timeoutCalls.push(a);throw Error('timeout');}});
+eq((await aiReviewRequest(post(exclusion),id,{...deps,store:()=>timeoutExclude})).status,503);eq(timeoutCalls.length,1);
+const noNote=new LocalAiReviewStore(),noNoteItem=await noNote.get(id);
+const noNoteHeld=await noNote.execute(id,{...c,version:noNoteItem.version,note:''},actor);eq(noNoteHeld.recheckPending,true);eq(noNoteHeld.note,'');eq(noNoteHeld.values,noNoteItem.values);
+const excluded=await noNote.execute(id,{...exclusion,version:noNoteHeld.version},actor);eq(excluded.status,'cancelled');eq(excluded.recheckPending,false);eq(excluded.canExclude,false);eq(excluded.values,noNoteItem.values);
 console.log(`AI queue detail/recheck: ${checks} checks passed. Fake Auth/RPC; DB/network/provider calls 0. SQL execution not tested.`);

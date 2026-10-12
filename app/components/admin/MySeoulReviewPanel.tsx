@@ -1,5 +1,5 @@
 "use client";
-import {reviewOverview,ReviewStatus} from './ReviewStates';
+import {reviewOverview,ReviewStatus,ReviewValueRow} from './ReviewStates';
 
 import { FilterInputs, filterSaveBody, saveFilterRequest, filterValueLabel, reviewFilterLabel, filterCategoryLabels, SavedFilterValues, confirmedFilterFields, changedFilterFields } from './FilterReviewPanel';
 import { filterLabels, parseContentFilters } from '@/app/lib/contentFilters';
@@ -10,7 +10,7 @@ import Link from 'next/link';
 import { myseoulItem } from '@/app/lib/review/myseoul-store';
 import { myseoulReasonFields, myseoulGuidance, myseoulCommand } from '@/app/lib/review/myseoul-contract';
 import type { MySeoulCommand, MySeoulFacts, MySeoulIssue, MySeoulPeriod } from '@/app/lib/review/myseoul-contract';
-import { buildMySeoulSave, mergeMySeoulDraft, myseoulArrayFields, myseoulChoices, myseoulFeeLabels, myseoulLabels, myseoulPatch, reviewPeriodAxes, visibleMySeoulFields } from '@/app/lib/review/myseoul-ui';
+import { buildMySeoulSave, mergeMySeoulDraft, myseoulArrayFields, myseoulChoices, myseoulFeeLabels, myseoulLabels, myseoulPatch, displayMySeoulValue, reviewPeriodAxes, visibleMySeoulFields } from '@/app/lib/review/myseoul-ui';
 import type { MySeoulFee, MySeoulPeriods } from '@/app/lib/review/myseoul-ui';
 import { failureText, sourceLink, statusText } from '@/app/lib/review/presentation';
 import { myseoulErrorMessage } from '@/app/lib/review/myseoul-errors';
@@ -90,6 +90,22 @@ function FactEditor({ value, editable, axes, sharedFields = [], onChange }: { va
   </div>)}</div>;
 }
 
+
+// Review drafts only; source/observedFacts and derived diagnostic fields stay read-only.
+export function SavedMySeoulFacts({item,draft,onChange,disabled,onEditing}:{item:Item;draft:MySeoulFacts;onChange:(v:MySeoulFacts)=>void;disabled:boolean;onEditing:(v:boolean)=>void}) {
+ const [editing,setEditing]=useState<string|null>(null),[working,setWorking]=useState<MySeoulFacts|null>(null),[opened,setOpened]=useState(item.version);
+ const region=useRef<HTMLDetailsElement>(null),restoreKey=useRef<string|null>(null);
+ useEffect(()=>{onEditing(editing!==null);return()=>onEditing(false);},[editing,onEditing]);
+ useEffect(()=>{if(editing)region.current?.querySelector<HTMLElement>('input,select,textarea')?.focus();else if(restoreKey.current){region.current?.querySelector<HTMLButtonElement>(`[data-edit-fact="${restoreKey.current}"]`)?.focus();restoreKey.current=null;}},[editing]);
+ function close(key:string){restoreKey.current=key;setEditing(null);setWorking(null);}
+ return <details ref={region} className="my-6 border-b border-info-rule pb-5" onToggle={e=>{if(editing&&!e.currentTarget.open)e.currentTarget.open=true;}}><summary className="cursor-pointer py-3 font-semibold">저장된 사실값 확인·수정</summary><p className="my-3 text-sm leading-6 text-info-muted">재검토용 사실값을 수정합니다. 원문·수집 관측값은 보존하며, 초안 적용 후 아래 ‘변경한 사실 저장’으로 저장합니다. 분류·공개 필터는 해당 영역에서 수정해 주세요.</p><dl>{visibleMySeoulFields(item.editableFields,draft).filter(k=>!['public_category','delivery_mode','activity_region'].includes(k)).map(key=>{
+ const changed=JSON.stringify(item.facts[key])!==JSON.stringify(draft[key]);
+ return <ReviewValueRow key={key} label={myseoulLabels[key]} value={displayMySeoulValue(key,item.facts[key])} changedValue={changed?displayMySeoulValue(key,draft[key]):undefined} status={changed?<ReviewStatus needed={false} confirmed={false} changed/>:null} action={<button type="button" data-edit-fact={key} className={secondaryButton} aria-label={`${myseoulLabels[key]} ${editing===key?"수정 취소":"수정"}`} aria-expanded={editing===key} disabled={disabled||editing!==null&&editing!==key} onClick={()=>{if(disabled||editing!==null&&editing!==key)return;if(editing===key){close(key);return;}setEditing(key);setWorking(structuredClone(draft));setOpened(item.version);}}>{editing===key?"수정 취소":"수정"}</button>}>
+ {editing===key&&working&&<div role="group" aria-label={`${myseoulLabels[key]} 편집`} className="mt-4 space-y-4" onKeyDown={e=>{if(e.key==='Escape'&&!disabled){e.preventDefault();e.stopPropagation();close(key);}}}><fieldset disabled={disabled||opened!==item.version}><legend className="sr-only">사실값 편집</legend><FactEditor value={working} editable={[key]} axes={['application','operation']} sharedFields={[]} onChange={setWorking}/></fieldset>{opened!==item.version&&<p role="alert" className="text-info-status">버전이 변경됐습니다. 입력은 보존했습니다. 취소 후 최신 값으로 다시 수정해 주세요.</p>}<div className="flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={disabled||opened!==item.version} onClick={()=>{onChange({...draft,[key]:structuredClone(working[key])});close(key);}}>초안에 적용</button><button type="button" className={secondaryButton} disabled={disabled} onClick={()=>close(key)}>취소</button></div><p className="text-sm text-info-muted">아직 서버에 저장하지 않습니다. 취소는 이 행의 편집만 취소합니다.</p></div>}
+ </ReviewValueRow>;
+ })}</dl></details>;
+}
+
 function reviewGroups(item: Item) {
   const groups = new Map<string, { key: string; fields: string[]; reasons: Item['reasonGuidance'] }>();
   for (const reason of item.reasonGuidance.filter(r=>r.code!=='category_unresolved' && !(r.code==='activity_region_unknown'&&item.filterInfo))) {
@@ -121,6 +137,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
   const [residenceDirty,setResidenceDirty]=useState(false),[excludeReason,setExcludeReason]=useState<QuickReason|'custom'>('custom');
   const [residenceReset,setResidenceReset]=useState(0);
   const [bodyChecked,setBodyChecked]=useState(false);
+  const [factEditing,setFactEditing]=useState(false);
   const exclusionTrigger=useRef<HTMLButtonElement|null>(null);
   const restoreExclusionFocus=useRef(false);
   useEffect(()=>{if(!confirm&&restoreExclusionFocus.current){restoreExclusionFocus.current=false;exclusionTrigger.current?.focus();}},[confirm]);
@@ -130,7 +147,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
   const sending = useRef(false), heading = useRef<HTMLHeadingElement>(null), message = useRef<HTMLDivElement>(null);
   const dirty = Boolean(item && draft && Object.keys(myseoulPatch(item.facts, draft, visibleMySeoulFields(item.editableFields, draft))).length);
   const filterDirty = Boolean(item?.filterInfo && filterDraft && JSON.stringify(filterDraft) !== JSON.stringify(item.filterInfo.data)) || pendingRepeat;
-  const busy = operationBusy || classificationBlocked;
+  const busy = operationBusy || classificationBlocked || factEditing;
   const unsaved = dirty || filterDirty || residenceDirty || bodyChecked || editingFilter!==null || Boolean(excludeNote);
   const bodyPending=Boolean(item?.result.reasons.includes('attachment_dependent'));
   const processed = item?.status !== 'open';
@@ -267,14 +284,15 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
         {filterError && <div className="mt-3 flex flex-wrap gap-3"><button type="button" className={secondaryButton} disabled={busy} onClick={() => void readLatestPreservingInput()}>입력을 유지하고 저장 상태 확인</button><button type="button" className={secondaryButton} disabled={busy} onClick={() => void reload()}>입력을 버리고 최신 내용 불러오기</button></div>}
         {filterDraft.category !== item.filterInfo.data.category && <p role="alert" className="mt-3 text-info-status">공개 카테고리가 바뀌었습니다. 입력을 보존했습니다. 아래 취소로 최신 분류의 입력을 다시 확인해 주세요.</p>}
         {pendingRepeat && <p role="status" className="mt-3 text-info-status">편집한 반복 조건으로 회차를 만든 뒤 저장해 주세요.</p>}
-        {filterFields.length > 0 && <div className="mt-5 flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={busy || confirm || residenceDirty || pendingRepeat || editingFilter!==null || categoryChanged || filterDraft.category !== item.filterInfo.data.category} onClick={() => void saveSelections()}>{classificationBlocked ? '분류 검토 중…' : busy ? '저장 중…' : dirty ? '사실 저장 후 공개 필터 저장' : '공개 필터 확인·저장'}</button>{filterDirty && <button type="button" className={secondaryButton} disabled={busy||editingFilter!==null} onClick={() => { setFilterDraft(structuredClone(item.filterInfo!.data)); setDraft({ ...draft, ...Object.fromEntries(sharedFields.map(k => [k, item.facts[k]])) }); setPendingRepeat(false); setFilterReset(k => k + 1); setFilterError(''); setFilterNotice(''); }}>공개 필터 입력 취소</button>}</div>}
+        {filterFields.length > 0 && <div className="mt-5 flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={busy || confirm || residenceDirty || pendingRepeat || editingFilter!==null || categoryChanged || filterDraft.category !== item.filterInfo.data.category} onClick={() => void saveSelections()}>{classificationBlocked ? '분류 검토 중…' : operationBusy ? '저장 중…' : dirty ? '사실 저장 후 공개 필터 저장' : '공개 필터 확인·저장'}</button>{filterDirty && <button type="button" className={secondaryButton} disabled={busy||editingFilter!==null} onClick={() => { setFilterDraft(structuredClone(item.filterInfo!.data)); setDraft({ ...draft, ...Object.fromEntries(sharedFields.map(k => [k, item.facts[k]])) }); setPendingRepeat(false); setFilterReset(k => k + 1); setFilterError(''); setFilterNotice(''); }}>공개 필터 입력 취소</button>}</div>}
       </section>}
+      {item.result.reasons.includes('ai_recheck_requested')&&!processed&&!classificationActive&&<SavedMySeoulFacts item={item} draft={draft} onChange={setDraft} disabled={operationBusy||classificationBlocked||confirm||residenceDirty||editingFilter!==null} onEditing={setFactEditing}/>}
       <form onSubmit={e => { e.preventDefault(); try { if(bodyPending&&draft.description!==item.facts.description){setError('invalid_input');setErrorDetail('이미지 원문 확인 항목에서 설명과 확인을 함께 저장해 주세요.');return;} void submit(buildMySeoulSave(item, draft)); } catch (e) { showFailure(e); } }}>
 
         <div className="divide-y divide-info-rule">{reviewGroups(item).filter(group=>!group.reasons.every(r=>r.code.startsWith('content_filter:'))).map(group => {
           const fields = visibleMySeoulFields(group.fields, draft);
           return <section key={group.key}  tabIndex={-1} className="py-6 scroll-mt-36" aria-label={group.reasons.map(r => { const key = r.code.slice('content_filter:'.length) as keyof typeof filterLabels; return r.code.startsWith('content_filter:') && Object.hasOwn(filterLabels, key) ? `공개 필터: ${filterDraft ? reviewFilterLabel(filterDraft,key) : filterLabels[key]}` : r.text; }).join(' ')}>
-            {group.reasons.map(reason => { const filterKey = reason.code.startsWith('content_filter:') ? reason.code.slice('content_filter:'.length) as keyof typeof filterLabels : null; const filterReason = filterKey && Object.hasOwn(filterLabels, filterKey); return <div key={reason.code} id={`myseoul-issue-${reason.code}`} tabIndex={-1} className="mb-4 scroll-mt-36"><p className="font-semibold leading-7">{reason.code === 'restored_review_pending' ? '복원한 사실을 다시 확인해 주세요.' : filterReason ? `공개 필터의 ${filterDraft ? reviewFilterLabel(filterDraft,filterKey!) : filterLabels[filterKey!]} 항목을 확인해 주세요.` : reason.text}</p>{!reason.supported && reason.code !== 'restored_review_pending' && !filterReason && <p className="text-sm text-info-muted">현재 입력으로 해결할 수 없는 사유입니다.</p>}
+            {group.reasons.map(reason => { const filterKey = reason.code.startsWith('content_filter:') ? reason.code.slice('content_filter:'.length) as keyof typeof filterLabels : null; const filterReason = filterKey && Object.hasOwn(filterLabels, filterKey); return <div key={reason.code} id={`myseoul-issue-${reason.code}`} tabIndex={-1} className="mb-4 scroll-mt-36"><p className="font-semibold leading-7">{reason.code === 'restored_review_pending' ? '복원한 사실을 다시 확인해 주세요.' : filterReason ? `공개 필터의 ${filterDraft ? reviewFilterLabel(filterDraft,filterKey!) : filterLabels[filterKey!]} 항목을 확인해 주세요.` : reason.text}</p>{!reason.supported && reason.code !== 'restored_review_pending' && reason.code !== 'ai_recheck_requested' && !filterReason && <p className="text-sm text-info-muted">현재 입력으로 해결할 수 없는 사유입니다.</p>}
               {!group.fields.includes('periods') && <IssueEvidence item={item} code={reason.code}/>}</div>; })}
             {!processed && group.reasons.some(r=>r.code==='online_residence_unknown') ? <MySeoulResidenceReview key={id+item.revision+residenceReset} item={item} regionExcludeDisabled={Boolean(excludeNote)} disabled={busy||confirm||editingFilter!==null||dirty||filterDirty||bodyChecked} onDirty={setResidenceDirty} onSave={c=>void submit(c)} onRegionExclude={trigger=>{if(excludeNote||dirty||filterDirty||residenceDirty||bodyChecked||busy)return;exclusionTrigger.current=trigger;setExcludeReason('region_not_suitable');setConfirm(true);document.getElementById('myseoul-exclusion')?.scrollIntoView({block:'center'});}}/> : !processed && fields.length > 0 && <>
               <fieldset disabled={busy || confirm || residenceDirty || editingFilter!==null}><legend className="sr-only">확인한 사실 입력</legend><FactEditor value={draft} editable={fields} axes={reviewPeriodAxes(group.reasons.map(r => r.code))} sharedFields={sharedFields} onChange={setDraft}/></fieldset>
@@ -289,7 +307,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
         })}</div>
         {!processed && <>
           {dirty && <p className="mt-4 text-info-status">아직 저장하지 않은 입력이 있습니다.</p>}
-          <div className="my-6 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={busy || confirm || residenceDirty || editingFilter!==null || !dirty}>{classificationBlocked ? '분류 검토 중…' : busy ? '저장 중…' : '변경한 사실 저장'}</button>{dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(''); }}>사실·공개 필터 입력 취소</button>}</div>
+          <div className="my-6 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={busy || confirm || residenceDirty || editingFilter!==null || !dirty}>{classificationBlocked ? '분류 검토 중…' : operationBusy ? '저장 중…' : '변경한 사실 저장'}</button>{dirty && <button type="button" className={secondaryButton} disabled={busy} onClick={() => { accept(item); setError(''); }}>사실·공개 필터 입력 취소</button>}</div>
           <p className="text-sm text-info-muted">저장 후 남은 사유를 다시 판단합니다. 요약·번역은 실행하지 않습니다.</p>
         </>}
       </form>

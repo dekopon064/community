@@ -42,6 +42,7 @@ def lit(v):
 def scalar(q):return json.loads(sql('select to_jsonb('+q+');') or 'null')
 def query(name,a):
  values=list(map(lit,a))
+ if name=='admin_program_save':values[4]='array['+','.join(map(lit,a[4]))+']::text[]'
  if name=='admin_review_ai_queue':values[2]='array['+','.join(map(lit,a[2]))+']::uuid[]'
  return 'begin;set local role service_role;select public.'+name+'('+','.join(values)+');commit;'
 def rpc(name,a):return json.loads(sql(query(name,a)))
@@ -64,6 +65,10 @@ pending_up=(ROOT/'supabase/migrations/20261012023943_ai_queue_recheck_pending_re
 deny("begin;alter function public.admin_ai_queue_review_detail(uuid) set search_path='public';"+pending_up,'ai_recheck_pending_predecessor_changed')
 sql(pending_up)
 deny(pending_up,'ai_recheck_pending_predecessor_changed')
+edit_up=(ROOT/'supabase/migrations/20261012035720_ai_queue_recheck_edit_exclude.sql').read_text(encoding='utf8')
+deny("begin;alter function public.admin_ai_queue_review_detail(uuid) set search_path='public';"+edit_up,'ai_recheck_edit_predecessor_changed')
+sql(edit_up)
+deny(edit_up,'ai_recheck_edit_predecessor_changed')
 print(json.dumps({'database':DB,'stage':'migration-applied','network':'none'}),flush=True)
 deny(up,'ai_recheck_predecessor_changed')
 for t in ['ai_rechecks','ai_recheck_receipts']:
@@ -181,7 +186,7 @@ for origin in ['seoul_reservation','myseoul_program']:
 
 # Invalid commands and the actor/action/request binding fail without a hold.
 job=source();d=detail(job)
-for index,value in [(0,None),(1,None),(1,'bad'),(2,None),(2,'bad'),(3,None),(4,''),(4,' '),(4,'x'*1001),(5,None)]:
+for index,value in [(0,None),(1,None),(1,'bad'),(2,None),(2,'bad'),(3,None),(4,None),(4,'x'*1001),(5,None)]:
  a=command(d);a[index]=value;deny(query('admin_ai_queue_request_recheck',a),'invalid_recheck')
 deny('select machimoa_review.ai_recheck_command('+','.join(map(lit,command(d)))+',NULL);','invalid_recheck')
 ok(not detail(job)['recheckPending'],'invalid commands create no hold')
@@ -229,7 +234,7 @@ for condition in ['missing_filter','permission','excluded']:
  elif condition=='permission':sql("update machimoa_review.ingest_sources set enabled=false where source_id='seoul_reservation';")
  else:
   native=d['review'];rpc('admin_program_exclude',[sid,d['revision'],native['version'],'합성 서비스 범위 제외',ACTOR])
- final=complete(job)
+ final=detail(job) if condition=='excluded' else complete(job)
  ok(not final['recheckPending'] and final['status']=='cancelled',condition+' does not queue AI')
  if condition=='permission':sql("update machimoa_review.ingest_sources set enabled=true where source_id='seoul_reservation';")
  dto_details.append(final)
@@ -320,6 +325,110 @@ for origin in ['youthcenter_policy','youthcenter_content']:
  ok(final['status']=='queued' and not final['recheckPending'],origin+' generic completion uses existing gate evaluation')
  ok(snapshot(final)==before,origin+' generic facts and source unchanged')
  dto_details.append(final)
+
+# Generic review editor uses the same existing fact-save contract during a hold.
+for origin in ['youthcenter_policy','youthcenter_content']:
+ sid=scalar("(select id from machimoa_review.source_items where source_id="+lit(origin)+" order by first_seen_at limit 1)")
+ job=scalar("(select id from machimoa_review.processing_jobs where source_item_id="+lit(sid)+" and processing_stage='ai_enrichment')")
+ held=rpc('admin_ai_queue_request_recheck',command(detail(job),note=''))
+ native=held['review'];observed=scalar("(select jsonb_build_array(normalized_payload,min_fields,revision_hash) from machimoa_review.source_items where id="+lit(sid)+")")
+ changed=rpc('admin_review_save_facts',[sid,held['revision'],native['version'],{**native['facts'],'evidence':'합성 운영자 확인 지역 조건 재검토'},ACTOR])
+ ok(changed['facts']['evidence']=='합성 운영자 확인 지역 조건 재검토',origin+' held existing generic fact can be edited')
+ ok(detail(job)['recheckPending'] and detail(job)['status']=='cancelled',origin+' generic save preserves AI hold')
+ ok(scalar("(select jsonb_build_array(normalized_payload,min_fields,revision_hash) from machimoa_review.source_items where id="+lit(sid)+")")==observed,origin+' generic observed input preserved')
+ ok('ai_recheck_requested' in changed['reasons'],origin+' generic save cannot dismiss explicit hold marker')
+ dto_details.append(detail(job))
+
+# New held edit / optional note / formal queue exclusion contract.
+for origin in ['seoul_reservation','myseoul_program']:
+ job=source(origin);d=detail(job);sid=d['sourceItemId'];rev=d['revision']
+ immutable=lambda:scalar("jsonb_build_array((select jsonb_build_array(normalized_payload,min_fields,revision_hash) from machimoa_review.source_items where id="+lit(sid)+"),(select jsonb_build_array(observed_facts,source_snapshot) from machimoa_review.source_item_program_facts where source_item_id="+lit(sid)+" and revision_hash="+lit(rev)+"))")
+ observed=immutable();h=rpc('admin_ai_queue_request_recheck',command(d,note='   '));ok(h['note']=='' and h['recheckPending'],origin+' optional empty note records a real hold')
+ ok(scalar("(select count(*) from machimoa_review.ai_rechecks where job_id="+lit(job)+" and actor="+lit(ACTOR)+" and note='' and created_at is not null)")==1,origin+' optional note preserves actor/time/revision event')
+ n=h['review'];patch={'conditions':n['facts']['conditions']+['합성 보호자 동반 필수']}
+ if origin=='seoul_reservation':
+  save=lambda ver,p:rpc('admin_program_save',[sid,rev,ver,p,[],'합성 원문과 보호자 조건 확인',ACTOR])
+  q=lambda ver,p:query('admin_program_save',[sid,rev,ver,p,[],'합성 원문과 보호자 조건 확인',ACTOR])
+ else:
+  save=lambda ver,p:rpc('admin_myseoul_program_save_v2',[sid,rev,ver,p,ACTOR])
+  q=lambda ver,p:query('admin_myseoul_program_save_v2',[sid,rev,ver,p,ACTOR])
+ ok('conditions' in n['editableFields'] and 'schema_version' not in n['editableFields'],origin+' held getter exposes only review fact fields')
+ changed=save(n['version'],patch)
+ ok(changed['facts']['conditions']==patch['conditions'] and changed['factsVersion']>n['factsVersion'],origin+' existing nonmissing condition can be edited with audit version')
+ ok(immutable()==observed,origin+' edit preserves raw source/observed snapshot')
+ fresh=detail(job);ok(fresh['recheckPending'] and fresh['status']=='cancelled',origin+' fact edit never releases AI')
+ deny(q(n['version'],patch),'version_conflict' if origin=='seoul_reservation' else 'myseoul_version_conflict')
+ deny(query('admin_ai_queue_complete_recheck',command(h)),'recheck_conflict')
+ deny(q(changed['version'],{'schema_version':'fake'}),'field_read_only')
+ if origin=='myseoul_program':
+  periods=changed['facts']['periods'];periods['operation'][0]['raw']='합성 원문 재확인 일정'
+  dated=save(changed['version'],{'periods':{'operation':periods['operation']}})
+  ok(dated['facts']['periods']['application']==changed['facts']['periods']['application'],origin+' held operation edit preserves separate application axis')
+  ok(dated['facts']['periods']['operation'][0]['raw']=='합성 원문 재확인 일정',origin+' resolved period axis is editable only while held')
+  changed=dated
+ last=detail(job);filters_before=copy.deepcopy(last['review']['filterInfo'])
+ rpc('admin_content_filter_save',[sid,rev,last['review']['version'],filters_before['filterVersion'],{'topic':known('language_learning')},ACTOR])
+ fresh=detail(job);ok(fresh['status']=='cancelled' and fresh['recheckPending'] and fresh['review']['filterInfo']['data']['topic']==known('language_learning'),origin+' existing filter edited without releasing hold')
+ ok(fresh['version']!=last['version'],origin+' filter edit invalidates queue concurrency version')
+ # Excluding requires no missing filter completion and uses the regular trash episode.
+ facts_before=copy.deepcopy(fresh['review']['facts']);observed_before=immutable()
+ a=[job,rev,fresh['version'],str(uuid4()),'service_not_suitable',ACTOR]
+ excluded=rpc('admin_ai_queue_exclude',a)
+ ok(excluded['status']=='cancelled' and not excluded['recheckPending'] and not excluded['canExclude'],origin+' exclusion atomically cancels queue and closes hold')
+ ok(excluded['review']['facts']==facts_before and immutable()==observed_before,origin+' exclusion preserves all facts and source observations')
+ ok(rpc('admin_ai_queue_exclude',a)==excluded,origin+' queue exclusion receipt is idempotent')
+ for i,value in [(4,'region_not_suitable'),(5,str(uuid4())),(2,'f'*64)]:
+  wrong=a.copy();wrong[i]=value;deny(query('admin_ai_queue_exclude',wrong),'request_id_conflict')
+ episodes=rpc('admin_review_trash',[0,25])['items'];episode=next(e for e in episodes if e['sourceItemId']==sid)
+ ok(episode['reasonCode']=='service_not_suitable' and episode['canRestore'],origin+' formal recoverable trash episode exists')
+ restored=rpc('admin_review_restore',[episode['id'],rev,episode['version'],ACTOR,str(uuid4())])
+ ok(restored['item']['facts']==facts_before and immutable()==observed_before,origin+' formal trash restore preserves edited facts/observations')
+ ok(not detail(job)['recheckPending'] and detail(job)['status']!='queued',origin+' restore cannot revive completed hold or execute AI')
+ dto_details.extend([h,fresh,excluded,detail(job)])
+
+for origin,filled in [('seoul_reservation',False),('myseoul_program',False),('seoul_reservation',True),('myseoul_program',True)]:
+ job=source(origin,fill_filters=filled);d=detail(job);before=snapshot(d)
+ ok((d['review']['filterInfo']['missing'] or filled) and d['canExclude'],origin+' ready/incomplete filters do not block explicit exclusion')
+ excluded=rpc('admin_ai_queue_exclude',[job,d['revision'],d['version'],str(uuid4()),'region_not_suitable',ACTOR])
+ ok(excluded['review']['filterInfo']['missing']==d['review']['filterInfo']['missing'] and excluded['review']['facts']==d['review']['facts'],origin+' quick exclude does not fill or rewrite facts/filters')
+ dto_details.append(excluded)
+
+# Audit/receipt failure rolls exclusion, trash and hold changes back together.
+job=source();held=hold(job);before=snapshot(held)
+sql("create function public.synthetic_exclude_audit_failure() returns trigger language plpgsql as $$begin raise exception 'synthetic_exclude_audit_failure';end$$;create trigger synthetic_exclude_audit_failure before insert on machimoa_review.ai_recheck_receipts for each row execute function public.synthetic_exclude_audit_failure();")
+deny(query('admin_ai_queue_exclude',[job,held['revision'],held['version'],str(uuid4()),'service_not_suitable',ACTOR]),'synthetic_exclude_audit_failure')
+ok(detail(job)==held and snapshot(held)==before,'exclusion audit failure preserves source/facts/filters and pending hold')
+ok(scalar("(select count(*) from machimoa_review.admin_exclusion_episodes where source_item_id="+lit(held['sourceItemId'])+")")==0,'exclusion audit failure rolls trash episode back')
+sql('drop trigger synthetic_exclude_audit_failure on machimoa_review.ai_recheck_receipts;drop function public.synthetic_exclude_audit_failure();')
+
+for role in ['anon','authenticated','service_role']:
+ ok(scalar("has_function_privilege('"+role+"','public.admin_ai_queue_exclude(uuid,text,text,uuid,text,uuid)','execute')")== (role=='service_role'),role+' queue exclusion ACL')
+ for sig in ['ai_recheck_edit_fields(text)','ai_recheck_edit_guard(uuid,text)','ai_queue_native_exclude_ready(uuid,text,text,uuid)']:
+  ok(not scalar("has_function_privilege('"+role+"','machimoa_review."+sig+"','execute')"),role+' private held editing helper')
+
+# Existing/current candidates also fence held edits and quick exclusion.
+for origin in ['seoul_reservation','myseoul_program']:
+ job=source(origin);h=hold(job);sid=h['sourceItemId'];rev=h['revision'];seed_candidate(h);d=detail(job);before=snapshot(d)
+ ok(not d['canExclude'],origin+' a concurrent candidate hides queue exclusion capability')
+ deny(query('admin_ai_queue_exclude',[job,rev,d['version'],str(uuid4()),'service_not_suitable',ACTOR]),'recheck_exclude_conflict')
+ if origin=='seoul_reservation':q=query('admin_program_save',[sid,rev,d['review']['version'],{'conditions':['합성 수정']},[],'합성 원문 대조',ACTOR])
+ else:q=query('admin_myseoul_program_save_v2',[sid,rev,d['review']['version'],{'conditions':['합성 수정']},ACTOR])
+ deny(q,'recheck_edit_conflict')
+ ok(snapshot(d)==before and detail(job)['recheckPending'],origin+' candidate rejection keeps source/facts/filters/history and hold')
+
+for origin in ['youthcenter_policy','youthcenter_content']:
+ sid=scalar("(select id from machimoa_review.source_items where source_id="+lit(origin)+" order by first_seen_at limit 1)")
+ job=scalar("(select id from machimoa_review.processing_jobs where source_item_id="+lit(sid)+" and processing_stage='ai_enrichment')")
+ d=detail(job);old_facts=d['review']['facts'];d=complete(job)
+ ok(d['canExclude'] and not d['recheckPending'],origin+' fresh resolved generic AI queue can be excluded')
+ excluded=rpc('admin_ai_queue_exclude',[job,d['revision'],d['version'],str(uuid4()),'service_not_suitable',ACTOR])
+ ok(excluded['review']['facts']==old_facts and not excluded['recheckPending'] and excluded['status']=='cancelled',origin+' generic formal exclusion preserves existing facts')
+ dto_details.append(excluded)
+
+# Two explicit commands with the same version: one winner, no duplicate history.
+job=source();d=detail(job)
+r=race([lambda:rpc('admin_ai_queue_exclude',[job,d['revision'],d['version'],str(uuid4()),'service_not_suitable',ACTOR]),lambda:rpc('admin_ai_queue_request_recheck',command(d,note=''))])
+ok(sorted(x[0] for x in r)==['conflict','saved'],'exclude vs hold has one winner and no deadlock')
 
 dto_queues.append(rpc('admin_review_ai_queue',[0,25,[]]))
 result=subprocess.run([args.node,str(ROOT/'scripts/test_ai_queue_recheck_sql_dto.mjs')],input=json.dumps({'details':dto_details,'queues':dto_queues}).encode(),capture_output=True)

@@ -37,10 +37,10 @@ const saved={schema:'content-filters-v1',category:'program',topic:known('culture
 const info={schema:saved.schema,revision:'a'.repeat(64),filterVersion:1,data:saved,missing:[],origins:{topic:'operator',location:'confirmed_facts',delivery:'automatic',audience:'source_change'}};
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : tree.type?.name==='ReviewValueRow'?nodes(tree.type(tree.props)):[tree,...React.Children.toArray(tree.props?.children).flatMap(nodes)];
 const text = tree => typeof tree === 'string' || typeof tree === 'number' ? String(tree) : tree?.type?.name==='ReviewValueRow'?text(tree.type(tree.props)):React.Children.toArray(tree?.props?.children).map(text).join('');
-let writes=0,applied=[],active=null,data,version;
+let writes=0,applied=[],active=null,data,version,disabled=false;
 globalThis.fetch=async()=>{writes++;throw Error('Network forbidden');};
-const render=()=>{cursor=0;refCursor=0;return SavedFilterValues({saved,data,onChange:v=>{applied.push(v);data=v;},disabled:false,missing:[],confirmed:confirmedFilterFields(info),version,onEditing:v=>{active=v;}});};
-const reset=()=>{states=[];refs=[];data=structuredClone(saved);version='b'.repeat(64);applied=[];active=null;};
+const render=()=>{cursor=0;refCursor=0;return SavedFilterValues({saved,data,onChange:v=>{applied.push(v);data=v;},disabled,missing:[],confirmed:confirmedFilterFields(info),version,onEditing:v=>{active=v;}});};
+const reset=()=>{states=[];refs=[];data=structuredClone(saved);version='b'.repeat(64);applied=[];active=null;disabled=false;};
 const button=name=>{const n=nodes(render()).find(n=>n.type==='button'&&(n.props['aria-label']===name||text(n)===name));assert.ok(n,name);return n;};
 const edit=value=>nodes(render()).find(n=>n.type===FilterInputs).props.onChange(value);
 // Individual saved confirmation is independent of other pending fields; source observations never count as operator confirmation.
@@ -59,6 +59,13 @@ button('대표 분야 수정').props.onClick();edit({...saved,topic:known('langu
 eq(nodes(render()).filter(n=>n.type==='p'&&text(n).startsWith('변경할 값 →')).length,1);
 // Cancel preserves a previously applied unsaved draft rather than resetting to the server value.
 button('대표 분야 수정').props.onClick();edit({...data,topic:known('employment_job')});button('취소').props.onClick();eq(data.topic,known('language_learning'));
+// The row action toggles only its working edit; other rows and applied drafts stay protected.
+reset();data={...data,topic:known('language_learning')};
+button('신청 기간·마감 수정').props.onClick();eq(button('신청 기간·마감 수정 취소').props.disabled,false);eq(button('신청 기간·마감 수정 취소').props['aria-expanded'],true);eq(button('대표 분야 수정').props.disabled,true);
+edit({...data,application:known({deadlineKind:'fixed',start:{value:'2026-10-01',precision:'day'},end:{value:'2026-10-10',precision:'day'},sourceStatus:'unknown'})});
+button('신청 기간·마감 수정 취소').props.onClick();eq(active,null);eq(data.topic,known('language_learning'));eq(data.application,saved.application);eq(applied.length,0);eq(button('신청 기간·마감 수정').props['aria-expanded'],false);
+button('대표 분야 수정').props.onClick();edit({...data,topic:known('employment_job')});version='c'.repeat(64);eq(button('대표 분야 수정 취소').props.disabled,false);button('대표 분야 수정 취소').props.onClick();eq(data.topic,known('language_learning'));eq(active,null);
+button('대표 분야 수정').props.onClick();disabled=true;eq(button('대표 분야 수정 취소').props.disabled,true);button('대표 분야 수정 취소').props.onClick();eq(active,'topic');eq(applied.length,0);disabled=false;button('대표 분야 수정 취소').props.onClick();eq(active,null);
 // Coupled delivery/location changes are both submitted in the existing save contract.
 reset();button('진행 방식 수정').props.onClick();edit({...saved,delivery:known('online'),location:na});button('초안에 적용').props.onClick();eq(changedFilterFields(saved,data),['delivery','location']);eq(data.location,na);
 // Invalid partial input is retained and never copied to the parent.

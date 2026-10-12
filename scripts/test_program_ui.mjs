@@ -50,6 +50,10 @@ function execute(name,args){const item=items.get(args.p_id);if(!item)return {cod
  next.version=String(mutations).padStart(64,'0');next.factsVersion++;next.history.unshift({action:name==='admin_program_exclude'?'exclude':'save_facts',actor:args.p_actor,at:new Date().toISOString(),note:args.p_note,fields:Object.keys(args.p_patch??{})});items.set(item.id,next);return next;
 }
 if(!process.argv.includes('--serve')){
+ const {programInputFields:heldInputs}=await import('../app/lib/review/program-ui.ts');
+ const held={...original,editableFields:['conditions','residence_evidence','fee_amounts','period_evidence'],result:{...original.result,reasons:['ai_recheck_requested']}};
+ check(()=>assert.deepEqual(heldInputs(held),[]));
+ check(()=>assert.deepEqual(heldInputs({...held,result:{...held.result,reasons:['ai_recheck_requested','residence_scope_unknown']}}),['residence_evidence']));
  const calls=[];const deps={authorize:async()=>({userId:actor}),store:()=>({get:async id=>items.get(id),execute:async(id,command,uuid)=>{calls.push({id,command,uuid});return original;}})};
  const post=(body)=>new Request(`http://localhost/api/admin/program-review/${ids[0]}`,{method:'POST',headers:{origin:'http://localhost','content-type':'application/json'},body:JSON.stringify(body)});
  const response=await programRequest(post(cmd),ids[0],deps);check(()=>assert.equal(response.status,200));check(()=>assert.equal(calls[0].uuid,actor));check(()=>assert.match(response.headers.get('cache-control'),/no-store/));

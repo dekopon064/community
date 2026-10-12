@@ -32,18 +32,25 @@ if (!process.argv.includes('--serve')) {
   eq(reviewDetailPath('facts', first.id, 'seoul_reservation'), `/api/admin/program-review/${first.id}`);
   for (const [kind, source] of [['facts', 'youthcenter_policy'], ['facts', 'youthcenter_content'], ['candidates', 'myseoul_program']]) eq(reviewDetailPath(kind, first.id, source), `/api/admin/review/${kind}/${first.id}`);
   const draft = structuredClone(first.facts); draft.application_methods = ['인터넷·방문 병행']; draft.missing = []; draft.target = 'FORGED READONLY';
-  const command = buildMySeoulSave(first, draft, '확인한 근거', ['source_fact_conflict:application_method']);
+  const command = buildMySeoulSave(first, draft, ['application_methods']);
   eq(command.patch, { application_methods: ['인터넷·방문 병행'] });
-  eq([command.revision, command.version, command.resolve], [first.revision, first.version, ['source_fact_conflict:application_method']]);
+  eq([command.revision, command.version, Object.hasOwn(command,'resolve')], [first.revision, first.version, false]);
   eq(myseoulPatch(first.facts, draft, []), {});
-  for (const resolve of [['source_fact_conflict:tuition'], ['unsupported_test_reason']]) { assert.throws(() => buildMySeoulSave(first, draft, '근거', resolve), e => e.code === 'invalid_input'); checks++; }
+  for (const fields of [['target'], ['unsupported_test_field']]) { assert.throws(() => buildMySeoulSave(first, draft, fields), e => e.code === 'invalid_input'); checks++; }
   eq(displayMySeoulValue('fees', [{ component: 'tuition', evidence: ['무료'] }, { component: 'admission', evidence: ['3,000원'] }]), '수강료: 무료\n입장료: 3,000원');
   const periods = structuredClone(second.facts.periods); const changed = structuredClone(second.facts); changed.periods.operation[0].endpoints[1].value = '2099-11-04';
-  eq(buildMySeoulSave(second, changed, '운영 일정 근거', []).patch.periods.application, periods.application);
+  eq(buildMySeoulSave(second, changed).patch.periods.application, undefined);
+  eq(buildMySeoulSave(second, changed).patch.periods.operation, changed.periods.operation);
+  eq(second.facts.periods.application,periods.application);
   const pasted = structuredClone(first.facts); pasted.application_links = [' https://example.test/apply ', '']; pasted.fees = [{ component: 'tuition', evidence: [' 무료 확인 ', ''] }];
-  eq(buildMySeoulSave(first, pasted, '원문 근거', []).patch.application_links, ['https://example.test/apply']);
-  eq(buildMySeoulSave(first, pasted, '원문 근거', []).patch.fees, [{ component: 'tuition', evidence: ['무료 확인'] }]);
+  eq(buildMySeoulSave(first, pasted).patch.application_links, ['https://example.test/apply']);
+  eq(buildMySeoulSave(first, pasted).patch.fees, [{ component: 'tuition', evidence: ['무료 확인'] }]);
   eq(myseoulPatch(first.facts, { ...first.facts, application_methods: [...first.facts.application_methods, ''] }, first.editableFields), {});
+  const held={...second,result:{...second.result,reasons:['ai_recheck_requested']}};
+  const rechecked=buildMySeoulSave(held,changed);
+  eq(Object.keys(rechecked.patch.periods),['operation']);
+  eq(rechecked.patch.periods.operation,changed.periods.operation);
+  assert.throws(()=>buildMySeoulSave(second,changed,['periods'],['application']),e=>e.code==='invalid_input');checks++;
   console.log(`PASS: ${checks} new My Seoul+ UI routing/patch/resolve/period/fee checks.`);
 } else {
   const legacy = new LocalReviewStore();
