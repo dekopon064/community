@@ -12,12 +12,24 @@ export const fieldClass = "mt-2 block min-h-11 w-full rounded-lg border border-i
 export const primaryButton = "inline-flex min-h-12 items-center justify-center rounded-xl bg-ink px-5 py-3 font-semibold text-canvas-white hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-45";
 export const secondaryButton = "inline-flex min-h-12 items-center justify-center rounded-xl border border-info-rule px-5 py-3 font-semibold text-ink hover:bg-info-surface disabled:cursor-not-allowed disabled:opacity-45";
 
+export function OptionalReviewText({id,label,value,onChange,disabled,maxLength=4000,rows=3,help,error}:{id:string;label:string;value:string;onChange:(value:string)=>void;disabled?:boolean;maxLength?:number;rows?:number;help?:string;error?:string}) {
+  return <details data-optional-review-input className="min-w-0" onKeyDown={e=>{
+    if(e.key==='Escape'&&!e.currentTarget.closest('[data-classification-row],[data-program-row],[data-myseoul-row]')){e.preventDefault();e.currentTarget.open=false;e.currentTarget.querySelector('summary')?.focus();}
+  }}><summary className="min-h-11 cursor-pointer py-2 font-semibold">{label} 추가 (선택){value.trim()&&<span className="ml-2 text-sm font-normal text-info-muted">내용 있음</span>}</summary>
+    <label htmlFor={id} className="mt-2 block font-semibold">{label} (선택)</label>
+    {help&&<p id={`${id}-help`} className="mt-1 text-sm leading-6 text-info-muted">{help}</p>}
+    <textarea id={id} className={fieldClass} disabled={disabled} maxLength={maxLength} rows={rows} value={value} onChange={e=>onChange(e.target.value)} aria-invalid={Boolean(error)} aria-describedby={[help?`${id}-help`:'',error?`${id}-error`:''].filter(Boolean).join(' ')||undefined}/>
+    {error&&<p id={`${id}-error`} className="mt-2 text-sm text-info-status">{error}</p>}
+  </details>;
+}
+
 function Field({ name, label, help, error, children }: { name: string; label: string; help?: string; error?: string; children: ReactNode }) {
   const context = useContext(FactContext);
   if (context && !context.editable.includes(name as keyof Facts)) return null;
   const id=(context?.prefix??"")+name;
   const needs = context?.missing?.includes(name);
   const changed = context?.saved && context.current && JSON.stringify(context.saved[name as keyof Facts]) !== JSON.stringify(context.current[name as keyof Facts]);
+  if(name==="evidence")return <div>{children}</div>;
   return <div className={needs ? reviewAttention : undefined}>
     <label htmlFor={id} className="block font-semibold">{label}{context?.missing&&<ReviewStatus needed={Boolean(needs)} confirmed={Boolean(context.confirmed&&!changed)} changed={Boolean(changed)}/>}</label>
     {context?.missing && <p className="mt-2 font-semibold leading-6">{needs?`${label} 값과 원문 근거를 확인해 주세요.`:context.confirmed&&!changed?"서버에서 확인한 저장값입니다.":"현재 입력값입니다. 저장 전 원문 근거를 확인해 주세요."}</p>}
@@ -60,7 +72,7 @@ export function FactsEditor({ value, onChange, errors, disabled, editableFields,
         </div>{errors.regions && <p id={idPrefix+"regions-error"} className="text-sm text-info-status">{errors.regions}</p>}
       </fieldset>}
       <Field name="evidence" label="대상 지역의 원문 근거" help="공식 원문의 신청 자격 문구를 입력해 주세요. 최대 500자입니다." error={errors.evidence}>
-        <textarea {...attrs("evidence")} rows={3} maxLength={500} value={value.evidence} onChange={(e) => set("evidence", e.target.value)} />
+        <OptionalReviewText id={idPrefix+"evidence"} label="대상 지역의 원문 근거" value={value.evidence} onChange={next=>set("evidence",next)} disabled={blocked("evidence")} maxLength={500} help="필요하면 원문 인용을 보충합니다. 입력하지 않아도 선택한 사실값으로 저장합니다." error={errors.evidence}/>
       </Field>
     </>}
     {value.productType === "policy_reference" && <Field name="foreignEligibility" label="외국인 거주자의 신청 자격" help="원문이 불명확하면 추측하지 말고 확인 필요로 남겨 주세요." error={errors.foreignEligibility}>

@@ -75,12 +75,12 @@ This function and SQL recalculate temporal gates from the same period endpoints.
     if mode in {"offline", "mixed"}:
         if f["activity_region"] == "noncapital":
             exclusions.append("noncapital_venue")
-        elif f["activity_region"] != "capital" or not f["activity_evidence"] or not f["venue"].strip():
+        elif f["activity_region"] != "capital" or not f["venue"].strip():
             reasons.append("activity_region_unknown")
     if mode == "online":
         if f["residence_scope"] == "noncapital_only":
             exclusions.append("online_noncapital_only")
-        elif f["residence_scope"] not in {"nationwide", "includes_capital", "capital"} or not f["residence_evidence"]:
+        elif f["residence_scope"] not in {"nationwide", "includes_capital", "capital"}:
             reasons.append("online_residence_unknown")
     if not f["application_methods"]:
         reasons.append("application_method_missing")

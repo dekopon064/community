@@ -118,7 +118,7 @@ export function myseoulCommand(raw: unknown): MySeoulCommand {
     exact(o, ['action','revision','version','restricted','scope','condition','evidence','requestId']);
     const revision = myText(o.revision,64), version = myText(o.version,64), requestId = myText(o.requestId,36);
     const scope = myText(o.scope,30), condition = myText(o.condition,4000), evidence = myStrings(o.evidence);
-    if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(requestId) || typeof o.restricted !== 'boolean' || (o.restricted ? !['capital','includes_capital'].includes(scope) || !condition.trim() || !evidence.length : scope !== '' || condition !== '' || evidence.length > 0)) throw new ReviewFailure('invalid_input');
+    if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(requestId) || typeof o.restricted !== 'boolean' || (o.restricted ? !['capital','includes_capital'].includes(scope) || !condition.trim() : scope !== '' || condition !== '' || evidence.length > 0)) throw new ReviewFailure('invalid_input');
     return {action,revision,version,requestId,restricted:o.restricted,scope,condition,evidence};
   }
   if (!["save_facts", "exclude"].includes(String(action))) throw new ReviewFailure("invalid_input");
@@ -146,7 +146,7 @@ const guidance: Record<string, string> = {
   description_missing: "공식 원문에서 프로그램 설명을 확인해 입력해 주세요.", target_missing: "명시된 참여 대상을 확인해 주세요.",
   application_actor_unknown: "개인이 신청 가능한지 원문 조건을 확인해 주세요.", delivery_mode_unknown: "실제 진행 방식과 장소를 확인해 주세요.", course_modes_unresolved: "과정별 온라인·현장 안내를 대조해 주세요.",
   activity_region_unknown: "실제 개최 지역을 원문과 대조해 확인해 주세요. 집결지나 운영기관의 지역과 구분합니다.", online_residence_unknown: "온라인 참여자의 거주 지역 조건을 확인해 주세요.",
-  category_unresolved: "주요 활동의 근거에 따라 프로그램 또는 행사를 확인해 주세요.", nationality_or_visa_unresolved: "명시된 체류·국적 자격을 보존하고 일본인 거주자의 해당 조건 충족 근거를 기록해 주세요.",
+  category_unresolved: "주요 활동에 따라 프로그램 또는 행사를 확인해 주세요.", nationality_or_visa_unresolved: "명시된 체류·국적 자격을 보존하고 실제 참여 대상·조건을 확인해 입력해 주세요. 추가 인용·메모만으로 자격 판정을 해소하지 않습니다.",
   application_period_unknown: "신청 시작일과 마감일을 확인해 입력해 주세요.", operation_period_unknown: "교육·행사의 날짜와 시작·종료 시각을 확인해 주세요. 집결 시각은 시작 시각과 구분합니다.",
   application_method_missing: "신청 방법을 확인해 주세요. 별도 신청 폼은 필수가 아닙니다.", fee_unknown: "수강료와 별도 비용을 확인해 주세요.", fee_components_unresolved: "복합 비용의 항목별 근거를 확인해 주세요. 금액을 임의 분할하지 않습니다.", application_state_unknown: "현재 신청 상태와 기간을 대조해 주세요.",
 };
@@ -166,7 +166,7 @@ export function myseoulReasonFields(reason: string): string[] {
     course_modes_unresolved: ['delivery_mode','activity_region','venue','activity_evidence'],
     activity_region_unknown: ['delivery_mode','activity_region','venue','activity_evidence'],
     online_residence_unknown: ['residence_scope','residence','residence_evidence'],
-    category_unresolved: ['public_category','purpose'], nationality_or_visa_unresolved: ['qualification_note'],
+    category_unresolved: ['public_category','purpose'], nationality_or_visa_unresolved: ['target','conditions','qualification_note'],
     application_period_unknown: ['periods','session_evidence'], operation_period_unknown: ['periods','session_evidence'],
     application_method_missing: ['application_methods','application_links'], fee_unknown: ['fees'], fee_components_unresolved: ['fees'],
     application_state_unknown: ['source_status','periods'],

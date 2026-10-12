@@ -9,22 +9,22 @@ export type ProgramCommand = { action: "save_facts" | "exclude"; revision: strin
 export const programReasonText: Record<string, string> = {
   ai_recheck_requested: "AI 대기를 보류한 재검토 요청입니다. 현재 원문과 확인값을 대조하고 AI 작업 대기에서 재검토를 완료해 주세요.",
   restored_review_pending: "휴지통에서 복구했습니다. 기존 사실과 근거를 확인한 뒤 사실 저장·재평가를 눌러 주세요. 수정 없이도 검토를 완료할 수 있습니다.",
-  activity_location_unknown: "실제 개최지를 확인하고 서울·경기·인천 여부와 원문 근거를 입력해 주세요.",
+  activity_location_unknown: "실제 개최지의 서울·경기·인천 여부를 확인해 주세요. 원문 인용은 선택 입력입니다.",
   delivery_mode_unknown: "온라인 예약과 온라인 진행을 구분해 실제 진행 방식·개최지를 입력해 주세요.",
-  residence_scope_unknown: "온라인 프로그램의 거주 지역 조건을 확인해 전국 또는 수도권 포함 여부를 입력해 주세요.",
+  residence_scope_unknown: "참여자의 실제 거주 제한이 있는지 확인해 주세요. 개최 지역과 구분합니다.",
   program_purpose_unconfirmed: "문화·생활교육·체험·교류 등 개인이 이용할 프로그램인지 본문 근거를 확인해 주세요.",
   policy_eligibility_unconfirmed: "정책·금융은 일반 프로그램처럼 자격을 추정할 수 없습니다. 실제 프로그램으로 잘못 분류됐는지 확인해 주세요.",
-  attachment_dependent: "이미지·첨부에서 필요한 프로그램 설명을 확인하고 사실과 근거를 입력해 주세요.",
+  attachment_dependent: "이미지·첨부에서 필요한 프로그램 설명을 확인해 입력해 주세요. 추가 인용은 선택 입력입니다.",
   program_description_missing: "공통 이용안내 외의 프로그램 설명·장소·신청 방법을 확인해 입력해 주세요.",
   missing_source_url: "서울 예약의 공식 상세 링크를 확인해 입력해 주세요.",
   source_status_unknown: "현재 접수 상태를 공식 원문에서 확인해 입력해 주세요.",
   source_status_conflict: "API와 본문의 접수 상태가 다릅니다. 현재 상태와 판단 근거를 입력해 주세요.",
   application_actor_conflict: "개인 신청 가능과 기관 전용 안내가 충돌합니다. 실제 신청 주체와 조건을 확인해 주세요.",
   target_conflict: "대상 필드와 본문의 연령·참여 조건이 다릅니다. 확인한 조건을 입력해 주세요.",
-  fee_conflict: "무료·유료 안내가 다릅니다. 확인한 비용 구분·금액과 근거를 입력해 주세요.",
-  eligibility_document_unconfirmed: "필수 증빙 조건을 확인해 실제 요구사항과 근거를 기록해 주세요. 외국인 참여를 임의 보장하지 마세요.",
+  fee_conflict: "무료·유료 안내가 다릅니다. 확인한 비용 구분·금액을 입력해 주세요. 추가 인용은 선택 입력입니다.",
+  eligibility_document_unconfirmed: "필수 증빙 조건을 확인해 실제 요구사항을 입력해 주세요. 외국인 참여를 임의 보장하지 마세요. 추가 인용은 선택 입력입니다.",
 };
-for (const code of ["period_missing_or_unparsed", "body_period_needs_confirmation", "period_order_conflict", "body_api_period_conflict", "invalid_body_date", "date_weekday_conflict"]) programReasonText[code] = "신청 기간과 운영 기간·요일의 부족 또는 충돌을 확인해 각각의 날짜·시간과 판단 근거를 입력해 주세요.";
+for (const code of ["period_missing_or_unparsed", "body_period_needs_confirmation", "period_order_conflict", "body_api_period_conflict", "invalid_body_date", "date_weekday_conflict"]) programReasonText[code] = "신청 기간과 운영 기간·요일의 부족 또는 충돌을 확인해 각각의 날짜·시간을 확인해 주세요. 원문 인용은 선택 입력입니다.";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ReviewFailure("invalid_input");
@@ -78,7 +78,7 @@ export function programCommand(input: unknown): ProgramCommand {
   const keys = action === "save_facts" ? ["action", "revision", "version", "note", "patch", "resolve", ...(obj.confirmRestored === true ? ["confirmRestored"] : [])] : ["action", "revision", "version", "note"];
   if (!["save_facts", "exclude"].includes(String(action)) || Object.keys(obj).some((k) => !keys.includes(k))) throw new ReviewFailure("invalid_input");
   const revision = text(obj.revision, 64), version = text(obj.version, 64), note = text(obj.note, 4000).trim();
-  if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version) || !note) throw new ReviewFailure("invalid_input");
+  if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version) || action === "exclude" && !note) throw new ReviewFailure("invalid_input");
   const command: ProgramCommand = { action: action as ProgramCommand["action"], revision, version, note, ...(obj.confirmRestored === true ? { confirmRestored: true } : {}) };
   if (action === "save_facts") {
     const patch = object(obj.patch);

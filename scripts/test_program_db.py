@@ -57,16 +57,20 @@ def review_fixtures():
 
 
 class ProgramDBTests(unittest.TestCase):
-    def test_review_fix_semantic_region_and_evidence_are_rederived(self):
+    def test_review_fix_actual_region_and_scope_are_rederived(self):
         rec = normalize_seoul_item(row())
         facts = extract_program_facts(rec)
         for changes, reason in (({"activity_region": "not_applicable", "activity_evidence": ()}, "activity_location_unknown"),
-                                ({"activity_evidence": ()}, "activity_location_unknown"),
-                                ({"delivery_mode": "online", "activity_region": "not_applicable", "residence_scope": "not_stated"}, "residence_scope_unknown"),
-                                ({"delivery_mode": "online", "residence_scope": "nationwide", "residence_evidence": ()}, "residence_scope_unknown")):
+                                ({"delivery_mode": "online", "activity_region": "not_applicable", "residence_scope": "not_stated"}, "residence_scope_unknown")):
             result = assess_program_facts(replace(facts, **changes), rec.normalized_payload["dates"], now=NOW)
             self.assertEqual(result.decision, "review_required")
             self.assertIn(reason, result.reason_codes)
+
+    def test_confirmed_region_scope_need_no_duplicate_quote(self):
+        rec=normalize_seoul_item(row());facts=extract_program_facts(rec)
+        for changes,reason in (({"activity_evidence":()},"activity_location_unknown"),({"delivery_mode":"online","activity_region":"not_applicable","residence_scope":"nationwide","residence_evidence":()},"residence_scope_unknown")):
+            result=assess_program_facts(replace(facts,**changes),rec.normalized_payload["dates"],now=NOW)
+            self.assertNotIn(reason,result.reason_codes)
 
     def test_review_fix_institution_individual_conflicts_survive(self):
         for text in ("학교만 신청 가능", "학교 전용", "기관 전용"):

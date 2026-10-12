@@ -26,7 +26,7 @@ for(const bad of [{...item,factsVersion:{raw_payload:'DO_NOT_ECHO'}},{...item,ed
   assert.throws(()=>programItem(bad,id),e=>e.code==='unavailable');checks++;
 }
 assert.deepEqual(programFacts({...facts,raw_payload:'DO_NOT_ECHO'}),facts);checks++;
-for(const body of [{...command,actor:'forged'},{...command,patch:{missing:[]}},{...command,patch:{activity_region:'bogus'}},{...command,note:''},{...command,patch:{constructor:'bad'}},{...command,patch:{official_url:'https://evil.invalid/'}}]){
+for(const body of [{...command,actor:'forged'},{...command,patch:{missing:[]}},{...command,patch:{activity_region:'bogus'}},{...command,note:'x'.repeat(4001)},{...command,patch:{constructor:'bad'}},{...command,patch:{official_url:'https://evil.invalid/'}}]){
   assert.throws(()=>programCommand(body),e=>e.code==='invalid_input');checks++;
 }
 const auth=async()=>({userId:actor});let selected=0;
@@ -44,6 +44,7 @@ for(const status of ['signed_out','forbidden','auth_error','configuration_error'
 let response=await programRequest(new Request(url),id,deps);assert.equal(response.status,200);assert.ok(response.headers.get('cache-control').includes('no-store'));
 assert.equal(mayCacheResponse(response),false);checks++;
 response=await programRequest(post(command),id,deps);assert.equal(response.status,200);assert.equal(calls.at(-1).args.p_actor,actor);assert.deepEqual(calls.at(-1).args.p_patch,command.patch);checks++;
+assert.equal(programCommand({...command,note:""}).note,"");checks++;
 let before=calls.length;
 const activity={action:'confirm_activity',revision:item.revision,version:item.version,factsVersion:1,filterVersion:1,note:'공식 원문에서 서울 개최 확인',filters:{delivery:{status:'known',value:'onsite'},location:{status:'known',value:{scope:'specific',venues:[{province:'11',district:null,facility:'',address:''}]}}}};
 assert.throws(()=>programCommand(activity),e=>e.code==='invalid_input');checks++;

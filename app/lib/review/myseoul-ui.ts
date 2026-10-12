@@ -7,7 +7,7 @@ export const myseoulLabels: Record<MySeoulField, string> = {
   application_actor: '개인·기관 신청 여부', delivery_mode: '진행 방식', activity_region: '개최지의 수도권 여부',
   venue: '원문에 확인된 개최 장소', activity_evidence: '개최지·진행 방식의 근거', residence_scope: '참가 자격의 서비스 대상 범위',
   residence: '거주 조건', residence_evidence: '거주 조건의 근거', public_category: '공개 카테고리',
-  purpose: '활동 성격과 분류 근거', qualification_note: '명시 자격 확인 근거', periods: '신청·운영 기간',
+  purpose: '활동 성격과 분류 근거', qualification_note: '자격 확인의 원문 인용', periods: '신청·운영 기간',
   session_evidence: '회차·요일·시간·집결 안내', application_methods: '신청 방법', application_links: '신청 링크',
   fees: '비용 구성', source_status: '원문의 모집 상태',
 };

@@ -29,7 +29,8 @@ check(()=>assert.deepEqual(Object.keys(cmd.patch).sort(),['activity_evidence','a
 check(()=>assert.deepEqual(cmd.patch.activity_evidence,['서울 종로구 개최']));
 check(()=>assert.equal(cmd.note,'공식 개최지 확인'));
 check(()=>assert.equal(cmd.revision,original.revision));check(()=>assert.equal(cmd.version,original.version));
-for(const [changed,note,resolve] of [[original.facts,'근거',[]],[draft,'',[]],[draft,'근거',['date_weekday_conflict']],[draft,'근거',['unsupported_test_reason']]])check(()=>assert.throws(()=>buildProgramSave(original,changed,note,resolve),e=>e.code==='invalid_input'));
+check(()=>assert.equal(buildProgramSave(original,draft,'',[]).note,''));
+for(const [changed,note,resolve] of [[original.facts,'근거',[]],[draft,'근거',['date_weekday_conflict']],[draft,'근거',['unsupported_test_reason']]])check(()=>assert.throws(()=>buildProgramSave(original,changed,note,resolve),e=>e.code==='invalid_input'));
 check(()=>assert.deepEqual(programPatch(original.facts,draft,[]),{}));
 check(()=>assert.equal(displayProgramValue('application_methods',['onsite','internet']),'현장 접수\n인터넷 예약'));
 check(()=>assert.equal(displayProgramValue('fee_kind','paid'),'유료'));check(()=>assert.match(programOutcome('not_currently_available'),/신청 불가/));
