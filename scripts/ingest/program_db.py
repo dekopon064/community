@@ -61,6 +61,9 @@ class ProgramNewOnlyObservationAdapter:
     def observe(self, run_id: str, records: list[ObservationRecord], checkpoint: dict | None):
         if len(records) > 40:
             raise ValueError('program_batch_size_invalid')
+        from ingest.seoul_audience import collection_audience
+        if any(not collection_audience((record.normalized_payload or {}).get('provider_fields', {}).get('USETGTINFO')).selected for record in records):
+            raise ValueError('seoul_collection_audience_not_selected')
         try:
             result = self.rpc('observe_seoul_program_new_only', {
                 'p_run_id': run_id, 'p_items': [program_rpc_item(r) for r in records],
