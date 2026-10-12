@@ -187,7 +187,8 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
 
 def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = None, periods: dict | None = None) -> str:
     from ingest.body_sections import normalize_schedule_heading
-    content = normalize_schedule_heading(content, 'ko')
+    from ingest.seoul_schedule_display import normalize_period_labels, clean_schedule_display
+    content = normalize_period_labels(normalize_schedule_heading(content, 'ko'))
     view = validation_view(facts)
     # Reclassification supplies its current reviewed date roles without
     # mutating the source facts or discarding original session evidence.
@@ -201,6 +202,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     # These same checks run before cleanup, so conflicting AI facts cannot be
     # hidden by removal/replacement of a generated row.
     validate_summary_period(content, canonical, view)
+    content, sections = clean_schedule_display(content, sections, view)
     content = normalize_summary_schedule(content, view)
     content = without_replaced_announcements(content, view)
     main = section_body(content, '[주요 내용]', KO_SECTION_HEADERS)

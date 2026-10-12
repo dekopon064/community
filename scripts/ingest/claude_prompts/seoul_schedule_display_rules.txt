@@ -1,0 +1,3 @@
+Seoul schedule presentation:
+The worker supplies bare application/operation period rows and reception status. Do not repeat those rows in content_ko; keep needed dates in evaluation-aid facts. Preserve actual session dates, times and activities in one table or list. Do not add a second numeric list already fully covered by a table. Retain unique application cutoffs, early closure, check-in, cancellation and participation conditions.
+Timezone offsets and precision control interpretation, not public prose. Do not print IANA timezone identifiers or source precision metadata. Preserve ordinary explicit Korean-time guidance and opaque URLs/identifiers as data.
