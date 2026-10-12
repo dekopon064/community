@@ -15,7 +15,7 @@ import type { ExplorationQuery, PublicCurationItem } from '@/app/lib/publicConte
 import Link from './PublicNavigationLink';
 import styles from './PublicCurationFilters.module.css';
 
-type MultiKey = 'topics' | 'provinces' | 'districts' | 'deliveries' | 'audiences' | 'states';
+type MultiKey = 'topics' | 'provinces' | 'districts' | 'deliveries' | 'audiences' | 'foreignerPrograms' | 'states';
 type GroupKey = 'topics' | 'region' | 'states' | 'additional' | 'date';
 type Choice = { key: MultiKey | 'date'; value: string; label: string };
 
@@ -92,11 +92,13 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
     if(key==='provinces') return t(`provinces.${value}`);
     if(key==='districts') {const [province,district]=value.split(':');return `${t(`provinces.${province}`)} ${locale==='ja'?t(`districts.${province}.${district}`):district}`;}
     if(key==='audiences') return t(value==='children'?'childrenIncluded':'childrenExcluded');
+    if(key==='foreignerPrograms') return t(value==='foreigner'?'foreignerProgram':'foreignerOther');
     return t(`${key}.${value}`);
   }
   const selected:Choice[]=regionAvailable?[
     ...(['topics','states','deliveries'] as const).flatMap(key=>query[key].map(value=>({key,value,label:optionLabel(key,value)}))),
     ...(multipleAudiences?[{key:'audiences' as const,value:'both',label:t('audienceBoth')}]:query.audiences.map(value=>({key:'audiences' as const,value,label:optionLabel('audiences',value)}))),
+    ...query.foreignerPrograms.map(value=>({key:'foreignerPrograms' as const,value,label:optionLabel('foreignerPrograms',value)})),
     ...query.provinces.filter(province=>!query.districts.some(d=>d.startsWith(`${province}:`))).map(value=>({key:'provinces' as const,value,label:t('provinceWhole',{province:optionLabel('provinces',value)})})),
     ...query.districts.map(value=>({key:'districts' as const,value,label:optionLabel('districts',value)})),
     ...(query.date?[{key:'date' as const,value:query.date,label:`${t('date')} ${query.date.replaceAll('-','.')}`}]:[]),
@@ -105,7 +107,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
   const groups:{key:GroupKey;label:string}[]=category==='program'?[{key:'topics',label:t('programTopic')},{key:'region',label:t('region')},{key:'states',label:t('applicationState')},{key:'additional',label:t('additional')}]:category==='event'?[{key:'topics',label:t('eventTopic')},{key:'region',label:t('region')},{key:'date',label:t('date')}]:[{key:'region',label:t('spaceRegion')}];
   function groupCount(key:GroupKey) {
     if(key==='region') return selected.filter(c=>c.key==='provinces'||c.key==='districts').length;
-    if(key==='additional') return query.deliveries.length+(multipleAudiences?1:query.audiences.length);
+    if(key==='additional') return query.deliveries.length+(multipleAudiences?1:query.audiences.length)+query.foreignerPrograms.length;
     if(key==='date') return Number(Boolean(query.date));
     return query[key].length;
   }
@@ -191,6 +193,9 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
       <fieldset className={styles.fieldset} aria-describedby={multipleAudiences?`${id}-${scope}-audience-compat`:undefined}><legend>{t('audience')}</legend><div className={styles.compactOptions}>
         {(['children','other'] as const).map(value=><label key={value} className={`${styles.option} ${query.audiences.length===1&&query.audiences.includes(value)?styles.optionSelected:''}`}><input type="radio" name={`${id}-${scope}-audience`} checked={query.audiences.length===1&&query.audiences.includes(value)} onChange={()=>update({...query,audiences:[value]})}/><span>{t(value==='children'?'include':'exclude')}</span></label>)}
       </div>{multipleAudiences&&<p id={`${id}-${scope}-audience-compat`} className={styles.note}>{t('audienceBothHint')}</p>}</fieldset>
+      <fieldset className={styles.fieldset}><legend>{t('foreignerGroup')}</legend><div className={styles.compactOptions}>
+        {(['foreigner','other'] as const).map(value=><label key={value} className={`${styles.option} ${query.foreignerPrograms.includes(value)?styles.optionSelected:''}`}><input type="radio" name={`${id}-${scope}-foreigner`} checked={query.foreignerPrograms.length===1&&query.foreignerPrograms.includes(value)} onChange={()=>update({...query,foreignerPrograms:[value]})}/><span>{optionLabel('foreignerPrograms',value)}</span></label>)}
+      </div></fieldset>
     </div>;
     if(key==='date') return <PublicFilterCalendar value={query.date} today={todayKst} onChange={date=>update({...query,date})}/>;
     return key==='states'?options('states',applicationStates,t('applicationState'),true):options('topics',Object.keys(category==='program'?programTopics:eventTopics),t(category==='program'?'programTopic':'eventTopic'));

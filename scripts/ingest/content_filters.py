@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 SCHEMA = "content-filters-v1"
-KEYS = ("topic", "location", "delivery", "audience", "spaceKind", "application", "schedule")
+KEYS = ("topic", "location", "delivery", "audience", "foreignerProgram", "spaceKind", "application", "schedule")
 PROGRAM_TOPICS = {"language_learning", "culture_experience", "employment_career",
                   "daily_safety", "community_exchange", "other"}
 EVENT_TOPICS = {"festival_exchange", "culture_arts", "lecture_commemoration", "other"}
@@ -29,7 +29,7 @@ def field(value: Any = None, status: str | None = None) -> dict:
 
 
 def empty_filters(category: str) -> dict:
-    required = {"program": {"topic", "location", "delivery", "audience", "application"},
+    required = {"program": {"topic", "location", "delivery", "audience", "foreignerProgram", "application"},
                 "event": {"topic", "location", "schedule"},
                 "youth_space": {"location", "spaceKind"}}[category]
     return {"schema": SCHEMA, "category": category,
@@ -112,6 +112,8 @@ def expand_recurrence(r: Any) -> list[dict]:
 
 
 def validate_filters(d: Any) -> dict:
+    if type(d) is dict and "foreignerProgram" not in d:
+        d = {**d, "foreignerProgram": field(status="unknown" if d.get("category") == "program" else "not_applicable")}
     _exact(d, {"schema", "category", *KEYS})
     if d["schema"] != SCHEMA or d["category"] not in {"program", "event", "youth_space"} or len(json.dumps(d).encode()) > 120000:
         raise ValueError("invalid_content_filters")
@@ -127,9 +129,9 @@ def validate_filters(d: Any) -> dict:
             if x is not None:
                 raise ValueError("invalid_content_filters")
             continue
-        if k in {"topic", "delivery", "audience", "spaceKind"}:
+        if k in {"topic", "delivery", "audience", "foreignerProgram", "spaceKind"}:
             options = {"topic": PROGRAM_TOPICS if d["category"] == "program" else EVENT_TOPICS,
-                       "delivery": {"online", "onsite", "mixed"}, "audience": {"children", "other"}, "spaceKind": {"introduction", "news"}}[k]
+                       "delivery": {"online", "onsite", "mixed"}, "audience": {"children", "other"}, "foreignerProgram": {"foreigner", "other"}, "spaceKind": {"introduction", "news"}}[k]
             if type(x) is not str or x not in options:
                 raise ValueError("invalid_content_filters")
         elif k == "location":
@@ -183,7 +185,7 @@ def program_application_complete(d: dict) -> bool:
 
 
 def missing_filters(d: dict) -> list[str]:
-    missing = [k for k in KEYS if d[k]["status"] == "unknown"]
+    missing = [k for k in KEYS if k != "foreignerProgram" and d[k]["status"] == "unknown"]
     if d["location"]["status"] == "known" and any(v["district"] is None for v in d["location"]["value"]["venues"]):
         missing.append("location")
     if not program_application_complete(d):

@@ -390,6 +390,9 @@
     "explore": "生活情報を探す"
   },
   "PublicFilters": {
+    "foreignerGroup": "外国人向けプログラムの区分",
+    "foreignerProgram": "外国人向けプログラム",
+    "foreignerOther": "その他",
     "nextMonth": "次の月",
     "previousMonth": "前の月",
     "chooseDate": "日付を選んでください",

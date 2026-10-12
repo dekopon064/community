@@ -389,6 +389,9 @@
     "explore": "생활정보 둘러보기"
   },
   "PublicFilters": {
+    "foreignerGroup": "외국인 프로그램 구분",
+    "foreignerProgram": "외국인 프로그램",
+    "foreignerOther": "그외",
     "nextMonth": "다음 달",
     "previousMonth": "이전 달",
     "chooseDate": "날짜를 선택해 주세요",

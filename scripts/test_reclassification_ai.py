@@ -26,6 +26,7 @@ ID='40000000-0000-4000-8000-000000000901';REV='a'*64
 def context(cat='living',source='myseoul_program'):
     k=lambda v:{'status':'known','value':v};na={'status':'not_applicable','value':None}
     filters={'schema':'content-filters-v1','category':cat,**{name:copy.deepcopy(na) for name in ['topic','location','delivery','audience','spaceKind','application','schedule']}}
+    filters['foreignerProgram']={'status':'unknown' if cat=='program' else 'not_applicable','value':None}
     if cat=='program':filters.update(topic=k('culture_experience'),delivery=k('online'),audience=k('other'),application=k({'deadlineKind':'fixed','start':{'value':'2099-10-01','precision':'day'},'end':{'value':'2099-10-15','precision':'day'},'sourceStatus':'unknown'}))
     if cat=='event':filters.update(topic=k('festival_exchange'),location=k({'scope':'specific','venues':[{'province':'11','district':None,'facility':'','address':''}]}),schedule=k({'kind':'continuous','occurrences':[{'start':{'value':'2099-10-09','precision':'day'},'end':{'value':'2099-10-09','precision':'day'}}],'recurrence':None}))
     if cat=='youth_space':filters.update(spaceKind=k('introduction'),location=k({'scope':'specific','venues':[{'province':'11','district':None,'facility':'','address':''}]}))
