@@ -71,25 +71,47 @@ try{
  ok(!text(capableCategory.props.overview).includes('원문 근거를 입력'));
  const jump=nodes(capableCategory.props.overview).find(n=>n?.props?.href==='#program-activity-confirm');ok(jump);jump.props.onClick({preventDefault(){}});ok(focuses.includes('input'));
  ok(!nodes(tree).some(n=>n?.type?.name==='FactFields')); // no redundant facility/evidence form
+ // The server now offers the same explicit action for unknown delivery with
+ // already-saved capital/onsite filters. No client-created completion state.
+ reset();states[0]={...capable,facts:{...facts,delivery_mode:'unknown',activity_region:'unknown'},result:{...item.result,reasons:['delivery_mode_unknown']}};
+ states[1]=structuredClone(states[0].facts);tree=render();
+ const deliveryCategory=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel');
+ ok(text(deliveryCategory.props.overview).includes('실제 진행 방식과 개최 지역을 원문과 대조해 확인·저장'));
+ ok(nodes(deliveryCategory.props.overview).some(n=>n?.props?.href==='#program-activity-confirm'));
+ ok(!nodes(tree).some(n=>n?.type?.name==='FactFields'));
+ ok(nodes(tree).some(n=>n?.type?.name==='ProgramActivityConfirmation'));
+ // Missing capability keeps the ordinary online/unknown fact form available.
+ states[0]={...states[0],activityReview:{supported:true,pending:false,confirmed:false}};tree=render();
+ eq(nodes(tree).find(n=>n?.type?.name==='FactFields').props.editable,['delivery_mode','activity_region','activity_evidence']);
  const Activity=load('app/components/admin/ProgramActivityConfirmation.tsx').default;
  let sent=[];const props={item:capable,disabled:false,onBlocked(){},onSubmit:async cmd=>{sent.push(cmd);}};
  function activity(){cursor=0;refCursor=0;return Activity(props);}
  states=[];refs=[];let activityTree=activity();
- eq(button(activityTree,'개최 지역 확인·저장').props.disabled,true);
+ eq(button(activityTree,'진행 방식·개최 지역 확인·저장').props.disabled,true);
+ eq(states[0],activityData);ok(text(activityTree).includes('기존 값이 맞으면 다시 입력하지 않고'));
  nodes(activityTree).find(n=>n?.type==='textarea').props.onChange({target:{value:'공식 원문의 서울 개최값을 재확인'}});
  nodes(activity()).find(n=>n?.type==='input').props.onChange({target:{checked:true}});
- activityTree=activity();eq(button(activityTree,'개최 지역 확인·저장').props.disabled,false);
+ activityTree=activity();eq(button(activityTree,'진행 방식·개최 지역 확인·저장').props.disabled,false);
  ok(nodes(activityTree).filter(n=>n?.type?.name==='ReviewStatus').every(n=>!n.props.confirmed));
  await activityTree.props.onSubmit({preventDefault(){}});
  eq(sent.length,1);eq(sent[0].action,'confirm_activity');eq(sent[0].factsVersion,1);eq(sent[0].filters,activityData);ok(!('patch' in sent[0]));
  // Returned errors/reads cannot discard input or grant local completion.
  eq(states[1],'공식 원문의 서울 개최값을 재확인');eq(states[2],true);
  props.item={...capable,version:'c'.repeat(64)};activityTree=activity();
- eq(button(activityTree,'개최 지역 확인·저장').props.disabled,true);
+ eq(button(activityTree,'진행 방식·개최 지역 확인·저장').props.disabled,true);
  await activityTree.props.onSubmit({preventDefault(){}});eq(sent.length,1);eq(states[1],'공식 원문의 서울 개최값을 재확인');
  activityTree.props.onKeyDown({key:'Escape',preventDefault(){},currentTarget:{focus(){focuses.push('activity');}}});
  eq(states[1],'');eq(states[2],false);eq(states[4],props.item.version);ok(focuses.includes('activity'));
  nodes(activity()).find(n=>n?.type==='textarea').props.onChange({target:{value:'별도 입력'}});
  button(activity(),'입력 취소').props.onClick();eq(states[1],'');eq(states[0],activityData);
+ // A pending confirmation never produces a second write or local completion.
+ let release;let posts=0;props.onSubmit=()=>{posts++;return new Promise(r=>release=r);};
+ nodes(activity()).find(n=>n?.type==='textarea').props.onChange({target:{value:'원문 대조 근거'}});
+ nodes(activity()).find(n=>n?.type==='input').props.onChange({target:{checked:true}});
+ activityTree=activity();const pending=activityTree.props.onSubmit({preventDefault(){}});
+ await activityTree.props.onSubmit({preventDefault(){}});eq(posts,1);
+ ok(nodes(activity()).filter(n=>n?.type?.name==='ReviewStatus').every(n=>!n.props.confirmed));
+ release();await pending;
+ props.disabled=true;await activity().props.onSubmit({preventDefault(){}});eq(posts,1);eq(states[1],'원문 대조 근거');
  console.log(JSON.stringify({syntheticOnly:true,checks,result:'passed',externalConnections:0}));
 }finally{globalThis.fetch=originalFetch;globalThis.requestAnimationFrame=originalRAF;globalThis.document=originalDocument;}
