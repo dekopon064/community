@@ -39,8 +39,9 @@ def _load_json(relative: str) -> dict[str, Any]:
 BODY_FORMAT_RULES = _load_text("claude_prompts/body_format_rules.txt")
 SUMMARY_SYSTEM = _load_text("claude_prompts/summary_system.txt").rstrip() + "\n\n" + BODY_FORMAT_RULES
 MYSEOUL_FEE_RULES = _load_text("claude_prompts/myseoul_fee_rules.txt")
+SEOUL_SCHEDULE_DISPLAY_RULES = _load_text("claude_prompts/seoul_schedule_display_rules.txt")
 MYSEOUL_SUMMARY_SYSTEM = _load_text("claude_prompts/myseoul_summary_system.txt").rstrip() + "\n\n" + MYSEOUL_FEE_RULES + "\n\n" + BODY_FORMAT_RULES
-PROGRAM_SUMMARY_SYSTEM = _load_text("claude_prompts/program_summary_system.txt").rstrip() + "\n\n" + BODY_FORMAT_RULES
+PROGRAM_SUMMARY_SYSTEM = _load_text("claude_prompts/program_summary_system.txt").rstrip() + "\n\n" + BODY_FORMAT_RULES + "\n\n" + SEOUL_SCHEDULE_DISPLAY_RULES
 TRANSLATION_SYSTEM = _load_text("claude_prompts/translation_system.txt").rstrip() + "\n\n" + BODY_FORMAT_RULES
 SUMMARY_SCHEMA = _load_json("claude_schemas/summary.schema.json")
 TRANSLATION_SCHEMA = _load_json("claude_schemas/translation.schema.json")
@@ -55,6 +56,9 @@ def summary_system_prompt(body: str, program: bool | str = False) -> str:
     try:
         packet = json.loads(body)
         native = packet.get("nativeConfirmedFacts", {}).get("programFacts") or {}
+        if (packet.get("inputContract") == "review-classification-ai-v1"
+                and native.get("schema_version") == "program-scope-v1-local"):
+            return base if program else base.rstrip() + "\n\n" + SEOUL_SCHEDULE_DISPLAY_RULES
         if (packet.get("inputContract") == "review-classification-ai-v1"
                 and native.get("schema_version") == "myseoul-program-facts-v1-local"):
             return base.rstrip() + "\n\n" + MYSEOUL_FEE_RULES
