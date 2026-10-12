@@ -40,12 +40,13 @@ export function visibleMySeoulFields(editable: string[], facts: MySeoulFacts): M
 type SaveItem = { revision: string; version: string; facts: MySeoulFacts; editableFields: string[]; result: { reasons: string[] } };
 export function buildMySeoulSave(item: SaveItem, draft: MySeoulFacts, fields?: string[], axes?: ('application' | 'operation')[]) {
   const allowed = visibleMySeoulFields(item.editableFields, draft);
+  const periodAxes = item.result.reasons.includes('ai_recheck_requested') ? ['application', 'operation'] as const : reviewPeriodAxes(item.result.reasons);
   if (fields?.some(k => !allowed.includes(k as MySeoulField))) throw new ReviewFailure('invalid_input');
   const patch = fields ? Object.fromEntries(fields.map(k => [k, draft[k]])) : myseoulPatch(item.facts, draft, allowed);
   if (patch.periods) {
     const periods = patch.periods as MySeoulPeriods;
-    const selected = axes ?? reviewPeriodAxes(item.result.reasons).filter(axis => fields || JSON.stringify(periods[axis]) !== JSON.stringify((item.facts.periods as MySeoulPeriods)[axis]));
-    if (selected.some(axis => !reviewPeriodAxes(item.result.reasons).includes(axis))) throw new ReviewFailure('invalid_input');
+    const selected = axes ?? periodAxes.filter(axis => fields || JSON.stringify(periods[axis]) !== JSON.stringify((item.facts.periods as MySeoulPeriods)[axis]));
+    if (selected.some(axis => !periodAxes.includes(axis))) throw new ReviewFailure('invalid_input');
     patch.periods = Object.fromEntries(selected.map(axis => [axis, periods[axis]]));
     if (!selected.length) delete patch.periods;
   }

@@ -23,10 +23,10 @@ const props={jobId:id,onBusy(){},onChanged(){changed++;},onClose(){closed++;},on
 function render(){cursor=0;refCursor=0;effects=[];return Panel(props);}
 function button(label){const n=nodes(render()).find(n=>n?.type==='button'&&text(n)===label);ok(n);return n;}
 function seed(item=initial){states=[structuredClone(item),false,false,'','',false,null,''];refs=[];}
-seed();button('닫기').props.onClick();eq(closed,1);let tree=render(),ns=nodes(tree);ok(ns.findIndex(n=>n?.type==='details')<ns.findIndex(n=>n?.type==='dl'));eq(ns.find(n=>n?.type==='details').props.open,undefined);eq(button('AI 대기 보류·재검토로 보내기').props.disabled,true);
+seed();button('닫기').props.onClick();eq(closed,1);let tree=render(),ns=nodes(tree);ok(ns.findIndex(n=>n?.type==='details')<ns.findIndex(n=>n?.type==='dl'));eq(ns.find(n=>n?.type==='details').props.open,undefined);eq(button('AI 대기 보류·재검토로 보내기').props.disabled,false);
 ns.find(n=>n?.type==='textarea').props.onChange({target:{value:'보호자 조건 재검토'}});eq(states[3],'보호자 조건 재검토');eq(button('닫기').props.disabled,true);
 const trigger={focus(){focuses++;}};button('AI 대기 보류·재검토로 보내기').props.onClick({currentTarget:trigger});eq(states[6],'request_recheck');
-nodes(render()).find(n=>n?.props?.['aria-label']==='재검토 최종 확인').props.onKeyDown({key:'Escape'});eq(states[6],null);eq(focuses,1);eq(states[3],'보호자 조건 재검토');
+nodes(render()).find(n=>n?.props?.['aria-label']==='재검토 최종 확인').props.onKeyDown({key:'Escape'});eq(states[6],null);render();effects[3]();eq(focuses,1);eq(states[3],'보호자 조건 재검토');
 button('AI 대기 보류·재검토로 보내기').props.onClick({currentTarget:trigger});
 let release;const waiting=new Promise(resolve=>release=resolve);
 const oldFetch=globalThis.fetch;globalThis.fetch=async(_url,options)=>{if(options?.method==='POST'){posts++;await waiting;return Response.json({mode:'local-fixture',item:await store.execute(id,JSON.parse(options.body),'synthetic-actor')});}reads++;return Response.json({mode:'local-fixture',item:await store.get(id)});};
@@ -43,7 +43,42 @@ seed(await store.get(id));states[3]=states[0].note;button('입력을 유지하�
 states[3]='보존할 사유';
 // Authorization loss removes protected source/facts while retaining the note.
 globalThis.fetch=async()=>Response.json({code:'signed_out'},{status:401});button('입력을 유지하고 최신 상태 확인').props.onClick();await new Promise(r=>setImmediate(r));eq(states[0],null);eq(states[3],'보존할 사유');
-seed({...initial,status:'claimed',canRecheck:false});ok(!nodes(render()).some(n=>n?.type==='textarea'));ok(!text(render()).includes('AI 대기 보류·재검토로 보내기'));
+seed({...initial,status:'claimed',canRecheck:false,canExclude:false});ok(!nodes(render()).some(n=>n?.type==='textarea'));ok(!text(render()).includes('AI 대기 보류·재검토로 보내기'));
+// No note required; final confirmation still protects the transition.
+seed();let emptyCommand;
+globalThis.fetch=async(_url,options)=>{emptyCommand=JSON.parse(options.body);return Response.json({mode:'local-fixture',item:{...initial,status:'cancelled',canRecheck:false,recheckPending:true,version:'c'.repeat(64)}});};
+eq(button('AI 대기 보류·재검토로 보내기').props.disabled,false);button('AI 대기 보류·재검토로 보내기').props.onClick({currentTarget:trigger});await button('확인하고 저장').props.onClick();await new Promise(r=>setImmediate(r));eq(emptyCommand.note,'');ok(text(render()).includes('입력하지 않음'));
+// Quick exclude on queued AND held states; no edit of the fact/filter payload.
+for(const held of [false,true]){
+ seed({...initial,recheckPending:held,status:held?'cancelled':'queued',canRecheck:!held});let command;
+ globalThis.fetch=async(_url,options)=>{command=JSON.parse(options.body);return Response.json({mode:'local-fixture',item:{...initial,status:'cancelled',canRecheck:false,canExclude:false,recheckPending:false}});};
+ button('서비스에 적합하지 않음').props.onClick({currentTarget:trigger});eq(states[6],'exclude');button('취소').props.onClick();eq(states[6],null);
+ button('대상 지역이 아님').props.onClick({currentTarget:trigger});await button('확인하고 제외').props.onClick();await new Promise(r=>setImmediate(r));eq(command.action,'exclude');eq(command.reasonCode,'region_not_suitable');ok(!('facts' in command));eq(states[0].canExclude,false);eq(states[0].values,initial.values);
+}
+seed({...initial,canExclude:false});ok(!text(render()).includes('빠른 제외'));
+seed();states[3]='유지할 메모';eq(button('서비스에 적합하지 않음').props.disabled,true);
+seed();button('서비스에 적합하지 않음').props.onClick({currentTarget:trigger});globalThis.fetch=async()=>{throw Error('timeout');};await button('확인하고 제외').props.onClick();await new Promise(r=>setImmediate(r));eq(states[5],true);eq(button('서비스에 적합하지 않음').props.disabled,true);eq(states[0].values,initial.values);
+
+// Actual saved-MySeoul row editor applies one draft field, preserves other drafts,
+// supports Esc/focus return and refuses applying a stale opened version.
+const {SavedMySeoulFacts}=load('app/components/admin/MySeoulReviewPanel.tsx');
+const myFacts={description:'합성 원문 설명을 보존합니다.',target:'기존 어린이 대상',conditions:['보호자 동반'],delivery_mode:'offline',periods:{application:[],operation:[]}};
+const myItem={facts:myFacts,editableFields:['description','target','conditions'],version:'a'.repeat(64)};
+let myDraft={...myFacts,description:'다른 행에서 작성 중인 설명'},myChanged;
+function myRender(item=myItem){cursor=0;refCursor=0;effects=[];return SavedMySeoulFacts({item,draft:myDraft,onChange:v=>{myDraft=v;myChanged=v;},disabled:false,onEditing(){}});}
+function myButton(label,item=myItem){const node=nodes(myRender(item)).find(n=>n?.type==='button'&&text(n)===label);ok(node);return node;}
+states=[];refs=[];let row=nodes(myRender()).find(n=>n?.props?.action?.props?.['aria-label']==='참여 대상 수정');ok(row);row.props.action.props.onClick();
+const factEditor=nodes(myRender()).find(n=>n?.type?.name==='FactEditor');ok(factEditor);factEditor.props.onChange({...factEditor.props.value,target:'수정한 대상'});
+myButton('초안에 적용').props.onClick();eq(myChanged.target,'수정한 대상');eq(myChanged.description,'다른 행에서 작성 중인 설명');eq(myItem.facts.target,'기존 어린이 대상');
+row=nodes(myRender()).find(n=>n?.props?.action?.props?.['aria-label']==='참여 대상 수정');row.props.action.props.onClick();
+const group=nodes(myRender()).find(n=>n?.props?.['aria-label']==='참여 대상 편집');group.props.onKeyDown({key:'Escape',preventDefault(){},stopPropagation(){}});eq(states[0],null);eq(myDraft.target,'수정한 대상');
+row=nodes(myRender()).find(n=>n?.props?.action?.props?.['aria-label']==='참여 대상 수정');row.props.action.props.onClick();eq(myButton('초안에 적용',{...myItem,version:'b'.repeat(64)}).props.disabled,true);ok(text(myRender({...myItem,version:'b'.repeat(64)})).includes('입력은 보존했습니다'));
+
+// Saved MySeoul facts use the same row toggle without touching another applied draft.
+states=[];refs=[];myChanged=null;row=nodes(myRender()).find(n=>n?.props?.action?.props?.['aria-label']==='참여 대상 수정');row.props.action.props.onClick();
+row=nodes(myRender()).find(n=>n?.props?.action?.props?.['aria-label']==='참여 대상 수정 취소');ok(row);eq(row.props.action.props.disabled,false);eq(row.props.action.props['aria-expanded'],true);
+const other=nodes(myRender()).find(n=>n?.props?.action?.props?.['aria-label']==='프로그램 설명 수정');eq(other.props.action.props.disabled,true);other.props.action.props.onClick();eq(states[0],'target');
+row.props.action.props.onClick();eq(states[0],null);eq(myChanged,null);eq(myDraft.description,'다른 행에서 작성 중인 설명');eq(myDraft.target,'수정한 대상');
 // Actual workspace callback routes each source to its existing facts panel.
 const Workspace=load('app/components/admin/ReviewWorkspace.tsx').default;
 function workspace(){cursor=0;refCursor=0;effects=[];return Workspace();}
