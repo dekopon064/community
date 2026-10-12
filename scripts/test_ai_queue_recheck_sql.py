@@ -60,6 +60,10 @@ up=(ROOT/'supabase/migrations/20261012014759_ai_queue_recheck_hold.sql').read_te
 deny("begin;alter function public.admin_program_detail(uuid) set search_path='public';"+up,'ai_recheck_predecessor_changed')
 ok(scalar("to_regclass('machimoa_review.ai_rechecks') is null"),'predecessor failure atomically creates nothing')
 sql(up)
+pending_up=(ROOT/'supabase/migrations/20261012023943_ai_queue_recheck_pending_review.sql').read_text(encoding='utf8')
+deny("begin;alter function public.admin_ai_queue_review_detail(uuid) set search_path='public';"+pending_up,'ai_recheck_pending_predecessor_changed')
+sql(pending_up)
+deny(pending_up,'ai_recheck_pending_predecessor_changed')
 print(json.dumps({'database':DB,'stage':'migration-applied','network':'none'}),flush=True)
 deny(up,'ai_recheck_predecessor_changed')
 for t in ['ai_rechecks','ai_recheck_receipts']:
@@ -80,7 +84,7 @@ known=lambda v:{'status':'known','value':v}
 na={'status':'not_applicable','value':None}
 def filters():
  return {'schema':'content-filters-v1','category':'program','topic':known('culture_experience'),'location':known({'scope':'specific','venues':[{'province':'11','district':'종로구','facility':'','address':''}]}),'delivery':known('onsite'),'audience':known('other'),'spaceKind':na,'application':known({'deadlineKind':'fixed','start':{'value':'2020-01-01','precision':'day'},'end':{'value':'2099-10-15','precision':'day'},'sourceStatus':'unknown'}),'schedule':na}
-def source(origin='seoul_reservation'):
+def source(origin='seoul_reservation',fill_filters=True):
  key=uuid4().hex.upper();rev=hashlib.sha256(key.encode()).hexdigest()
  if origin=='seoul_reservation':
   p=copy.deepcopy(seoul_fixtures(storage=True)[0]['item']);p['external_key']=key;p['revision_hash']=rev
@@ -99,6 +103,10 @@ def source(origin='seoul_reservation'):
   sid=rpc('observe_myseoul_program',[RUNS[origin],[p],None])[0]['id']
  else:
   raise AssertionError('unsupported synthetic source')
+ if not fill_filters:
+  job=scalar("(select id from machimoa_review.processing_jobs where source_item_id="+lit(sid)+" and revision_hash="+lit(rev)+" and processing_stage='ai_enrichment')")
+  assert job,'synthetic source has no initial AI job'
+  return job
  d=rpc('admin_program_detail' if origin=='seoul_reservation' else 'admin_myseoul_program_detail',[sid])
  fd=filters()
  for k in ['application','delivery']:
@@ -155,6 +163,21 @@ for origin in ['seoul_reservation','myseoul_program']:
  ok(scalar('(select count(*) from machimoa_review.curation_candidates)')==0,origin+' completion never creates candidate')
  dto_details.append(final)
  print(origin+' native hold/release passed',flush=True)
+
+# Already pending review must not prevent a deliberate hold. This recreates the
+# deployed queue shape without reading any real content or using its identifiers.
+for origin in ['seoul_reservation','myseoul_program']:
+ job=source(origin,fill_filters=False);d=detail(job);sid=d['sourceItemId'];before=snapshot(d)
+ ok(d['review']['filterInfo']['missing'] and d['canRecheck'],origin+' pending filters still permit explicit hold')
+ old_codes=scalar("(select reason_codes from machimoa_review.processing_jobs where source_item_id="+lit(sid)+" and processing_stage='content_review' and revision_hash="+lit(d['revision'])+")")
+ held=hold(job)
+ ok(held['status']=='cancelled' and held['recheckPending'],origin+' pending-review AI queue deliberately held')
+ codes=scalar("(select reason_codes from machimoa_review.processing_jobs where source_item_id="+lit(sid)+" and processing_stage='content_review' and revision_hash="+lit(d['revision'])+")")
+ ok(set(old_codes or [])<=set(codes) and 'ai_recheck_requested' in codes,origin+' existing filter/source review reasons preserved')
+ ok(snapshot(held)==before,origin+' holding incomplete source preserves facts and filters')
+ final=complete(job)
+ ok(final['status']=='cancelled' and not final['recheckPending'] and final['review']['filterInfo']['missing'],origin+' incomplete review cannot requeue after hold completion')
+ dto_details.extend([d,held,final])
 
 # Invalid commands and the actor/action/request binding fail without a hold.
 job=source();d=detail(job)
