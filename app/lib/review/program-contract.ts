@@ -7,6 +7,9 @@ export type ProgramFacts = Record<ProgramField, string | string[] | Record<strin
 export type Period = { raw: string | null; value: string | null; status: string; precision: string | null };
 export type ProgramCommand = { action: "save_facts" | "exclude"; revision: string; version: string; note: string; patch?: Partial<ProgramFacts>; resolve?: string[]; confirmRestored?: true };
 export const programReasonText: Record<string, string> = {
+  event_cancelled: "취소된 행사입니다. 현재 공식 안내와 저장된 행사 상태를 확인해 주세요.",
+  event_ended: "종료된 행사입니다. 현재 공식 안내와 저장된 행사 일정을 확인해 주세요.",
+  not_currently_accepting: "접수가 마감되거나 종료된 항목입니다. 현재 공식 안내를 확인해 주세요.",
   ai_recheck_requested: "AI 대기를 보류한 재검토 요청입니다. 현재 원문과 확인값을 대조하고 AI 작업 대기에서 재검토를 완료해 주세요.",
   restored_review_pending: "휴지통에서 복구했습니다. 기존 사실과 근거를 확인한 뒤 사실 저장·재평가를 눌러 주세요. 수정 없이도 검토를 완료할 수 있습니다.",
   activity_location_unknown: "실제 개최지의 서울·경기·인천 여부를 확인해 주세요. 원문 인용은 선택 입력입니다.",
