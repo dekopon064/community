@@ -6,16 +6,17 @@ validators receive an ephemeral view, never a replacement stored schema.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from ingest.ai_errors import AiJobError
 from ingest.ai_worker import KO_SECTION_HEADERS
-from ingest.body_markdown import format_reviewed_block, schedule_tables, read_body, schedule_table_lines
+from ingest.body_markdown import format_reviewed_block, schedule_tables, read_body, schedule_table_lines, inline_text
 from ingest.myseoul_ai_support import section_body
 from ingest.myseoul_content import (
     announcement_lines, deduplicate_summary_fees, merge_reviewed_sections,
     normalize_summary_schedule, participation_constraints, schedule_block,
     schedule_lines, validate_assembled_fees, validate_participant_quantities,
     validate_summary_period, without_replaced_announcements,
+    _operation_date_bounds, _unique_operation_year,
 )
 
 KST = timezone(timedelta(hours=9))
@@ -44,17 +45,82 @@ def period_text(facts: dict, role: str) -> str:
     return ' ~ '.join(public_date(facts['periods'][key]) for key in PAIRS[role])
 
 
+def _recruitment_session_lines(view: dict) -> list[str]:
+    """Seoul sometimes labels class dates '모집 일시', not reception dates.
+
+    Require listed dates with clock ranges anchored to the verified operation
+    endpoints. Do not expand a date range, interpret a recruitment period or
+    relabel an ambiguous date inside both application and operation periods.
+    Split only an explicit shared-month day list for comparison; keep the
+    original description and every original time/separator untouched.
+    """
+    bounds = _operation_date_bounds(view)
+    result = []
+    for line in view['description'].splitlines():
+        plain = re.sub(r'^[^\w가-힣]+', '', inline_text(line)).strip()
+        match = re.fullmatch(r'모집\s*일시\s*[:：]\s*'
+            r'(?:(?P<year>\d{4})\s*년\s*)?(?P<month>\d{1,2})\s*월\s*'
+            r'(?P<days>(?:\d{1,2}\s*일?\s*[,·、・]\s*)*\d{1,2}\s*일)(?P<tail>.*)', plain)
+        if not match or len(line) > 1500:
+            continue
+        tail = match['tail']
+        # The list must end here, not at the first endpoint of a range or at
+        # another date with independently bound times. Such text stays data.
+        if (re.search(r'신청|접수|모집|발표|마감|\d+\s*[월일]|\d{4}-\d{2}-\d{2}', tail)
+                or re.match(r'\s*(?:~|～|〜|부터|까지|[-–—])', tail)):
+            continue
+        clock = r'(?:\d{1,2}:[0-5]\d|\d{1,2}\s*시(?:\s*[0-5]?\d\s*분)?)'
+        remainder, ranges = re.subn(rf'{clock}\s*(?:~|～|〜|–|—|-|부터)\s*{clock}', '', tail)
+        remainder = re.sub(r'[（(]\s*[월화수목금토일](?:요일)?\s*[）)]|오전|오후', '', remainder)
+        if not ranges or remainder.strip(' \t/,·、・;；'):
+            # Mixed prose/activities or independently bound dates require
+            # existing explicit schedule evidence, not guesses from this label.
+            continue
+        month = int(match['month'])
+        days = [int(v) for v in re.findall(r'\d+', match['days'])]
+        occurrences = []
+        for day in days:
+            year = int(match['year']) if match['year'] else _unique_operation_year(month, day, bounds)
+            try:
+                occurrences.append(date(year, month, day))
+            except (TypeError, ValueError):
+                break
+        else:
+            if not any(min(occurrences) == start and max(occurrences) == end
+                       and all(start <= value <= end for value in occurrences) for start, end in bounds):
+                continue
+            if len(set(occurrences)) == 1:
+                application = view['periods'].get('application', [])
+                # One timestamp during the application period is ambiguous.
+                # A one-day class is supported only after registration ends.
+                try:
+                    end = date.fromisoformat(application[0]['endpoints'][1]['value'][:10])
+                except (IndexError, KeyError, TypeError, ValueError):
+                    continue
+                if end >= occurrences[0]:
+                    continue
+            prefix = match['year'] + '년 ' if match['year'] else ''
+            result += [f'{prefix}{month}월 {day}일{tail}' for day in days]
+    return list(dict.fromkeys(result))
+
+
 def validation_view(facts: dict) -> dict:
     description = facts['description']
     # Only explicitly labelled capacity text; V_MIN/V_MAX have no known role.
     capacity = [line.strip() for line in description.splitlines()
                 if re.match(r'^\s*(?:[-*■]\s*)?(?:모집\s*인원|정원)\s*[:：]', line)]
     sessions = schedule_table_lines(description)
-    return {'target': facts['target_raw'], 'description': description,
+    view = {'target': facts['target_raw'], 'description': description,
             'conditions': facts['conditions'], 'capacity_raw': capacity,
             **({'session_evidence': sessions} if sessions else {}),
             'periods': {role: [{'status': 'ok', 'endpoints': [facts['periods'][k] for k in pair]}]
                         for role, pair in PAIRS.items()}}
+    recruitment = _recruitment_session_lines(view)
+    if recruitment:
+        # Retain existing tables/ordinary schedules as well as this narrowly
+        # supported source label. The shared MySeoul extraction is unchanged.
+        view['session_evidence'] = list(dict.fromkeys(schedule_lines(view) + recruitment))
+    return view
 
 
 def reception_status(facts: dict, now: datetime | None = None) -> str:
