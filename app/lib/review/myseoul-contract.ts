@@ -151,6 +151,7 @@ const guidance: Record<string, string> = {
   application_method_missing: "신청 방법을 확인해 주세요. 별도 신청 폼은 필수가 아닙니다.", fee_unknown: "수강료와 별도 비용을 확인해 주세요.", fee_components_unresolved: "복합 비용의 항목별 근거를 확인해 주세요. 금액을 임의 분할하지 않습니다.", application_state_unknown: "현재 신청 상태와 기간을 대조해 주세요.",
 };
 export function myseoulGuidance(code: string) {
+  if(code==='ai_recheck_requested')return 'AI 대기를 보류한 재검토 요청입니다. 현재 원문과 확인값을 대조하고 AI 작업 대기에서 재검토를 완료해 주세요.';
   if (code.startsWith("source_change_conflict:")) return "새 원문과 이전 보완값이 다릅니다. 확인한 사실을 입력하고 저장해 주세요.";
   if (code.startsWith("source_fact_conflict:")) return `상단과 본문의 ${code.endsWith("application_method") ? "신청 방법" : code.endsWith("operation") ? "운영 일정" : code.endsWith("application") ? "신청 기간" : "해당 사실"}이 다릅니다. 원문을 대조하고 사용할 값을 입력해 주세요.`;
   return guidance[code] ?? "지원하지 않는 사유입니다. 원문과 계약을 확인하고 임의로 해소하지 마세요.";

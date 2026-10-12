@@ -12,6 +12,7 @@ import ProgramReviewPanel from "./ProgramReviewPanel";
 import MySeoulReviewPanel from "./MySeoulReviewPanel";
 import { myseoulGuidance } from "@/app/lib/review/myseoul-contract";
 import AiQueuePanel from "./AiQueuePanel";
+import type {AiReview} from '@/app/lib/review/ai-review';
 import TrashPanel from "./TrashPanel";
 import { quickReasons } from "@/app/lib/review/trash";
 import type { QuickReason } from "@/app/lib/review/trash";
@@ -45,6 +46,7 @@ export default function ReviewWorkspace() {
   const [programId, setProgramId] = useState<string | null>(null);
   const [myseoulId, setMyseoulId] = useState<string | null>(null);
   const [programBlocked, setProgramBlocked] = useState(false);
+  const [aiBlocked,setAiBlocked]=useState(false);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [imageSelection, setImageSelection] = useState<CandidateImageSelection | null>(null);
   const [content, setContent] = useState<CandidateContent | null>(null);
@@ -52,7 +54,7 @@ export default function ReviewWorkspace() {
   const [filterBlocked, setFilterBlocked] = useState(false);
   const [operationBusy, setBusy] = useState(false);
   const [classificationBlocked,setClassificationBlocked]=useState(false),[classificationActive,setClassificationActive]=useState(false);
-  const busy = operationBusy || filterBlocked || classificationBlocked;
+  const busy = operationBusy || filterBlocked || classificationBlocked || aiBlocked;
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
@@ -125,6 +127,13 @@ export default function ReviewWorkspace() {
     if (busy || dirty || confirmation || next === kind) return;
     setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setMyseoulId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(next !== "ai" && next !== "trash");
   }
+  function openAiRecheck(next:AiReview){
+    if(busy||dirty||confirmation||!next.recheckPending)return;
+    setKind('facts');setOffset(0);setItem(null);setFacts(null);setContent(null);setNotice('AI 대기는 보류 중입니다. 필요한 사실을 수정한 뒤 AI 작업 대기에서 최신 값을 확인하고 재검토를 완료해 주세요.');setError('');setLoading(true);setReload(n=>n+1);
+    if(next.sourceName==='seoul_reservation'){setProgramId(next.sourceItemId);setMyseoulId(null);}
+    else if(next.sourceName==='myseoul_program'){setMyseoulId(next.sourceItemId);setProgramId(null);}
+    else{setProgramId(null);setMyseoulId(null);setBusy(true);void call(`/api/admin/review/facts/${next.sourceItemId}`).then(data=>accept(data.item)).catch(e=>setError(e instanceof RequestFailure?e.code:'unavailable')).finally(()=>setBusy(false));}
+  }
   async function submit(command: ReviewCommand & { reasonCode?: QuickReason }) {
     if (!item || busy || sending.current) return;
     sending.current = true;
@@ -168,7 +177,7 @@ export default function ReviewWorkspace() {
       <button type="button" aria-current={kind === "trash" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("trash")} className={kind === "trash" ? primaryButton : secondaryButton}>휴지통</button>
     </nav>
     <TrashPanel active={kind === "trash"} onBusy={trashBusy} onRestored={restored} />
-    <AiQueuePanel active={kind === "ai"} />
+    <AiQueuePanel active={kind === "ai"} onBusy={setAiBlocked} onReview={openAiRecheck}/>
     <div hidden={kind === "ai" || kind === "trash"}>
     <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : publishedMode ? "게시된 글의 한국어·일본어 상세 본문을 수정합니다. ‘공개 본문 저장’은 현재 공개 글에 직접 반영되며, 수정 사유와 전후 이력을 남깁니다." : publicChange ? "공개된 콘텐츠의 원문 변경을 확인합니다. ‘공개 내용 수정·변경 확인’은 현재 공개 글에 직접 반영됩니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
     {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}

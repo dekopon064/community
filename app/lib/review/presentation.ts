@@ -1,5 +1,6 @@
 export const categories = { policy: "정책", program: "프로그램", event: "행사", youth_space: "청년공간", living: "생활" };
 const reasons: Record<string, { title: string; help: string }> = {
+  ai_recheck_requested: {title:"AI 대기를 보류하고 원문·확인값을 다시 확인해 주세요",help:"필요한 항목을 수정한 뒤 AI 작업 대기에서 최신 값을 확인하고 재검토를 완료해 주세요."},
   restored_review_pending: { title: "복구한 사실을 다시 확인해 주세요", help: "기존 사실과 근거를 확인한 뒤 사실 저장·재평가를 눌러 주세요. 수정할 내용이 없어도 검토를 완료할 수 있습니다." },
   product_type_unknown: { title: "정보 성격을 확인해 주세요", help: "원문을 읽고 행사·프로그램, 정책 참고자료, 생활 안내 중 하나를 선택해 주세요." },
   product_type_unconfirmed: { title: "정보 성격을 확인해 주세요", help: "원문을 읽고 정보 성격을 선택해 주세요. 공개 카테고리와는 별도 판단입니다." },

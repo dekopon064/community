@@ -21,7 +21,7 @@ export type AiJob = {
  resultState:"ready"|"missing"|"processed"|"source_changed"|"input_changed"|"unavailable"|null;
 };
 export type ObservedJob=AiJob|{jobId:string;status:"missing"};
-export type AiSnapshot={checkedAt:string;items:AiJob[];observed:ObservedJob[];hasMore:boolean};
+export type AiSnapshot={checkedAt:string;items:AiJob[];observed:ObservedJob[];held?:AiJob[];hasMore:boolean};
 export interface AiQueueStore{readonly mode:"database"|"local-fixture";read(offset:number,watch:string[]):Promise<AiSnapshot>}
 export const jobUuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function object(x:unknown):Record<string,unknown>{if(!x||typeof x!=="object"||Array.isArray(x))throw new ReviewFailure("unavailable");return x as Record<string,unknown>;}
@@ -50,9 +50,11 @@ export function aiSnapshot(x:unknown):AiSnapshot{
  if(!Array.isArray(o.items)||o.items.length>25||!Array.isArray(o.observed)||o.observed.length>100||typeof o.hasMore!=="boolean")throw new ReviewFailure("unavailable");
  const items=o.items.map(parseJob);
  if(items.some(j=>!j.currentRevision||!["queued","claimed","failed"].includes(j.status))||new Set(items.map(j=>j.jobId)).size!==items.length)throw new ReviewFailure("unavailable");
+ const held=o.held===undefined?[]:Array.isArray(o.held)&&o.held.length<=25?o.held.map(parseJob):null;
+ if(!held||held.some(j=>j.status!=='cancelled'||!j.currentRevision)||new Set([...items,...held].map(j=>j.jobId)).size!==items.length+held.length)throw new ReviewFailure('unavailable');
  const observed=o.observed.map(x=>{const v=object(x);if(v.status==="missing"){const id=str(v.jobId,36);if(!jobUuid.test(id))throw new ReviewFailure("unavailable");return {jobId:id,status:"missing" as const};}return parseJob(v);});
  if(new Set(observed.map(j=>j.jobId)).size!==observed.length)throw new ReviewFailure("unavailable");
- return {checkedAt:timestamp(o.checkedAt),items,observed,hasMore:o.hasMore};
+ return {checkedAt:timestamp(o.checkedAt),items,observed,held,hasMore:o.hasMore};
 }
 export class DatabaseAiQueueStore implements AiQueueStore{
  readonly mode="database" as const;
@@ -77,6 +79,7 @@ export function aiFailureText(j:AiJob){return j.errorCode&&Object.hasOwn(aiError
 export type Observation={watched:Map<string,AiJob>;announced:Set<string>};
 export function observeAi(state:Observation,snapshot:AiSnapshot):string{
  let ready=0,missing=0,changed=0,processed=0,cancelled=0;
+ const heldIds=new Set((snapshot.held??[]).map(j=>j.jobId));
  for(const job of snapshot.observed){
   const old=state.watched.get(job.jobId);if(!old)continue;
   if(job.status==="missing"){state.watched.delete(job.jobId);changed++;continue;}
@@ -88,7 +91,7 @@ export function observeAi(state:Observation,snapshot:AiSnapshot):string{
     else if(job.resultState==="processed")processed++;else changed++;
    }state.watched.delete(job.jobId);
   }else if(!job.currentRevision){state.watched.delete(job.jobId);changed++;}
-  else if(job.status==="cancelled"){state.watched.delete(job.jobId);cancelled++;}
+  else if(job.status==="cancelled"){state.watched.delete(job.jobId);if(!heldIds.has(job.jobId))cancelled++;}
  }
  for(const job of snapshot.items){state.watched.set(job.jobId,job);}
  // Session-only bounded observation; no persistent read receipts or polling.
