@@ -35,8 +35,8 @@ export function buildProgramSave(item:{revision:string;version:string;facts:Prog
  const cleaned=Object.fromEntries(Object.entries(draft).map(([k,v])=>[k,Array.isArray(v)?v.map(x=>x.trim()).filter(Boolean):v])) as ProgramFacts;
  const patch=programPatch(item.facts,cleaned,item.editableFields);
  if(!Object.keys(patch).length&&!item.restoredReviewPending)throw new ReviewFailure("invalid_input",{form:"확인한 사실을 변경해 주세요."});
- if(resolve.some(code=>!reasonPatchFields[code]?.some(field=>Object.hasOwn(patch,field))))throw new ReviewFailure("invalid_input",{resolve:"해소를 확인한 사유에 해당하는 사실을 입력해 주세요."});
- return programCommand({action:"save_facts",revision:item.revision,version:item.version,note:note||(item.restoredReviewPending&&!Object.keys(patch).length?"복구 후 사실 재확인":""),patch,resolve,...(item.restoredReviewPending?{confirmRestored:true}:{})});
+ if(resolve.some(code=>!reasonPatchFields[code]?.some(field=>!["activity_evidence","residence_evidence","period_evidence"].includes(field)&&Object.hasOwn(patch,field))))throw new ReviewFailure("invalid_input",{resolve:"해소를 확인한 사유에 해당하는 사실을 입력해 주세요."});
+ return programCommand({action:"save_facts",revision:item.revision,version:item.version,note,patch,resolve,...(item.restoredReviewPending?{confirmRestored:true}:{})});
 }
 export function displayProgramValue(key:string,value:unknown):string {
  if(Array.isArray(value))return value.length?value.map(v=>programChoices[key]?.[String(v)]??({internet:"인터넷 예약",onsite:"현장 접수",phone:"전화 접수"}[String(v)]??String(v))).join("\n"):"미표기";

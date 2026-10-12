@@ -35,8 +35,8 @@ def validate_context(value: Any, target: str, revision: str, version: int, worke
         uses_venue=(f['productType']=='event_program' and f['category'] in {'program','event','youth_space'}
                     and f['delivery'] in {'offline','hybrid'}
                     and not (f['category']=='youth_space' and c['filters'].get('spaceKind',{}).get('value')=='news'))
-        if f['scope'] not in {'nationwide','specific','unknown'} or not isinstance(f['evidence'],str):raise ValueError()
-        if f['productType']!='living_guide' and not uses_venue and (f['scope']=='unknown' or not f['evidence'].strip()):raise ValueError()
+        if f['scope'] not in {'nationwide','specific','unknown'} or not isinstance(f['evidence'],str) or len(f['evidence'])>500:raise ValueError()
+        if f['productType']!='living_guide' and not uses_venue and f['scope']=='unknown':raise ValueError()
         if not isinstance(c['nativeConfirmedFacts'],dict) or set(c['nativeConfirmedFacts'])!={'programFacts','gateFacts'}:raise ValueError()
         for fkey in ('programFacts','gateFacts'):
             if c['nativeConfirmedFacts'][fkey] is not None and not isinstance(c['nativeConfirmedFacts'][fkey],dict):raise ValueError()

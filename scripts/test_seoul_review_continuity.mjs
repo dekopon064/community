@@ -29,7 +29,7 @@ const text=t=>typeof t==='string'||typeof t==='number'?String(t):React.Children.
 const originalFetch=globalThis.fetch,originalRAF=globalThis.requestAnimationFrame,originalDocument=globalThis.document;
 globalThis.fetch=async()=>{throw Error('network forbidden');};
 globalThis.requestAnimationFrame=fn=>{fn();};
-globalThis.document={getElementById:()=>({focus(){focuses.push('input');},scrollIntoView(){}})};
+globalThis.document={getElementById:()=>({closest(){return null;},focus(){focuses.push('input');},scrollIntoView(){}})};
 function render(){cursor=0;refCursor=0;const tree=Panel({id,onBlocked(){},onResult(){}});return tree;}
 function reset(){states=[structuredClone(item),structuredClone(item.facts),false,false,false];refs=[];}
 function saved(){const tree=render(),node=nodes(tree).find(n=>n?.type?.name==='SavedProgramFacts');ok(node);return node.type(node.props);}
@@ -45,8 +45,16 @@ try{
  eq(programDateInput({status:'ok',value:'2099-10-01T01:02:03Z',precision:'second'}),'2099-10-01T10:02:03');
  reset();let tree=render();const category=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel');ok(text(category.props.reference).includes('합성 원문'));ok(text(category.props.overview).includes('이번에 확인할 사항'));
  const primary=nodes(tree).find(n=>n?.type?.name==='FactFields');eq(primary.props.editable,['activity_evidence']);
+ const optionalField=nodes(primary.type(primary.props)).find(n=>n?.type?.name==='OptionalReviewText');ok(optionalField);eq(optionalField.props.value,'');
+ optionalField.props.onChange('인용 한 줄');eq(states[1].activity_evidence,['인용 한 줄']);states[1]=structuredClone(item.facts);
+ const optionalTree=optionalField.type({...optionalField.props,value:'보존된 인용'});
+ eq(optionalTree.type,'details');ok(!optionalTree.props.open);
+ const optionalInput=nodes(optionalTree).find(n=>n?.type==='textarea');ok(!optionalInput.props.required);eq(optionalInput.props.value,'보존된 인용');
+ let focused=false,prevented=false;const disclosure={open:true,closest(){return null;},querySelector(){return {focus(){focused=true;}};}};
+ optionalTree.props.onKeyDown({key:'Escape',currentTarget:disclosure,preventDefault(){prevented=true;}});eq(disclosure.open,false);ok(focused&&prevented);eq(optionalInput.props.value,'보존된 인용');
+ prevented=false;disclosure.open=true;disclosure.closest=()=>({});optionalTree.props.onKeyDown({key:'Escape',currentTarget:disclosure,preventDefault(){prevented=true;}});ok(!prevented);eq(disclosure.open,true);
  let row=saved();ok(nodes(row).some(n=>n?.props?.value==='저장된 값 없음'));ok(nodes(row).filter(n=>n?.type?.name==='ReviewValueRow').every(n=>!n.props.status.props.confirmed));
- const regionRef=refs.at(-1);regionRef.current={querySelector:()=>({focus(){focuses.push('button');}})};
+ const regionRef=refs.at(-1);regionRef.current={querySelector:()=>({closest(){return null;},focus(){focuses.push('button');}})};
  button(row,'실제 개최 지역 수정').props.onClick();eq(states[3],true);row=saved();
  const editor=nodes(row).find(n=>n?.type?.name==='FactFields');eq(editor.props.prefix,'program-saved');
  editor.props.onChange({...editor.props.facts,activity_region:'noncapital'});
@@ -70,7 +78,7 @@ try{
  let overview=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel').props.overview;
  ok(text(overview).includes('아래 필터 저장값으로 판정'));ok(!text(overview).includes('확인 근거'));
  let jump=nodes(overview).find(n=>n?.props?.href==='#review-filter-delivery');ok(jump);
- globalThis.document={getElementById:()=>({querySelector:()=>({focus(){focuses.push('filter');},scrollIntoView(){}})})};
+ globalThis.document={getElementById:()=>({querySelector:()=>({closest(){return null;},focus(){focuses.push('filter');},scrollIntoView(){}})})};
  jump.props.onClick({preventDefault(){}});ok(focuses.includes('filter'));
  ok(!nodes(tree).some(n=>n?.type?.name==='ProgramActivityConfirmation'));ok(!nodes(tree).some(n=>n?.type?.name==='FactFields'));
  let filter=nodes(tree).find(n=>n?.type?.name==='FilterReviewPanel');eq(filter.props.reviewFields,['delivery','location']);eq(filter.props.info.data,activityData);

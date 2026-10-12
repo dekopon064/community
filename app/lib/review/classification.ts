@@ -83,8 +83,8 @@ export function classificationSelection(item: ClassificationDetail, current: Fac
   return {facts: filters ? classificationFilterFacts(facts, filters) : facts, filters};
 }
 export function classificationConfirmationNote(category: Category, previous: string) {
-  const names = {policy:'정책',program:'프로그램',event:'행사',youth_space:'청년공간',living:'생활'};
-  return previous.trim().length >= 10 ? previous.trim() : `운영자 확인: 원문을 대조하여 ${names[category as keyof typeof names] ?? category} 분류와 입력한 필수값을 확인했습니다.`;
+  void category;
+  return previous.trim();
 }
 export function classificationPublicContent(raw:unknown):CandidateContent {
   const o=object(raw),limits={titleKo:300,titleJa:300,summaryKo:1000,summaryJa:1000,contentKo:200000,contentJa:200000};
@@ -121,7 +121,6 @@ export function classificationMissing(f: Facts, filters: ContentFilters | null):
   if (f.delivery === 'unknown') missing.push('delivery');
   if (f.productType !== 'living_guide' && !classificationUsesVenue(f, filters)) {
     if (f.scope === 'unknown' || f.scope === 'specific' && !f.regions.length) missing.push('scope');
-    if (!f.evidence.trim()) missing.push('evidence');
   }
   if (f.productType === 'policy_reference' && f.foreignEligibility === 'unknown') missing.push('foreignEligibility');
   if (['policy','program'].includes(f.category) && !f.deadlineKind) missing.push('deadlineKind');
@@ -146,12 +145,12 @@ export function classificationCommand(raw: unknown) {
   const o = object(raw);
   if (Object.keys(o).sort().join(',') !== 'classificationVersion,facts,filters,note,revision,version'
     || !hash(o.revision) || !hash(o.version) || !Number.isSafeInteger(o.classificationVersion) || Number(o.classificationVersion) < 0
-    || typeof o.note !== 'string' || o.note.trim().length < 10 || o.note.length > 4000) throw new ReviewFailure('invalid_input');
+    || typeof o.note !== 'string' || o.note.length > 4000) throw new ReviewFailure('invalid_input');
   const facts = validateFacts(o.facts);
   let filters: ContentFilters | null;
   try { filters = o.filters === null ? null : parseContentFilters(o.filters); } catch { throw new ReviewFailure('invalid_input'); }
   const missing = classificationMissing(facts, filters);
-  if (missing.length) throw new ReviewFailure('invalid_input', Object.fromEntries(missing.map(k => [k,'새 분류에 필요한 값과 원문 근거를 확인해 주세요.'])));
+  if (missing.length) throw new ReviewFailure('invalid_input', Object.fromEntries(missing.map(k => [k,'새 분류에 필요한 사실값을 확인해 주세요.'])));
   return { revision:o.revision, version:o.version, classificationVersion:Number(o.classificationVersion), facts, filters, note:o.note.trim() };
 }
 export function classificationDetail(raw: unknown, id: string): ClassificationDetail {

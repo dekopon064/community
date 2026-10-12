@@ -285,10 +285,9 @@ def assess_program_facts(facts: ProgramFacts, dates: dict[str, Any], *, now: dat
         reasons.append("policy_eligibility_unconfirmed" if facts.content_kind == "policy_finance" else "program_purpose_unconfirmed")
     if facts.delivery_mode == "unknown":
         reasons.append("delivery_mode_unknown")
-    if facts.delivery_mode in {"offline", "hybrid"} and (facts.activity_region != "capital" or not facts.activity_evidence):
+    if facts.delivery_mode in {"offline", "hybrid"} and (facts.activity_region != "capital"):
         reasons.append("activity_location_unknown")
-    if facts.residence_scope == "unknown" or (facts.delivery_mode == "online" and
-            (facts.residence_scope not in {"nationwide", "includes_capital", "capital"} or not facts.residence_evidence)):
+    if facts.delivery_mode == "online" and facts.residence_scope not in {"nationwide", "includes_capital", "capital"}:
         reasons.append("residence_scope_unknown")
     if facts.source_status == "unknown":
         reasons.append("source_status_unknown")

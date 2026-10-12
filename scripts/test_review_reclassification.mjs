@@ -20,10 +20,10 @@ const id='40000000-0000-4000-8000-000000000901',revision='a'.repeat(64),version=
 const facts={productType:'living_guide',category:'living',scope:'unknown',regions:[],evidence:'',foreignEligibility:'unknown',delivery:'online',deadlineKind:'',deadlineOn:'',eventStart:'',eventEnd:''};
 const base={id,revision,version,classificationVersion:0,active:false,category:'living',facts,filters:null,note:'',editable:true,ready:false,reasons:[],sourceReasons:[]};
 const command={revision,version,classificationVersion:0,facts,filters:null,note:'합성 원문을 확인하여 생활 안내로 재분류합니다.'};
-eq(classificationCommand(command),command);eq(classificationDetail(base,id),base);
+eq(classificationCommand(command),command);eq(classificationCommand({...command,note:''}).note,'');eq(classificationDetail(base,id),base);
 for(const category of ['policy','program','event','youth_space','living']){eq(classificationDraft(facts,category).category,category);const f=classificationFilters(category,null);eq(f?.category??null,['policy','living'].includes(category)?null:category);}
-for(const bad of [{...command,actor:id},{...command,source:'myseoul_program'},{...command,classificationVersion:-1},{...command,facts:{...facts,category:'invalid'}},{...command,filters:{}},{...command,note:'短'},{...command,facts:{...facts,productType:''}},{...command,facts:{...facts,delivery:'unknown'}}])fails(()=>classificationCommand(bad));
-eq(classificationMissing({...facts,category:'event',productType:'event_program'},null),['scope','evidence','eventStart','eventEnd','filters']);
+for(const bad of [{...command,actor:id},{...command,source:'myseoul_program'},{...command,classificationVersion:-1},{...command,facts:{...facts,category:'invalid'}},{...command,filters:{}},{...command,note:'x'.repeat(4001)},{...command,facts:{...facts,productType:''}},{...command,facts:{...facts,delivery:'unknown'}}])fails(()=>classificationCommand(bad));
+eq(classificationMissing({...facts,category:'event',productType:'event_program'},null),['scope','eventStart','eventEnd','filters']);
 const pf=classificationFilters('program',null);pf.delivery={status:'known',value:'onsite'};pf.application={status:'known',value:{deadlineKind:'fixed',start:null,end:{value:'2099-10-15T18:00:00+09:00',precision:'minute'},sourceStatus:'closed'}};
 const linked=classificationFilterFacts({...facts,category:'program'},pf);eq(linked.delivery,'offline');eq(linked.deadlineKind,'fixed');eq(linked.deadlineOn,'2099-10-15');eq(linked.scope,'unknown');
 const ef=classificationFilters('event',null);ef.schedule={status:'known',value:{kind:'occurrences',recurrence:null,occurrences:[{start:{value:'2099-10-11',precision:'day'},end:{value:'2099-10-12',precision:'day'}},{start:{value:'2099-10-15',precision:'day'},end:{value:'2099-10-16',precision:'day'}}]}};
@@ -46,10 +46,11 @@ const props={id,disabled:false,onBlocked(){},onActive(){},onSaved:async()=>{},re
 const render=()=>{cursor=0;rc=0;effects=[];return Panel(props);};
 const button=label=>{const n=nodes(render()).find(n=>n?.type==='button'&&text(n)===label);assert.ok(n,label);return n;};
 const response=(item,status=200)=>new Response(JSON.stringify(status===200?{item}:{code:item}),{status});
+const originalRAF=globalThis.requestAnimationFrame;globalThis.requestAnimationFrame=fn=>fn();
 const originalFetch=globalThis.fetch;let fetches=[],mode='success',stored=null;
 globalThis.fetch=async(u,o={})=>{assert.equal(u,'/api/admin/review-classification/'+id);fetches.push(o.body?JSON.parse(o.body):null);eq(o.cache,'no-store');eq(o.credentials,'same-origin');if(o.body&&mode==='unknown')throw Error('synthetic timeout');if(o.body&&mode==='unknown_completed'){stored={...base,classificationVersion:1,version:'c'.repeat(64),active:true,ready:true,note:JSON.parse(o.body).note};return response('unavailable',503);}if(!o.body&&mode==='unknown_completed'&&stored)return response(stored);if(o.body&&mode==='conflict')return response('conflict',409);return response(o.body?{...base,classificationVersion:1,version:'c'.repeat(64),active:true,ready:true,note:JSON.parse(o.body).note}:base);};
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-async function prepare(){states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();nodes(render()).find(n=>n?.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:true}});}
+async function prepare(){states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();}
 try{
  await prepare();ok(!text(render()).includes('미저장 변경'));eq(button('분류 변경 닫기').props.disabled,false);
  const form=nodes(render()).find(n=>n?.type==='form');form.props.onSubmit({preventDefault(){}});form.props.onSubmit({preventDefault(){}});await settle();eq(fetches.filter(Boolean).length,1);eq(states[0].active,true);eq(states[3],false);
@@ -73,7 +74,7 @@ try{
  eq(classificationSelection(seeded,{...seeded.facts,scope:'specific',regions:['41'],evidence:'합성 직접 입력'},null,'program').facts.regions,['41']);
  eq(classificationFilters('program',null,{...facts,delivery:'offline'}).delivery.value,'onsite');eq(classificationFilterFacts({...facts,delivery:'offline'},classificationFilters('program',null)).delivery,'offline');
  ok(classificationMissing({...facts,category:'policy',productType:'policy_reference',scope:'nationwide',evidence:'근거',foreignEligibility:'eligible',deadlineKind:'fixed'},null).includes('deadlineOn'));
- ok(classificationConfirmationNote('program','').startsWith('운영자 확인:'));ok(!classificationConfirmationNote('program','').includes('program'));
+ eq(classificationConfirmationNote('program',''),'');eq(classificationCommand({...command,note:''}).note,'');
  globalThis.fetch=async()=>response(seeded);states=[];refs=[];render();effects[0]();await settle();ok(nodes(render()).some(n=>n?.props?.id==='classification-category'));
  nodes(render()).find(n=>n?.props?.id==='classification-category').props.onChange({target:{value:'program'}});eq(states[2],seedFilters);eq(states[1].scope,'nationwide');
  let editFilters=nodes(render()).find(n=>n?.props?.prefix==='classification');eq(editFilters.props.fields,[]);
@@ -85,11 +86,14 @@ try{
  let rowWrites=0;const priorRowFetch=globalThis.fetch;globalThis.fetch=async(...args)=>{if(args[1]?.body)rowWrites++;return priorRowFetch(...args);};
  let rowButton=display.find(n=>n?.props?.['data-classification-edit']==='filter:topic');rowButton.props.onClick();
  let local=nodes(render()).find(n=>n?.props?.prefix==='classification-row');ok(local);eq(button('분류 변경 닫기').props.disabled,true);eq(states[2].topic,seedFilters.topic);
+ const optionalDetails={open:false};let optionalFocused=false;const priorRegion=refs[1].current;
+ refs[1].current={querySelector:()=>({querySelector:()=>({closest:()=>optionalDetails,focus(){optionalFocused=true;}})})};
+ render();effects.at(-1)();ok(optionalDetails.open);ok(optionalFocused);refs[1].current=priorRegion;
  local.props.onChange({...states[2],topic:{status:'known',value:'other'}});
  eq(states[2].topic,seedFilters.topic);button('취소').props.onClick();eq(states[2].topic,seedFilters.topic);
  rowButton=nodes(render()).find(n=>n?.props?.['data-classification-edit']==='filter:topic');rowButton.props.onClick();
  local=nodes(render()).find(n=>n?.props?.prefix==='classification-row');local.props.onChange({...states[2],topic:{status:'known',value:'other'}});
- button('초안에 적용').props.onClick();eq(states[2].topic.value,'other');eq(states[18],null);
+ button('초안에 적용').props.onClick();eq(states[2].topic.value,'other');eq(states[17],null);
  ok(nodes(render()).some(n=>n?.type==='p'&&text(n)==='변경할 값 → 기타'));
  nodes(render()).find(n=>n?.props?.['data-classification-edit']==='filter:topic').props.onClick();
  let stopped=false;nodes(render()).find(n=>n?.props?.['data-classification-row']).props.onKeyDown({key:'Escape',preventDefault(){},stopPropagation(){stopped=true;}});ok(stopped);eq(states[2].topic.value,'other');
@@ -115,10 +119,10 @@ try{
  let applies=0;res=await classificationRequest(req(apply),id,{...deps,store:()=>({apply:async(_,c,actor)=>{applies++;eq(c,apply);eq(actor,id);return pub;}})});eq(res.status,200);eq(applies,1);ok(res.headers.get('cache-control').includes('no-store'));
  let current=pub,transport='success',writes=0;const completed={...pub,publication:{...pub.publication,category:'living',applied:true}};
  globalThis.fetch=async(u,o={})=>{if(o.body){writes++;if(transport==='unknown'){current=completed;return response('unavailable',503);}if(transport==='conflict')return response('conflict',409);return response(completed);}return response(current);};
- async function publicPrepare(){states=[];refs=[];current=pub;render();effects[0]();await settle();button('공개 본문 확인·재분류 적용').props.onClick();let t=render();nodes(t).find(n=>n?.type==='textarea').props.onChange({target:{value:command.note}});nodes(render()).find(n=>n?.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:true}});}
- await publicPrepare();props.onSaved=async()=>{throw Error('synthetic refresh failed');};await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[14],false);eq(states[10],false);ok(text(render()).includes('적용은 완료했지만'));props.onSaved=async()=>{};
- transport='unknown';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[10],true);eq(states[14],true);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[10],false);eq(states[14],false);eq(writes,1);
- transport='conflict';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});current={...pub,version:'e'.repeat(64),publication:{...pub.publication,version:'f'.repeat(64),content:{...body,contentKo:'다른 검토자가 수정한 합성 본문'}}};button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[16],false);eq(states[15].contentKo,body.contentKo);eq(states[0].publication.content.contentKo,current.publication.content.contentKo);eq(button('재분류 적용').props.disabled,true);eq(writes,1);
+ async function publicPrepare(){states=[];refs=[];current=pub;render();effects[0]();await settle();button('공개 본문 확인·재분류 적용').props.onClick();let t=render();nodes(t).find(n=>n?.type==='textarea').props.onChange({target:{value:command.note}});nodes(t).find(n=>n?.type==='input'&&n.props.type==='checkbox').props.onChange({target:{checked:true}});}
+ await publicPrepare();props.onSaved=async()=>{throw Error('synthetic refresh failed');};await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[13],false);eq(states[10],false);ok(text(render()).includes('적용은 완료했지만'));props.onSaved=async()=>{};
+ transport='unknown';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(states[10],true);eq(states[13],true);button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[10],false);eq(states[13],false);eq(writes,1);
+ transport='conflict';writes=0;await publicPrepare();await nodes(render()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});current={...pub,version:'e'.repeat(64),publication:{...pub.publication,version:'f'.repeat(64),content:{...body,contentKo:'다른 검토자가 수정한 합성 본문'}}};button('입력을 유지하고 저장 상태 확인').props.onClick();await settle();eq(states[15],false);eq(states[14].contentKo,body.contentKo);eq(states[0].publication.content.contentKo,current.publication.content.contentKo);eq(button('재분류 적용').props.disabled,true);eq(writes,1);
  // Regression for the three reported paths: no selection, same category, and a real change.
  const {classificationMode}=load('app/lib/review/classification.ts');
  const {myseoulReviewReasons}=load('app/components/admin/MySeoulReviewPanel.tsx');
@@ -133,7 +137,7 @@ try{
  const singleMissing={...seedFilters,topic:{status:'unknown',value:null}};
  eq(classificationMissing(fullProgram.facts,singleMissing),['filter:topic']);
  for(const delivery of ['online','unknown'])ok(classificationMissing({...fullProgram.facts,delivery},seedFilters).includes('scope'));
- ok(classificationMissing({...fullProgram.facts,category:'policy',productType:'policy_reference'},null).includes('evidence'));
+ ok(classificationMissing({...fullProgram.facts,category:'policy',productType:'policy_reference'},null).includes('scope'));ok(!classificationMissing({...fullProgram.facts,category:'policy',productType:'policy_reference'},null).includes('evidence'));
  let flowWrites=0;
  globalThis.fetch=async(_u,o={})=>{if(o.body)flowWrites++;return response(fullProgram);};
  states=[];refs=[];render();effects[0]();await settle();button('분류 변경').props.onClick();
@@ -156,13 +160,13 @@ try{
  nodes(render()).find(n=>n?.props?.id==='classification-category').props.onChange({target:{value:'program'}});
  ok(!text(render()).includes('대상 지역의 원문 근거'));eq(states[1].scope,'unknown');eq(flowWrites,0);
  // Opening from a reason uses the same lock as the header action.
- states[3]=false;states[14]=true;
+ states[3]=false;states[13]=true;
  render().props.onClick({target:{closest:()=>true}});eq(states[3],false);
- states[14]=false;states[10]=true;
+ states[13]=false;states[10]=true;
  render().props.onClick({target:{closest:()=>true}});eq(states[3],false);
  const spaceNews=classificationFilters('youth_space',null);spaceNews.spaceKind={status:'known',value:'news'};spaceNews.location={status:'not_applicable',value:null};
  eq(classificationMissing({...fullProgram.facts,category:'youth_space',deadlineKind:'',deadlineOn:'',scope:'nationwide',evidence:'합성 전국 이용 근거'},spaceNews),[]);
- eq(classificationMissing({...fullProgram.facts,category:'youth_space',deadlineKind:'',deadlineOn:''},spaceNews),['scope','evidence']);
+ eq(classificationMissing({...fullProgram.facts,category:'youth_space',deadlineKind:'',deadlineOn:''},spaceNews),['scope']);
  // Mode must be resolved before showing participant eligibility, while the
  // server command still rejects unresolved delivery.
  const undecided={...fullProgram,facts:{...fullProgram.facts,delivery:'unknown'},filters:{...seedFilters,delivery:{status:'unknown',value:null}}};
@@ -175,4 +179,4 @@ try{
  ok(!text(render()).includes('대상 지역의 원문 근거'));
  eq(states[1].scope,'unknown');eq(states[1].evidence,'');
  console.log(JSON.stringify({checks,syntheticOnly:true,externalConnections:0,result:'passed'}));
-}finally{globalThis.fetch=originalFetch;}
+}finally{globalThis.fetch=originalFetch;globalThis.requestAnimationFrame=originalRAF;}
