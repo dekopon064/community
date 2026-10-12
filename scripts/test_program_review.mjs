@@ -46,8 +46,8 @@ assert.equal(mayCacheResponse(response),false);checks++;
 response=await programRequest(post(command),id,deps);assert.equal(response.status,200);assert.equal(calls.at(-1).args.p_actor,actor);assert.deepEqual(calls.at(-1).args.p_patch,command.patch);checks++;
 let before=calls.length;
 const activity={action:'confirm_activity',revision:item.revision,version:item.version,factsVersion:1,filterVersion:1,note:'공식 원문에서 서울 개최 확인',filters:{delivery:{status:'known',value:'onsite'},location:{status:'known',value:{scope:'specific',venues:[{province:'11',district:null,facility:'',address:''}]}}}};
-assert.equal(programCommand(activity).action,'confirm_activity');checks++;
-response=await programRequest(post(activity),id,deps);assert.equal(response.status,200);assert.equal(calls.at(-1).name,'admin_program_activity_confirm');assert.equal(calls.at(-1).args.p_actor,actor);assert.equal(calls.at(-1).args.p_facts_version,1);assert.equal(calls.at(-1).args.p_filter_version,1);assert.deepEqual(calls.at(-1).args.p_filters,activity.filters);checks++;
+assert.throws(()=>programCommand(activity),e=>e.code==='invalid_input');checks++;
+before=calls.length;response=await programRequest(post(activity),id,deps);assert.equal(response.status,422);assert.equal(calls.length,before);checks++;
 for(const bad of [{...activity,actor:'forged'},{...activity,factsVersion:0},{...activity,note:''},{...activity,filters:{...activity.filters,residence:'nationwide'}}]){assert.throws(()=>programCommand(bad),e=>e.code==='invalid_input');checks++;}
 const withReview={...item,activityReview:{supported:true,confirmed:false,pending:true}};
 assert.deepEqual(programItem(withReview,id).activityReview,withReview.activityReview);checks++;

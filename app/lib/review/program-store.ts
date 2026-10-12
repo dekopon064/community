@@ -54,10 +54,6 @@ export class ProgramReviewStore {
   async get(id: string) { return programItem(await this.invoke("admin_program_detail", { p_id: id }), id); }
   async execute(id: string, command: ProgramCommand, actor: string) {
     const args: Record<string, unknown> = { p_id: id, p_revision: command.revision, p_version: command.version, p_note: command.note, p_actor: actor };
-    if(command.action==='confirm_activity') {
-      Object.assign(args,{p_facts_version:command.factsVersion,p_filter_version:command.filterVersion,p_filters:command.filters});
-      return programItem(await this.invoke('admin_program_activity_confirm',args),id);
-    }
     if (command.action === "save_facts") { args.p_patch = command.patch; args.p_resolve = command.resolve; }
     return programItem(await this.invoke(command.action === "save_facts" ? command.confirmRestored ? "admin_program_save_restored" : "admin_program_save" : "admin_program_exclude", args), id);
   }

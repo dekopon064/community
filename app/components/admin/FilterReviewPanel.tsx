@@ -107,12 +107,12 @@ export function SavedFilterValues({saved,data,onChange,disabled,missing,confirme
     })}</dl></details>;
 }
 
-export default function FilterReviewPanel({id,version,info,disabled,onBlocked,onSaved}:{id:string;version:string;info:FilterInfo;disabled:boolean;onBlocked:(v:boolean)=>void;onSaved:()=>Promise<void>}) {
+export default function FilterReviewPanel({id,version,info,disabled,onBlocked,onSaved,reviewFields=[]}:{id:string;version:string;info:FilterInfo;disabled:boolean;onBlocked:(v:boolean)=>void;onSaved:()=>Promise<void>;reviewFields?:FilterKey[]}) {
   const [draft,setDraft]=useState(()=>structuredClone(info.data)),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const sending=useRef(false);
   const [pendingRepeat,setPendingRepeat]=useState(false),[resetKey,setResetKey]=useState(0);
   const [editing,setEditing]=useState<FilterKey|null>(null);
-  const fields=[...new Set([...filterReviewFields(info),...changedFilterFields(info.data,draft)])];
+  const fields=[...new Set([...filterReviewFields(info),...reviewFields,...changedFilterFields(info.data,draft)])];
   const dirty=pendingRepeat||JSON.stringify(draft)!==JSON.stringify(info.data);
   useEffect(()=>{onBlocked(busy||dirty||editing!==null);return()=>onBlocked(false);},[busy,dirty,editing,onBlocked]);
   useEffect(()=>{if(!dirty&&editing===null)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty,editing]);

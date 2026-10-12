@@ -1,13 +1,11 @@
 import { ReviewFailure } from "./contracts";
-import { parseContentFilters } from '../contentFilters';
-import type { ContentFilters } from '../contentFilters';
 
 export const programFields = ["schema_version", "content_kind", "application_actor", "delivery_mode", "activity_region", "activity_evidence", "residence_scope", "residence_evidence", "target_raw", "conditions", "application_methods", "fee_kind", "fee_amounts", "source_status", "conflicts", "missing", "editorial_pending", "period_evidence", "periods", "official_url", "description"] as const;
 export const patchFields = ["content_kind", "application_actor", "delivery_mode", "activity_region", "activity_evidence", "residence_scope", "residence_evidence", "target_raw", "conditions", "application_methods", "fee_kind", "fee_amounts", "source_status", "period_evidence", "periods", "official_url", "description"] as const;
 export type ProgramField = typeof programFields[number];
 export type ProgramFacts = Record<ProgramField, string | string[] | Record<string, Period>>;
 export type Period = { raw: string | null; value: string | null; status: string; precision: string | null };
-export type ProgramCommand = { action: "save_facts" | "exclude" | "confirm_activity"; revision: string; version: string; note: string; patch?: Partial<ProgramFacts>; resolve?: string[]; confirmRestored?: true; factsVersion?: number; filterVersion?: number; filters?: Pick<ContentFilters,'location'|'delivery'> };
+export type ProgramCommand = { action: "save_facts" | "exclude"; revision: string; version: string; note: string; patch?: Partial<ProgramFacts>; resolve?: string[]; confirmRestored?: true };
 export const programReasonText: Record<string, string> = {
   ai_recheck_requested: "AI 대기를 보류한 재검토 요청입니다. 현재 원문과 확인값을 대조하고 AI 작업 대기에서 재검토를 완료해 주세요.",
   restored_review_pending: "휴지통에서 복구했습니다. 기존 사실과 근거를 확인한 뒤 사실 저장·재평가를 눌러 주세요. 수정 없이도 검토를 완료할 수 있습니다.",
@@ -77,17 +75,6 @@ export function programFacts(input: unknown): ProgramFacts {
 }
 export function programCommand(input: unknown): ProgramCommand {
   const obj = object(input); const action = obj.action;
-  if(action === 'confirm_activity') {
-    if(Object.keys(obj).some(k=>!['action','revision','version','factsVersion','filterVersion','filters','note'].includes(k)))throw new ReviewFailure('invalid_input');
-    const revision=text(obj.revision,64),version=text(obj.version,64),note=text(obj.note,4000).trim();
-    if(!/^[a-f0-9]{64}$/.test(revision)||!/^[a-f0-9]{64}$/.test(version)||!note||!Number.isSafeInteger(obj.factsVersion)||Number(obj.factsVersion)<1||!Number.isSafeInteger(obj.filterVersion)||Number(obj.filterVersion)<1)throw new ReviewFailure('invalid_input');
-    const filters=object(obj.filters);
-    if(Object.keys(filters).length!==2||!Object.hasOwn(filters,'location')||!Object.hasOwn(filters,'delivery'))throw new ReviewFailure('invalid_input');
-    const na={status:'not_applicable',value:null};
-    const parsed=parseContentFilters({schema:'content-filters-v1',category:'program',topic:{status:'unknown',value:null},audience:{status:'unknown',value:null},application:{status:'unknown',value:null},spaceKind:na,schedule:na,...filters});
-    if(parsed.location.status!=='known'||parsed.location.value.scope!=='specific'||!parsed.location.value.venues.length||parsed.location.value.venues.some(v=>!['11','28','41'].includes(v.province))||parsed.delivery.status!=='known'||!['onsite','mixed'].includes(parsed.delivery.value))throw new ReviewFailure('invalid_input');
-    return {action,revision,version,note,factsVersion:Number(obj.factsVersion),filterVersion:Number(obj.filterVersion),filters:{location:parsed.location,delivery:parsed.delivery}};
-  }
   const keys = action === "save_facts" ? ["action", "revision", "version", "note", "patch", "resolve", ...(obj.confirmRestored === true ? ["confirmRestored"] : [])] : ["action", "revision", "version", "note"];
   if (!["save_facts", "exclude"].includes(String(action)) || Object.keys(obj).some((k) => !keys.includes(k))) throw new ReviewFailure("invalid_input");
   const revision = text(obj.revision, 64), version = text(obj.version, 64), note = text(obj.note, 4000).trim();
