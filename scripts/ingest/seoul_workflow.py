@@ -11,6 +11,7 @@ from uuid import UUID
 from ingest.connectors.seoul_reservation import normalize_seoul_item, SeoulContractError
 from ingest.program_ai import ProgramAIAdapter, process_seoul_program_job
 from ingest.program_db import program_rpc_item
+from ingest.seoul_audience import collection_audience
 
 PAGE_SIZE = 50
 MAX_PAGES = 1
@@ -27,7 +28,8 @@ class CollectionPlan:
 def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_end: bool) -> CollectionPlan:
     if type(rows) is not list or len(rows) > PAGE_SIZE or type(existing_keys) is not frozenset or type(natural_end) is not bool:
         raise ValueError('seoul_collection_limits_invalid')
-    counts = dict(scanned=len(rows), target=0, other_category=0, existing_skipped=0,
+    counts = dict(scanned=len(rows), culture_count=0, target=0, other_category=0, existing_skipped=0,
+                  audience_excluded=0, audience_excluded_by_reason={}, audience_exclusions=[],
                   failed=0, new_planned=0, new_saved=0, review_waiting=None,
                   ai_waiting=None, unprocessed=0, ai_calls=0,
                   coverage='listing_natural_end' if natural_end else 'bounded_page_only', item_errors=[])
@@ -39,6 +41,14 @@ def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_
             continue
         if row.get('MAXCLASSNM') != '문화체험':
             counts['other_category'] += 1
+            continue
+        counts['culture_count'] += 1
+        audience = collection_audience(row.get('USETGTINFO'))
+        if not audience.selected:
+            counts['audience_excluded'] += 1
+            reasons = counts['audience_excluded_by_reason']
+            reasons[audience.reason] = reasons.get(audience.reason, 0) + 1
+            counts['audience_exclusions'].append(dict(row_index=index, reason=audience.reason))
             continue
         counts['target'] += 1
         if row.get('SVCID') in existing_keys:
@@ -82,7 +92,8 @@ def process_seoul_collection(store, adapter, connector) -> dict:
     run = store.start_ingest_run('seoul_reservation', lease_seconds=120)
     if run.skipped:
         return dict(status='skipped', reason=run.skip_reason, scanned=0, ai_calls=0)
-    counts = dict(status='failed', scanned=0, target=0, other_category=0, existing_skipped=0,
+    counts = dict(status='failed', scanned=0, culture_count=0, target=0, other_category=0, existing_skipped=0,
+                  audience_excluded=0, audience_excluded_by_reason={}, audience_exclusions=[],
                   failed=0, new_planned=0, new_saved=0, review_waiting=0, ai_waiting=0,
                   unprocessed=0, ai_calls=0, coverage='bounded_page_only', state_unknown=False)
     batches_ok = 0
@@ -92,7 +103,7 @@ def process_seoul_collection(store, adapter, connector) -> dict:
         stage = 'planning'
         plan = plan_collection(list(page.items), existing_keys=frozenset(), natural_end=page.natural_end)
         counts.update(plan.counters, review_waiting=0, ai_waiting=0)
-        # Empty culture page still acknowledges its scan under the same lease.
+        # An entirely filtered page still acknowledges only its bounded scan.
         batches = plan.batches or ((),)
         offset = 0
         for records in batches:

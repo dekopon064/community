@@ -58,7 +58,10 @@ def diagnose_read(connector):
         from ingest.seoul_workflow import plan_collection
         plan = plan_collection(list(page.items),existing_keys=frozenset(),natural_end=page.natural_end)
         return dict(mode='diagnostic_read_only', status='read_complete', scanned=len(page.items),
-                    culture_count=plan.counters['target'], other_category=plan.counters['other_category'],
+                    culture_count=plan.counters['culture_count'], other_category=plan.counters['other_category'],
+                    target_count=plan.counters['target'], audience_excluded=plan.counters['audience_excluded'],
+                    audience_excluded_by_reason=plan.counters['audience_excluded_by_reason'],
+                    audience_exclusions=plan.counters['audience_exclusions'],
                     valid_target_count=plan.counters['new_planned'], rejected_count=plan.counters['failed'],
                     validation='incomplete' if plan.counters['failed'] else 'valid',item_errors=plan.counters['item_errors'],
                     coverage='listing_natural_end' if page.natural_end else 'bounded_page_only',

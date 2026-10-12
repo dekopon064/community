@@ -38,6 +38,7 @@ def main(argv=None):
         except Exception:
             print('seoul_collection_configuration_or_contract_unavailable');return 1
     print(json.dumps(dict(mode='validation_only',source='seoul_reservation',category='문화체험',
+        audience_any_of=['제한없음','성인','청년'],audience_source='USETGTINFO',
         page_size=PAGE_SIZE,max_pages=MAX_PAGES,http_attempt_budget=3,store_batch_size=STORE_BATCH_SIZE,
         ordering='untrusted',network_calls=0,ai_calls=0,execution_ready='requires_server_contract',
         required_contract='seoul-new-only-v1',publish=False),ensure_ascii=False))
