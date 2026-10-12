@@ -63,55 +63,47 @@ try{
  eq(reads,1);eq(states[1].activity_evidence,['서울 확인 근거']);eq(states[1].source_status,'reservation_closed');eq(states[0].version,'c'.repeat(64));
  states[5]='unavailable';globalThis.fetch=async()=>{throw Error('ambiguous');};
  button(render(),'입력을 유지하고 저장 상태 확인').props.onClick();await new Promise(r=>setImmediate(r));eq(states[1].activity_evidence,['서울 확인 근거']);
- // Same values must still produce a confirmation command, without fabricating facts.
- const activityData={location:{status:'known',value:{scope:'specific',venues:[{province:'11',district:null,facility:'',address:''}]}},delivery:{status:'known',value:'onsite'}};
- const capable={...item,activityReview:{supported:true,pending:true,confirmed:false},filterInfo:{filterVersion:1,data:activityData}};
+ // Existing filters use the ordinary save flow even with a legacy pending flag.
+ const activityData={schema:'content-filters-v1',category:'program',topic:{status:'known',value:'culture_experience'},audience:{status:'known',value:'other'},application:{status:'known',value:{deadlineKind:'fixed',start:{value:facts.periods.RCPTBGNDT.value,precision:facts.periods.RCPTBGNDT.precision},end:{value:facts.periods.RCPTENDDT.value,precision:facts.periods.RCPTENDDT.precision},sourceStatus:'open'}},spaceKind:{status:'not_applicable',value:null},schedule:{status:'not_applicable',value:null},location:{status:'known',value:{scope:'specific',venues:[{province:'11',district:null,facility:'',address:''}]}},delivery:{status:'known',value:'onsite'}};
+ const capable={...item,activityReview:{supported:true,pending:true,confirmed:false},filterInfo:{schema:'content-filters-v1',revision:item.revision,filterVersion:1,data:activityData,missing:[],origins:{delivery:'operator',location:'operator'}}};
  reset();states[0]=capable;tree=render();
- const capableCategory=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel');
- ok(!text(capableCategory.props.overview).includes('원문 근거를 입력'));
- const jump=nodes(capableCategory.props.overview).find(n=>n?.props?.href==='#program-activity-confirm');ok(jump);jump.props.onClick({preventDefault(){}});ok(focuses.includes('input'));
- ok(!nodes(tree).some(n=>n?.type?.name==='FactFields')); // no redundant facility/evidence form
- // The server now offers the same explicit action for unknown delivery with
- // already-saved capital/onsite filters. No client-created completion state.
- reset();states[0]={...capable,facts:{...facts,delivery_mode:'unknown',activity_region:'unknown'},result:{...item.result,reasons:['delivery_mode_unknown']}};
+ let overview=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel').props.overview;
+ ok(text(overview).includes('아래 필터 저장값으로 판정'));ok(!text(overview).includes('확인 근거'));
+ let jump=nodes(overview).find(n=>n?.props?.href==='#review-filter-delivery');ok(jump);
+ globalThis.document={getElementById:()=>({querySelector:()=>({focus(){focuses.push('filter');},scrollIntoView(){}})})};
+ jump.props.onClick({preventDefault(){}});ok(focuses.includes('filter'));
+ ok(!nodes(tree).some(n=>n?.type?.name==='ProgramActivityConfirmation'));ok(!nodes(tree).some(n=>n?.type?.name==='FactFields'));
+ let filter=nodes(tree).find(n=>n?.type?.name==='FilterReviewPanel');eq(filter.props.reviewFields,['delivery','location']);eq(filter.props.info.data,activityData);
+ states[0]={...capable,facts:{...facts,delivery_mode:'unknown',activity_region:'unknown'},result:{...item.result,reasons:['delivery_mode_unknown']}};
  states[1]=structuredClone(states[0].facts);tree=render();
- const deliveryCategory=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel');
- ok(text(deliveryCategory.props.overview).includes('실제 진행 방식과 개최 지역을 원문과 대조해 확인·저장'));
- ok(nodes(deliveryCategory.props.overview).some(n=>n?.props?.href==='#program-activity-confirm'));
- ok(!nodes(tree).some(n=>n?.type?.name==='FactFields'));
- ok(nodes(tree).some(n=>n?.type?.name==='ProgramActivityConfirmation'));
- // Missing capability keeps the ordinary online/unknown fact form available.
- states[0]={...states[0],activityReview:{supported:true,pending:false,confirmed:false}};tree=render();
- eq(nodes(tree).find(n=>n?.type?.name==='FactFields').props.editable,['delivery_mode','activity_region','activity_evidence']);
- const Activity=load('app/components/admin/ProgramActivityConfirmation.tsx').default;
- let sent=[];const props={item:capable,disabled:false,onBlocked(){},onSubmit:async cmd=>{sent.push(cmd);}};
- function activity(){cursor=0;refCursor=0;return Activity(props);}
- states=[];refs=[];let activityTree=activity();
- eq(button(activityTree,'진행 방식·개최 지역 확인·저장').props.disabled,true);
- eq(states[0],activityData);ok(text(activityTree).includes('기존 값이 맞으면 다시 입력하지 않고'));
- nodes(activityTree).find(n=>n?.type==='textarea').props.onChange({target:{value:'공식 원문의 서울 개최값을 재확인'}});
- nodes(activity()).find(n=>n?.type==='input').props.onChange({target:{checked:true}});
- activityTree=activity();eq(button(activityTree,'진행 방식·개최 지역 확인·저장').props.disabled,false);
- ok(nodes(activityTree).filter(n=>n?.type?.name==='ReviewStatus').every(n=>!n.props.confirmed));
- await activityTree.props.onSubmit({preventDefault(){}});
- eq(sent.length,1);eq(sent[0].action,'confirm_activity');eq(sent[0].factsVersion,1);eq(sent[0].filters,activityData);ok(!('patch' in sent[0]));
- // Returned errors/reads cannot discard input or grant local completion.
- eq(states[1],'공식 원문의 서울 개최값을 재확인');eq(states[2],true);
- props.item={...capable,version:'c'.repeat(64)};activityTree=activity();
- eq(button(activityTree,'진행 방식·개최 지역 확인·저장').props.disabled,true);
- await activityTree.props.onSubmit({preventDefault(){}});eq(sent.length,1);eq(states[1],'공식 원문의 서울 개최값을 재확인');
- activityTree.props.onKeyDown({key:'Escape',preventDefault(){},currentTarget:{focus(){focuses.push('activity');}}});
- eq(states[1],'');eq(states[2],false);eq(states[4],props.item.version);ok(focuses.includes('activity'));
- nodes(activity()).find(n=>n?.type==='textarea').props.onChange({target:{value:'별도 입력'}});
- button(activity(),'입력 취소').props.onClick();eq(states[1],'');eq(states[0],activityData);
- // A pending confirmation never produces a second write or local completion.
- let release;let posts=0;props.onSubmit=()=>{posts++;return new Promise(r=>release=r);};
- nodes(activity()).find(n=>n?.type==='textarea').props.onChange({target:{value:'원문 대조 근거'}});
- nodes(activity()).find(n=>n?.type==='input').props.onChange({target:{checked:true}});
- activityTree=activity();const pending=activityTree.props.onSubmit({preventDefault(){}});
- await activityTree.props.onSubmit({preventDefault(){}});eq(posts,1);
- ok(nodes(activity()).filter(n=>n?.type?.name==='ReviewStatus').every(n=>!n.props.confirmed));
- release();await pending;
- props.disabled=true;await activity().props.onSubmit({preventDefault(){}});eq(posts,1);eq(states[1],'원문 대조 근거');
+ filter=nodes(tree).find(n=>n?.type?.name==='FilterReviewPanel');eq(filter.props.reviewFields,['delivery','location']);
+ ok(!nodes(tree).some(n=>n?.type?.name==='FactFields'));ok(!text(tree).includes('진행 방식·개최 지역 확인 근거'));
+ // Other unresolved facts are still editable; only the duplicated venue inputs disappear.
+ states[0]={...states[0],editableFields:[...item.editableFields,'residence_scope'],result:{...item.result,reasons:['delivery_mode_unknown','residence_scope_unknown']},facts:{...states[0].facts,residence_scope:'unknown'}};
+ states[1]=structuredClone(states[0].facts);tree=render();eq(nodes(tree).find(n=>n?.type?.name==='FactFields').props.editable,['residence_scope']);
+ // A filter save reloads the server result; the UI never invents fact completion.
+ const serverResult={...states[0],version:'d'.repeat(64),facts:{...states[0].facts,delivery_mode:'offline',activity_region:'capital'},result:{...item.result,reasons:['residence_scope_unknown']}};
+ let readsAfterSave=0;globalThis.fetch=async(url,opt)=>{eq(url,`/api/admin/program-review/${id}`);ok(!opt.method);readsAfterSave++;return new Response(JSON.stringify({mode:'database',item:serverResult}));};
+ await filter.props.onSaved();eq(readsAfterSave,1);eq(states[0].result.reasons,['residence_scope_unknown']);eq(states[0].facts.delivery_mode,'offline');
+ // The existing filter form submits the unchanged values in one ordinary
+ // request: no note, extra checkbox, confirmation RPC or automatic retry.
+ const Filter=load('app/components/admin/FilterReviewPanel.tsx').default;
+ const props={...filter.props,onSaved:async()=>{savedCount++;}};let savedCount=0,posts=0,packet;
+ states=[];refs=[];function filters(){cursor=0;refCursor=0;return Filter(props);}
+ let ft=filters();eq(button(ft,'이 값으로 확인·저장').props.disabled,false);
+ ok(!nodes(ft).some(n=>n?.type==='textarea'));
+ let complete;globalThis.fetch=(url,opt)=>{eq(url,`/api/admin/review-filters/${id}`);eq(opt.method,'POST');packet=JSON.parse(opt.body);posts++;return new Promise(r=>complete=r);};
+ const form=nodes(ft).find(n=>n?.type==='form');const submitting=form.props.onSubmit({preventDefault(){}});
+ await form.props.onSubmit({preventDefault(){}});eq(posts,1);eq(packet.fields,['delivery','location']);ok(!('note' in packet));eq(packet.data,activityData);
+ complete(new Response(JSON.stringify({item:{...props.info,id,version:'e'.repeat(64),filterVersion:2,editable:false}})));await submitting;eq(savedCount,1);
+ // Ambiguous responses and session errors preserve edited input, without
+ // pretending that the server completed the fact review.
+ const edited=structuredClone(activityData);edited.location.value.venues[0].district='종로구';
+ nodes(filters()).find(n=>n?.type?.name==='FilterInputs').props.onChange(edited);
+ globalThis.fetch=async()=>{posts++;return new Response('ambiguous');};
+ await nodes(filters()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});
+ eq(posts,2);eq(savedCount,1);eq(states[0],edited);ok(states[2].includes('자동 재시도하지'));
+ globalThis.fetch=async()=>{posts++;return new Response(JSON.stringify({code:'signed_out'}),{status:401});};
+ await nodes(filters()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(posts,3);eq(savedCount,1);eq(states[0],edited);
  console.log(JSON.stringify({syntheticOnly:true,checks,result:'passed',externalConnections:0}));
 }finally{globalThis.fetch=originalFetch;globalThis.requestAnimationFrame=originalRAF;globalThis.document=originalDocument;}
