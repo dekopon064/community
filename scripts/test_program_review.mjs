@@ -22,6 +22,10 @@ let checks=0,calls=[];let error=null;let malformed=false;
 const store=new ProgramReviewStore({async rpc(name,args){calls.push({name,args});return {data:malformed?{raw_payload:'DO_NOT_ECHO'}:name==='admin_program_list'?[{id,title:'합성 프로그램',reasons:[],raw_payload:'DO_NOT_ECHO'}]:item,error};}});
 assert.equal(JSON.stringify(programItem(item,id)).includes('DO_NOT_ECHO'),false);checks++;
 assert.ok(programItem(item,id).reasonGuidance[0].text.includes('실제 개최지'));checks++;
+for(const [code,word] of [['event_cancelled','취소'],['event_ended','종료'],['not_currently_accepting','마감']]){
+  const row=programItem({...item,result:{...item.result,reasons:[code]}},id);
+  assert.ok(row.reasonGuidance[0].text.includes(word));checks++;
+}
 for(const bad of [{...item,factsVersion:{raw_payload:'DO_NOT_ECHO'}},{...item,editableFields:['constructor']}]){
   assert.throws(()=>programItem(bad,id),e=>e.code==='unavailable');checks++;
 }
