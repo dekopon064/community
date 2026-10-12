@@ -9,6 +9,7 @@ export type ProgramFacts = Record<ProgramField, string | string[] | Record<strin
 export type Period = { raw: string | null; value: string | null; status: string; precision: string | null };
 export type ProgramCommand = { action: "save_facts" | "exclude" | "confirm_activity"; revision: string; version: string; note: string; patch?: Partial<ProgramFacts>; resolve?: string[]; confirmRestored?: true; factsVersion?: number; filterVersion?: number; filters?: Pick<ContentFilters,'location'|'delivery'> };
 export const programReasonText: Record<string, string> = {
+  ai_recheck_requested: "AI 대기를 보류한 재검토 요청입니다. 현재 원문과 확인값을 대조하고 AI 작업 대기에서 재검토를 완료해 주세요.",
   restored_review_pending: "휴지통에서 복구했습니다. 기존 사실과 근거를 확인한 뒤 사실 저장·재평가를 눌러 주세요. 수정 없이도 검토를 완료할 수 있습니다.",
   activity_location_unknown: "실제 개최지를 확인하고 서울·경기·인천 여부와 원문 근거를 입력해 주세요.",
   delivery_mode_unknown: "온라인 예약과 온라인 진행을 구분해 실제 진행 방식·개최지를 입력해 주세요.",

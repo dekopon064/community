@@ -15,12 +15,15 @@ const fixture=samples.fixtures.find(f=>f.name==='two_conflicts'),facts=fixture.i
 const item={id,revision:facts.source_revision,version:'b'.repeat(64),schema:facts.schema_version,profile:'myseoul-program-v1-local',factsVersion:1,
 source:{name:'myseoul_program',title:'합성 제목',url:facts.official_url,body:facts.description},facts,observedFacts:facts,
 result:fixture.expected,status:'open',aiStatus:'blocked',editableFields:['application_methods','application_links','fees'],history:[],raw_payload:'DO_NOT_ECHO'};
-const command={action:'save_facts',revision:item.revision,version:item.version,note:'원문 신청 방법 확인',patch:{application_methods:['인터넷·방문 병행']},resolve:['source_fact_conflict:application_method']};
+const command={action:'save_facts',revision:item.revision,version:item.version,patch:{application_methods:['인터넷·방문 병행']}};
 let checks=0,calls=[],error=null,data=item;
+// Current save_facts contract has no legacy note/resolve fields. Keep strict rejection.
+for(const legacy of [{...command,note:'원문 확인'},{...command,resolve:['source_fact_conflict:application_method']}]){assert.throws(()=>myseoulCommand(legacy),e=>e.code==='invalid_input');checks++;}
 const store=new MySeoulReviewStore({async rpc(name,args){calls.push({name,args});return {data,error};}});
 assert.ok(!JSON.stringify(myseoulItem(item,id)).includes('DO_NOT_ECHO'));checks++;
+assert.equal(myseoulItem({...item,aiStatus:'queued'},id).aiStatus,'queued');checks++;
 assert.deepEqual(myseoulFacts({...facts,raw_payload:'DO_NOT_ECHO'}),facts);checks++;
-for(const bad of [{...item,aiStatus:'queued'},{...item,schema:'program-scope-v1-local'},{...item,source:{...item.source,name:'seoul_reservation'}},{...item,editableFields:['issues']},{...item,revision:'a'.repeat(64)},{...item,factsVersion:0},{...item,facts:{...facts,official_url:'https://evil.invalid'}}]){
+for(const bad of [{...item,schema:'program-scope-v1-local'},{...item,source:{...item.source,name:'seoul_reservation'}},{...item,editableFields:['issues']},{...item,revision:'a'.repeat(64)},{...item,factsVersion:0},{...item,facts:{...facts,official_url:'https://evil.invalid'}}]){
 assert.throws(()=>myseoulItem(bad,id),e=>e.code==='unavailable');checks++;
 }
 for(const bad of [{...command,actor:'forged'},{...command,patch:{issues:[]}},{...command,patch:{missing:[]}},{...command,patch:{conflicts:[]}},{...command,patch:{delivery_mode:'hybrid'}},{...command,note:''},{...command,patch:{fees:[{component:'bogus',evidence:['무료']}]}},{...command,patch:{application_links:['javascript:alert(1)']}},{...command,patch:{description:'<img src=x onerror=alert(1)>'}}]){
@@ -36,7 +39,7 @@ for(const request of [new Request(url),post(command)]){const response=await myse
 assert.equal(calls.length,before);assert.equal(selected,s);checks++;
 }
 let response=await myseoulRequest(new Request(url),id,deps);assert.equal(response.status,200);assert.equal(mayCacheResponse(response),false);checks++;
-response=await myseoulRequest(post(command),id,deps);assert.equal(response.status,200);assert.equal(calls.at(-1).name,'admin_myseoul_program_save');assert.equal(calls.at(-1).args.p_actor,actor);checks++;
+response=await myseoulRequest(post(command),id,deps);assert.equal(response.status,200);assert.equal(calls.at(-1).name,'admin_myseoul_program_save_v2');assert.equal(calls.at(-1).args.p_actor,actor);checks++;
 const exclude={action:'exclude',revision:item.revision,version:item.version,note:'서비스 범위상 제외'};
 response=await myseoulRequest(post(exclude),id,deps);assert.equal(response.status,200);assert.equal(calls.at(-1).name,'admin_myseoul_program_exclude');checks++;
 let before=calls.length;
