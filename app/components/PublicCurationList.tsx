@@ -8,7 +8,8 @@ import { ChevronDown, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import CurationCard from './CurationCard';
 import InfoStatePanel from './InfoStatePanel';
 import PublicFilterCalendar from './PublicFilterCalendar';
-import { districtChoices, eventTopics, programTopics, provinceLabels } from '@/app/lib/contentFilters';
+import { eventTopics, programTopics, provinceLabels } from '@/app/lib/contentFilters';
+import { sortedDistrictChoices } from '@/app/lib/districtSort';
 import type { FilterCategory, FilterEndpoint } from '@/app/lib/contentFilters';
 import { applicationStates, deliveries, eventTiming, exploreCurations, nextExplorationTransition, programTiming, readExplorationQuery, writeExplorationQuery } from '@/app/lib/publicContentFilters';
 import type { ExplorationQuery, PublicCurationItem } from '@/app/lib/publicContentFilters';
@@ -185,7 +186,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
       <p className={styles.note}>{t('regionScopeNote')}</p>
       {query.provinces.map(province=><div key={province} className={styles.districtGroup}>
         <h3>{t('districtFor',{province:t(`provinces.${province}`)})}</h3>
-        <div className={styles.districtScroll}>{options('districts',districtChoices[province].map(d=>`${province}:${d}`),t('district'))}</div>
+        <div className={styles.districtScroll}>{options('districts',sortedDistrictChoices(province,locale).map(d=>`${province}:${d}`),t('district'))}</div>
       </div>)}
     </>;
     if(key==='additional') return <div className={styles.additional}>
