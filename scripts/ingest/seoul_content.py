@@ -107,6 +107,7 @@ def _recruitment_session_lines(view: dict) -> list[str]:
 
 
 def validation_view(facts: dict) -> dict:
+    from ingest.seoul_operating_hours import facility_hours_evidence
     description = facts['description']
     # Only explicitly labelled capacity text; V_MIN/V_MAX have no known role.
     roles = public_roles(facts)
@@ -115,6 +116,7 @@ def validation_view(facts: dict) -> dict:
     sessions = schedule_table_lines(description)
     view = {'target': facts['target_raw'], 'description': description,
             'conditions': roles['eligibility'], 'capacity_raw': capacity,
+            'facility_hours_evidence': facility_hours_evidence(description),
             **({'session_evidence': sessions} if sessions else {}),
             'periods': {role: [{'status': 'ok', 'endpoints': [facts['periods'][k] for k in pair]}]
                         for role, pair in PAIRS.items()}}
@@ -217,6 +219,8 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     # recognized standalone output directives; a class teaching JSON stays data.
     validate_public_body(content)
     validate_weekly_schedule(content, facts['description'])
+    from ingest.seoul_calendar_sessions import validate_calendar_sessions
+    validate_calendar_sessions(content, view)
     # These same checks run before cleanup, so conflicting AI facts cannot be
     # hidden by removal/replacement of a generated row.
     validate_summary_period(content, canonical, view)

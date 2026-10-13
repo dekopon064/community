@@ -281,7 +281,7 @@ def _validate_announcements(summary: str, f: dict) -> None:
                 return a[1] is None or b[1] is None and years == {a[1]}
             if len(actual) != len(expected) or not all(compatible(a, b) for a, b in zip(actual, expected)):
                 continue
-            _validate_dated_schedule_details(line, [source])
+            _validate_dated_schedule_details(line, [source], f)
             # Don't invent a notification channel or turn individual notice into
             # public announcement. Preserve the full current source line below.
             channels = r'개별|공개|홈페이지|문자|이메일|전화'
@@ -402,10 +402,11 @@ def _unique_operation_year(month: int, day: int, bounds: list[tuple[date, date]]
 
 
 def _validate_schedule_years(line: str, evidence: list[str], f: dict, expected_years: set) -> None:
-    dates = [value for text in evidence for value in _dates_and_times(text) if value[0] == 'date']
     bounds = _operation_date_bounds(f)
+    known_years = frozenset(year for start, end in bounds for year in range(start.year, end.year + 1))
+    dates = [value for text in evidence for value in _dates_and_times(text, known_years=known_years) if value[0] == 'date']
     verified_years = set(expected_years)
-    for value in _dates_and_times(line):
+    for value in _dates_and_times(line, known_years=known_years):
         if value[0] != 'date' or value[1] is None:
             continue
         _, year, month, day = value
@@ -428,11 +429,13 @@ def _validate_schedule_years(line: str, evidence: list[str], f: dict, expected_y
         raise AiJobError('ai_schema_error')
 
 
-def _dated_schedule_details(text: str) -> list[tuple[tuple, set, set]]:
+def _dated_schedule_details(text: str, *, known_years: frozenset = frozenset()) -> list[tuple[tuple, set, set]]:
     # Bind explicitly adjacent weekdays/clocks to their date. Do not expand a
     # shared time, generate sessions, or treat a period endpoint as a class time.
-    matches = list(re.finditer(r'\d{4}-\d{2}-\d{2}|(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일', text))
-    dates = [v for v in _dates_and_times(text) if v[0] == 'date']
+    matches = list(re.finditer(r"\d{4}-\d{2}-\d{2}|(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일|"
+                              r"(?:\d{4}|['’]\d{2})\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}\.?|"
+                              r"(?<![\d.])\d{1,2}\s*\.\s*\d{1,2}\.?(?=\s*[（(])", text))
+    dates = [v for v in _dates_and_times(text, known_years=known_years) if v[0] == 'date']
     details = []
     for index, (match, value) in enumerate(zip(matches, dates)):
         fragment = text[match.end():matches[index+1].start() if index+1 < len(matches) else len(text)]
@@ -442,9 +445,10 @@ def _dated_schedule_details(text: str) -> list[tuple[tuple, set, set]]:
     return details
 
 
-def _validate_dated_schedule_details(line: str, evidence: list[str]) -> None:
-    expected = [entry for text in evidence for entry in _dated_schedule_details(text)]
-    for day, weekdays, clocks in _dated_schedule_details(line):
+def _validate_dated_schedule_details(line: str, evidence: list[str], f: dict) -> None:
+    known_years = frozenset(year for start, end in _operation_date_bounds(f) for year in range(start.year, end.year + 1))
+    expected = [entry for text in evidence for entry in _dated_schedule_details(text, known_years=known_years)]
+    for day, weekdays, clocks in _dated_schedule_details(line, known_years=known_years):
         matches = [entry for entry in expected if entry[0] == day]
         for index, actual in ((1, weekdays), (2, clocks)):
             explicit = set().union(*(entry[index] for entry in matches))
@@ -521,6 +525,10 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
     expected = schedule_values('\n'.join(evidence))
     expected_durations = _durations('\n'.join(evidence))
     for line in clauses:
+        facility_hours = False
+        if 'facility_hours_evidence' in f:
+            from ingest.seoul_operating_hours import validate_facility_hours_clause
+            facility_hours = validate_facility_hours_clause(line, f)
         if re.search(r'신청|접수|모집|발표|마감', line):
             continue
         if (re.search(r'일정|회차|집결|실제\s*수업|총\s*\d+\s*회', line)
@@ -528,10 +536,11 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
             actual = schedule_values(line)
             if _durations(line).keys() - expected_durations.keys():
                 raise AiJobError('ai_schema_error')
-            if any(not values.issubset(expected[key]) for key, values in actual.items() if key != 'years'):
+            if any(not values.issubset(expected[key]) for key, values in actual.items()
+                   if key != 'years' and not (key == 'times' and facility_hours)):
                 raise AiJobError('ai_schema_error')
             _validate_schedule_years(line, evidence, f, expected['years'])
-            _validate_dated_schedule_details(line, evidence)
+            _validate_dated_schedule_details(line, evidence, f)
 
 
 def _promotional_condition_candidate(value: str) -> bool:

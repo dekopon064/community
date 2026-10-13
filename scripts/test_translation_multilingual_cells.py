@@ -67,8 +67,8 @@ class MultilingualCellTests(unittest.TestCase):
                 _validate_cell(source, TARGET)
 
     def test_list_and_table_values_cannot_move_between_records(self):
-        ko = '- '+SOURCES[1]+'\n- '+SOURCES[2].replace('1-р ээлж','2-р ээлж').replace('25 (','26 (')
-        ja = '- '+TARGET+'\n- '+TARGET.replace('第1回','第2回').replace('25日','26日')
+        ko = '- '+SOURCES[1]+'\n- '+SOURCES[2].replace('1-р ээлж','2-р ээлж').replace('25 (ням)','26 (даваа)')
+        ja = '- '+TARGET+'\n- '+TARGET.replace('第1回','第2回').replace('25日（日）','26日（月）')
         validate_translation_fidelity('합성',ko,'合成',ja)
         with self.assertRaises(AiJobError):
             validate_translation_fidelity('합성',ko,'合成','\n'.join(reversed(ja.splitlines())))
