@@ -8,6 +8,7 @@ import { actionText, aiStatusText, categories, failureText, reasonText, sourceLi
 import { CandidateEditor, FactsEditor, fieldClass, primaryButton, secondaryButton } from "./ReviewEditors";
 import { CandidateContentNotices } from "./CandidateContentNotices";
 import CandidateImageEditor, { candidateImageError } from "./CandidateImageEditor";
+import { canEditCandidateImage } from "@/app/lib/review/candidate-images";
 import ProgramReviewPanel from "./ProgramReviewPanel";
 import MySeoulReviewPanel from "./MySeoulReviewPanel";
 import { myseoulGuidance } from "@/app/lib/review/myseoul-contract";
@@ -77,7 +78,7 @@ export default function ReviewWorkspace() {
   const resultMessage = useRef<HTMLParagraphElement>(null);
   const errorMessageBox = useRef<HTMLDivElement>(null);
   const confirmationBox = useRef<HTMLElement>(null);
-  const imageEditable = item?.kind === "candidates" && item.source.name === "myseoul_program" && item.status === "pending" && !item.publishedId && Boolean(item.image);
+  const imageEditable = canEditCandidateImage(item);
   const imageDirty = Boolean(imageEditable && imageSelection && item?.kind === "candidates" && (item.image?.mode !== imageSelection.mode || item.image?.url !== imageSelection.url));
   const invalidImage = imageEditable && imageSelection ? candidateImageError(imageSelection) : "";
   const contentDirty = Boolean(item && (item.kind === "facts" ? JSON.stringify(item.facts) !== JSON.stringify(facts) : JSON.stringify(item.content) !== JSON.stringify(content)));
@@ -250,7 +251,8 @@ export default function ReviewWorkspace() {
               <textarea id="published-edit-note" value={note} onChange={e => setNote(e.target.value)} disabled={locked} className={fieldClass} rows={2} maxLength={4000} aria-invalid={Boolean(errors.note)} aria-describedby={errors.note ? "published-edit-note-error" : undefined} />
               {errors.note && <p id="published-edit-note-error" className="mt-2 text-info-status">{errors.note}</p>}
             </div>}
-            {imageEditable && item.kind === "candidates" && item.image && imageSelection && <CandidateImageEditor key={item.id + item.version} saved={item.image} value={imageSelection} onChange={setImageSelection} disabled={locked} error={errors.imageUrl} title={content?.titleKo ?? item.content.titleKo} />}
+            {imageEditable && item.kind === "candidates" && item.image && imageSelection && <CandidateImageEditor key={item.id + item.version + ":image"} saved={item.image} value={imageSelection} onChange={setImageSelection} disabled={locked} error={errors.imageUrl} title={content?.titleKo ?? item.content.titleKo} />}
+            {item.kind === "candidates" && item.status === "pending" && !item.publishedId && !item.image && <p className="my-6 leading-7 text-info-status">이미지 편집 정보를 불러오지 못했습니다. 현재 이미지 선택은 유지됩니다. 서버 연결을 확인한 뒤 다시 불러와 주세요.</p>}
             {item.kind === "facts" && facts && !classificationActive ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor key={item.id+item.version} value={content} onChange={setContent} errors={errors} disabled={locked} formattedBody bodyOnly={publishedMode} />}
             {fieldsDirty && <p className="mt-6 leading-7 text-info-status">{publishedMode ? "아직 저장하지 않은 본문 변경이 있습니다. 다른 항목으로 이동하려면 저장하거나 수정을 취소해 주세요." : "아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요."}</p>}
             {!processed && !publishedMode && <div className="my-7 flex flex-wrap gap-3">
