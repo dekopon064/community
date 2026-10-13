@@ -21,6 +21,19 @@ def recorded():
     return json.loads(FIXTURE.read_text(encoding='utf-8'))
 
 
+def confirmed_case():
+    """Explicit local reviewed-table fixture; never rewrite recorded observations.
+
+    The actual API description lost empty positions. Successful replay now needs
+    separately confirmed intact text, not a plausible AI-generated replacement.
+    """
+    data = recorded()
+    table = json.loads((FIXTURE.parent/'seoul_weekly_input_recorded.json').read_text(encoding='utf-8'))['reviewed_table']
+    data['facts']['description'] = re.sub(r'시간 / 요일.*?(?=▹ 해설시간)', table+'\n\n',
+        data['facts']['description'], flags=re.S)
+    return data
+
+
 def fake_translation(body):
     """Explicit fake Japanese for new input; never a regenerated model result."""
     fixture=recorded()['fake_translation_cleaned']
@@ -38,7 +51,7 @@ def fake_translation(body):
 
 
 def replay_context(classified=False):
-    d=recorded(); legacy,c=BASE_CASE(classified)
+    d=confirmed_case(); legacy,c=BASE_CASE(classified)
     f=copy.deepcopy(d['facts'])
     endpoints={name:{k:v[k] for k in ('value','precision')} for name,v in f['periods'].items()}
     c.update(title=d['title'])
@@ -50,7 +63,7 @@ def replay_context(classified=False):
         c['facts'].update(delivery='offline',scope='unknown',regions=[],evidence='',
                           deadlineOn=f['periods']['RCPTENDDT']['value'][:10])
     else:
-        c.update(facts=f,observedFacts=copy.deepcopy(f))
+        c.update(facts=f,observedFacts=copy.deepcopy(recorded()['facts']))
         c['filterContext']['data']['application']['value'].update(
             start=endpoints['RCPTBGNDT'],end=endpoints['RCPTENDDT'],sourceStatus='open')
     legacy.update(context={'facts':f},summary=d['summary'],translation=d['actual_translation'],
@@ -76,7 +89,7 @@ class SeoulFactRolesTests(unittest.TestCase):
         self.assertEqual(FIXTURE.read_bytes(),before)
 
     def test_recorded_roles_cleanup_and_preserved_values(self):
-        d=recorded();f=d['facts'];before=copy.deepcopy(f)
+        d=confirmed_case();f=d['facts'];before=copy.deepcopy(f)
         roles=public_roles(f);self.assertEqual(len(roles['booking']),1)
         self.assertEqual(len(roles['capacity']),1)
         self.assertFalse(any(re.fullmatch(r'\d+\s*회차',v) for v in roles['eligibility']))
@@ -120,7 +133,7 @@ class SeoulFactRolesTests(unittest.TestCase):
             self.assertIn('2099-10-18 00:00 ~ 2099-10-18 00:00',body)
 
     def test_weekly_rows_clocks_ordinals_languages_and_dated_conflicts_block(self):
-        d=recorded();source=d['summary']['content_ko'];f=d['facts']
+        d=confirmed_case();source=d['summary']['content_ko'];f=d['facts']
         changes=[source.replace('| 11:00 |','| 12:00 |'),
                  source.replace('5회차(일본어)','5회차(영어)'),
                  source.replace('| 14:00 | 3회차 |','| 14:00 | 4회차 |'),
@@ -157,7 +170,7 @@ class SeoulFactRolesTests(unittest.TestCase):
         self.assertNotIn('| --- |',parse_body(html.replace('<td>1회차</td>','<td colspan="2">1회차</td>'))['program_text'])
 
     def test_mixed_conditions_and_unknown_booking_steps_are_preserved(self):
-        d=recorded();f=copy.deepcopy(d['facts'])
+        d=confirmed_case();f=copy.deepcopy(d['facts'])
         conditions=['일본어 가능자만 참여', '2회차 모두 참여 필수', '보호자 동반 필수',
                     '거주자만 가능', 'D-2 비자 소지자만 신청',
                     '예약 단계: 현장 신청 → 서류 제출 필수',
@@ -185,7 +198,7 @@ class SeoulFactRolesTests(unittest.TestCase):
         self.assertEqual(_quantities('1인당, 2인분, 4인가구',japanese=False),{})
 
     def test_different_names_counts_months_and_regular_midnight_matrix(self):
-        d=recorded();f=copy.deepcopy(d['facts'])
+        d=confirmed_case();f=copy.deepcopy(d['facts'])
         f['description']=f['description'].replace('백인제','합성').replace('15 인','23 명').replace('10:00','09:30')
         f['conditions']=[v.replace('백인제','합성').replace('15 인','23 명') for v in f['conditions']]
         for k,day in [('SVCOPNBGNDT','01'),('SVCOPNENDDT','30')]:

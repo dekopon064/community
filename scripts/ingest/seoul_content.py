@@ -12,7 +12,7 @@ from ingest.ai_worker import KO_SECTION_HEADERS
 from ingest.body_markdown import format_reviewed_block, schedule_tables, read_body, schedule_table_lines, inline_text
 from ingest.myseoul_ai_support import section_body
 from ingest.seoul_fact_roles import (public_roles, weekly_schedule, validate_weekly_schedule,
-                                   booking_covered, clean_role_repetitions, optional_section, plain)
+                                   booking_covered, clean_role_repetitions, optional_section, plain, key)
 from ingest.myseoul_content import (
     announcement_lines, deduplicate_summary_fees, merge_reviewed_sections,
     normalize_summary_schedule, participation_constraints, schedule_block,
@@ -127,8 +127,10 @@ def validation_view(facts: dict) -> dict:
     if matrix:
         # Separate validation evidence from public rendering: bare table cells
         # are never independently appended as sessions or participation rules.
+        table_rows = {key('| '+' | '.join(row)+' |') for row in matrix.rows}
         records = [line for line in schedule_lines(view)
-                   if not re.fullmatch(r'(?:제\s*)?\d+\s*회차', plain(line))]
+                   if not re.fullmatch(r'(?:제\s*)?\d+\s*회차', plain(line))
+                   and key(plain(line)) not in table_rows]
         matrix_records = ['해설회차: ' + ' '.join(row) for row in matrix.rows]
         view['session_evidence'] = list(dict.fromkeys(records + roles['schedule'] + matrix_records))
         view['weekly_validation_records'] = matrix_records

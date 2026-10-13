@@ -12,6 +12,7 @@ from ingest.body_markdown import inline_text, read_body
 ORDINAL = r'(?:제\s*)?\d+\s*회차'
 WEEKDAY = r'[월화수목금토일](?:요일)?'
 CLOCK = r'(?:[01]?\d|2[0-3]):[0-5]\d'
+EMPTY_CELL = frozenset({'', '—', '–', '-', '없음'})
 CAPACITY = r'(?:참가\s*인원|모집\s*인원|인원|정원)'
 SCHEDULE = r'(?:해설|운영|진행|수업|교육)\s*(?:시간|일시|일정)(?:\s*안내)?'
 RESTRICTION = r'필수|의무|불가|금지|제한|전용|한정|보호자|동반|거주|국적|비자|증빙|제출|취소|환불|선착순'
@@ -38,13 +39,26 @@ def weekly_schedule(description):
     try:
         tables = read_body(description).tables
     except AiJobError:
+        if re.search(r'(?m)^\s*\|\s*시간(?:\s*[/·]\s*요일)?\s*\|\s*'+WEEKDAY+r'\s*\|', description):
+            # A malformed weekly matrix is not absence of a schedule. Do not
+            # let an aggregate response bypass validation by hiding its source.
+            raise
         tables = ()  # Unsupported source markup stays data, not executable HTML.
+    matrices = []
     for table in tables:
         headers = tuple(plain(h) for h in table.headers)
         if re.fullmatch(r'시간(?:\s*[/·]\s*요일)?', headers[0]) and all(re.fullmatch(WEEKDAY, h) for h in headers[1:]):
             if not all(re.fullmatch(CLOCK, plain(r[0])) for r in table.rows):
                 raise AiJobError('ai_schema_error')
-            return WeeklySchedule(('시간', *headers[1:]), tuple(tuple(plain(c) for c in r) for r in table.rows))
+            days = tuple(key(h).replace('요일', '') for h in headers[1:])
+            clocks = tuple(plain(r[0]) for r in table.rows)
+            if len(days) != len(set(days)) or len(clocks) != len(set(clocks)):
+                raise AiJobError('ai_schema_error')
+            matrices.append(WeeklySchedule(('시간', *headers[1:]), tuple(tuple(plain(c) for c in r) for r in table.rows)))
+    if matrices:
+        if len(matrices) != 1:
+            raise AiJobError('ai_schema_error')
+        return matrices[0]
     lines = [plain(line) for line in description.splitlines() if line.strip()]
     for start, line in enumerate(lines):
         if not re.fullmatch(r'시간\s*[/·]\s*요일', line):
@@ -53,7 +67,7 @@ def weekly_schedule(description):
         while index < len(lines) and re.fullmatch(WEEKDAY, lines[index]):
             days.append(lines[index]); index += 1
         if len(days) < 2 or len(days) != len(set(days)):
-            continue
+            raise AiJobError('ai_schema_error')
         rows = []
         while index < len(lines) and re.fullmatch(CLOCK, lines[index]):
             clock = lines[index]; index += 1; cells = []
@@ -67,11 +81,28 @@ def weekly_schedule(description):
                     break
                 index += 1
             if not cells or len(cells) > len(days):
-                return None
+                raise AiJobError('ai_schema_error')
             rows.append((clock, *cells))
         if rows:
             return WeeklySchedule(('시간', *days), tuple(rows), True)
+        raise AiJobError('ai_schema_error')
     return None
+
+
+def weekly_input_evidence(description):
+    """Ephemeral AI input from current confirmed text, never observed fallback.
+
+    A null is a known empty source cell, not an unknown/missing cell. Historical
+    flattened tables cannot prove column positions and must be reviewed first.
+    No DB/summary schema change, source lookup or inferred table repair.
+    """
+    source = weekly_schedule(description)
+    if not source:
+        return None
+    if source.flattened:
+        raise AiJobError('ai_schema_error')
+    return {'headers': list(source.headers),
+            'rows': [[None if plain(c) in EMPTY_CELL else c for c in row] for row in source.rows]}
 
 
 def public_roles(facts):
@@ -116,15 +147,19 @@ def validate_weekly_schedule(content, description):
         if generated:
             raise AiJobError('ai_schema_error')
         return
+    if source.flattened:
+        # Nonempty cell order cannot prove weekdays or empty positions. Even a
+        # plausible seven-column generated table cannot repair lost evidence.
+        raise AiJobError('ai_schema_error')
     if len(generated) != 1:
         raise AiJobError('ai_schema_error')
     table = generated[0]
     if ('시간', *(key(h).replace('요일', '') for h in table.headers[1:])) != tuple(key(h).replace('요일', '') for h in source.headers):
         raise AiJobError('ai_schema_error')
     rows = tuple(tuple(plain(c) for c in row) for row in table.rows)
-    if source.flattened:
-        rows = tuple((row[0], *(c for c in row[1:] if c not in {'—', '–', '-', '없음'})) for row in rows)
-    if tuple(tuple(key(c) for c in row) for row in rows) != tuple(tuple(key(c) for c in row) for row in source.rows):
+    def cell_key(cell):
+        return None if plain(cell) in EMPTY_CELL else key(cell)
+    if tuple(tuple(cell_key(c) for c in row) for row in rows) != tuple(tuple(cell_key(c) for c in row) for row in source.rows):
         raise AiJobError('ai_schema_error')
 
 
