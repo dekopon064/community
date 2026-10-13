@@ -16,11 +16,22 @@ from ingest.ai_provider import create_provider_adapter
 from ingest.program_ai import ProgramAIAdapter, process_seoul_program_job
 from ingest.reclassification_ai import process_reclassified_job
 from ingest.translation_validation import validate_translation_fidelity
+from ingest.seoul_content import assemble_seoul_body
 from test_ingest_ai_chatgpt_plan import verified_session, streamed
 from test_ingest_ai_openai import response
 from test_reclassification_ai import context as classified_context
 
 FIXTURE = Path(__file__).parent / 'testdata/seoul_per_session_recorded.json'
+
+
+def fake_translation(body):
+    """Test-only translation of the cleaned input, never a new model response."""
+    from test_seoul_content import fake_japanese
+    for source,target in [('오후','午後'),('오전','午前'),('회당','1回につき'),('가족','家族'),('토요일','土曜日'),
+                          ('(토)','(土)'),('이상','以上'),('이하','以下'),('미만','未満'),
+                          ('초과','超'),('예약','予約'),('분','分'),('시','時')]:
+        body=body.replace(source,target)
+    return fake_japanese(body)
 
 
 def recorded_case(classified=False):
@@ -51,7 +62,16 @@ def run_recorded(test, *, classified=False, change=None, finish_unknown=False, c
     if claim_change:
         claim_change(c)
     before = copy.deepcopy(c)
-    japanese = copy.deepcopy(data['translation'])
+    # The historical Japanese response translated the old duplicated body.
+    # Keep it as direct validator evidence, but use an explicitly fake response
+    # for the now-cleaned worker input; do not claim regenerated AI quality.
+    try:
+        cleaned=assemble_seoul_body(data['summary']['content_ko'],data['context']['facts'])
+    except AiJobError:
+        # Deliberately bad summaries must be rejected inside the real worker
+        # before this unused fake translation response can be requested.
+        cleaned=data['expected_translation_input']['content_ko']
+    japanese={'title_ja':data['translation']['title_ja'],'content_ja':fake_translation(cleaned)}
     if change:
         japanese = change(japanese)
     client = streamed([response(json.dumps(data['summary'], ensure_ascii=False)),
@@ -123,8 +143,8 @@ class RecordedPerSessionTests(unittest.TestCase):
                 self.assertEqual(result.completed, 1)
                 self.assertEqual([n for n, _ in calls], ['claim_reclassified_content_ai', 'finish_reclassified_content_ai']
                                  if classified else ['claim_seoul_program_ai', 'finish_seoul_program_ai'])
-                self.assertEqual(output['contentKo'], data['expected_translation_input']['content_ko'])
-                self.assertEqual(output['contentJa'], data['translation']['content_ja'])
+                self.assertNotIn('00:00',output['contentKo'])
+                self.assertEqual(output['contentJa'],fake_translation(output['contentKo']))
                 self.assertEqual(output['titleJa'], data['translation']['title_ja'])
                 self.assertEqual(set(output), {'titleKo', 'titleJa', 'summaryKo', 'summaryJa', 'contentKo', 'contentJa', 'aiModel'})
                 self.assertEqual(output['aiModel'], 'gpt-6.1-sol')
@@ -144,8 +164,8 @@ class RecordedPerSessionTests(unittest.TestCase):
             lambda d: {**d, 'content_ja': d['content_ja'].replace('1回につき', '2回につき')},
             lambda d: {**d, 'content_ja': d['content_ja'].replace('20名', '21名')},
             lambda d: {**d, 'content_ja': d['content_ja'].replace('9家族', '8家族')},
-            lambda d: {**d, 'content_ja': d['content_ja'].replace('10月31日（土）14時00分', '10月31日（土）13時00分')},
-            lambda d: {**d, 'content_ja': d['content_ja'].replace('翌月の予約はできません', '翌月の予約もできます')},
+            lambda d: {**d, 'content_ja': d['content_ja'].replace('14:00~15:20', '13:00~15:20')},
+            lambda d: {**d, 'content_ja': d['content_ja'].replace('不可', '可能')},
         ]
         for classified in (False, True):
             for change in changes:

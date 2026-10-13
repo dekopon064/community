@@ -1,6 +1,8 @@
 """Seoul-only presentation cleanup AFTER fact validation, never stored edits."""
 from __future__ import annotations
 import re
+from datetime import datetime, timezone, timedelta
+from ingest.ai_errors import AiJobError
 from ingest.body_markdown import inline_text, read_body
 from ingest.myseoul_ai_support import schedule_values
 from ingest.myseoul_content import schedule_block, schedule_lines
@@ -56,6 +58,62 @@ def _pure_session(record: str) -> bool:
     return not text.strip(' \t/,·、・;；~～〜–—-')
 
 
+_CHECKIN = re.compile(r'시작\s*(\d+)\s*분\s*(전|후)(?:까지|에)?\s*도착')
+
+
+def _session_and_checkin(record: str) -> tuple[str,str] | None:
+    # A narrowly delimited source record, not arbitrary activity/condition prose.
+    text=_plain(record)
+    match=re.fullmatch(rf'(?:운영|진행|수업)\s*일시\s*[:：]\s*'
+        rf'(?P<session>(?:[월화수목금토일]요일\s*)?[（(]?{_DATE}\s*'
+        rf'{_CLOCK}\s*(?:~|～|〜|–|—|-){_CLOCK}[）)]?)\s*'
+        r'[（(](?P<note>시간\s*꼭!?\s*준수,\s*시작\s*\d+\s*분\s*전\s*도착요망)[）)]',text)
+    return (match['session'],match['note']) if match else None
+
+
+def validate_checkin(content: str, view: dict) -> None:
+    expected={tuple(m.groups()) for record in schedule_lines(view)
+              if (parts:=_session_and_checkin(record))
+              for m in _CHECKIN.finditer(parts[1])}
+    if not expected: return
+    for m in _CHECKIN.finditer(inline_text(content)):
+        if tuple(m.groups()) not in expected: raise AiJobError('ai_schema_error')
+
+
+def _covered(values: dict, rows: list[dict]) -> bool:
+    return any(values['dates']==row['dates'] and
+        all(values[key].issubset(row[key]) for key in ('years','times','weekdays','counts'))
+        for row in rows)
+
+
+def _single_day_operation_display(sections: dict, view: dict) -> dict:
+    """Project one midnight API day as a date only with explicit daytime evidence.
+
+    Never change endpoint precision, application cutoffs or temporal gating.
+    Without clear independent sessions, keep all times (including real midnight).
+    """
+    endpoints=view['periods']['operation']
+    if len(endpoints)!=1: return sections
+    pair=endpoints[0]['endpoints']
+    if any(p.get('precision')=='day' for p in pair): return sections
+    try:
+        dates=[datetime.fromisoformat(p['value']).astimezone(timezone(timedelta(hours=9))) for p in pair]
+    except (ValueError,TypeError): return sections
+    if dates[0]!=dates[1] or any((d.hour,d.minute,d.second,d.microsecond)!=(0,0,0,0) for d in dates):
+        return sections
+    day=dates[0].date(); evidence=[schedule_values(record) for record in schedule_lines(view)]
+    if (not evidence or any(not v['dates'] or v['dates']!={(day.month,day.day)}
+            or v['years']-{day.year} or v['weekdays']-{day.weekday()}
+            or not v['times'] or any(a==0 or b==0 or a>=b for a,b in v['times']) for v in evidence)):
+        return sections
+    # Only the bare reviewed operation row. Qualified period prose stays intact.
+    key=day.isoformat()
+    pattern=rf'(?m)^(- \*\*(?:진행기간|개최 기간):\*\*) {key} 00:00 ~ {key} 00:00$'
+    result=dict(sections)
+    result['[일정 안내]']=re.sub(pattern,rf'\1 {key}',sections['[일정 안내]'])
+    return result
+
+
 def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[str,dict]:
     """Keep verified session tables and only source records they fully cover.
 
@@ -71,12 +129,23 @@ def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[st
     rows=[schedule_values(row) for row in _table_rows(original)]
     records=schedule_lines(view)
     covered=[]
+    notes=[]
     for record in records:
         values=schedule_values(record)
-        if _pure_session(record) and any(values['dates']==row['dates'] and
-                all(values[key].issubset(row[key]) for key in ('years','times','weekdays','counts'))
-                for row in rows):
+        parts=_session_and_checkin(record)
+        if (_pure_session(record) or parts) and _covered(values,rows):
             covered.append(record)
+            if parts:
+                rendered='- **집결 안내:** '+parts[1]
+                # A previous projection goes back to its canonical slot on
+                # reassembly, rather than moving ahead of the period rows.
+                original='\n'.join(line for line in original.splitlines() if line.strip()!=rendered)
+                source_checkin=_CHECKIN.search(parts[1]).groups()
+                # Only a matching explicit check-in instruction plus time
+                # compliance covers this entire note; otherwise copy the note.
+                represented=any(m.groups()==source_checkin for m in _CHECKIN.finditer(inline_text(original)))
+                if not represented or not re.search(r'준수|시간을?\s*지켜',inline_text(original)):
+                    notes.append(parts[1])
     remaining=[record for record in records if record not in covered]
     def remove_block(text):
         block=schedule_block(records)
@@ -88,7 +157,9 @@ def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[st
     for table in read_body(canonical).tables:
         if any(table.headers==other.headers and table.rows==other.rows for other in tables):
             canonical=canonical.replace(table.markdown,'',1)
+    if notes: canonical+='\n'+'\n'.join('- **집결 안내:** '+n for n in dict.fromkeys(notes))
     sections['[일정 안내]']=canonical.strip()
+    sections=_single_day_operation_display(sections,view)
     roles={role for role,labels in (
         ('신청기간',r'신청\s*기간'),('진행기간',r'진행\s*기간|운영\s*기간|개최\s*기간'))
         if _entry(supplied['[일정 안내]'],labels) is not None}
