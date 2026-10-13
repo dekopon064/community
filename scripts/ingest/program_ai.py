@@ -153,16 +153,19 @@ def program_input(c: dict[str, Any]) -> str:
 
 
 def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str, revision: str,
-        summarize_ko: Callable, translate_ja: Callable, worker_id: str = "ingest-program-worker", lease_seconds: int = 600) -> AiWorkerResult:
+        summarize_ko: Callable, translate_ja: Callable, worker_id: str = "ingest-program-worker", lease_seconds: int = 600,
+        no_retry: bool = False) -> AiWorkerResult:
     """Exactly one explicit target; never called by the existing scheduled worker."""
     try:
         UUID(source_item_id)
+        if type(no_retry) is not bool:
+            raise ValueError()
         if not re.fullmatch(r"[a-f0-9]{64}", revision) or not 30 <= lease_seconds <= 3600 or not 1 <= len(worker_id.strip()) <= 128:
             raise ValueError()
     except (ValueError, TypeError):
         return AiWorkerResult(status="ai_state_unknown")
     try:
-        rows = adapter.invoke("claim_seoul_program_ai", {"p_source_item_id": source_item_id, "p_revision": revision,
+        rows = adapter.invoke("claim_seoul_program_ai_no_retry" if no_retry else "claim_seoul_program_ai", {"p_source_item_id": source_item_id, "p_revision": revision,
             "p_worker_id": worker_id, "p_lease_seconds": lease_seconds})
         if not isinstance(rows, list) or len(rows) > 1:
             raise RpcAmbiguous()
@@ -172,6 +175,9 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         validate_claim_filter(c["filterContext"], worker=worker_id, fence=c,
                               category=c.get("publicCategory", "program"))
         validate_program_filter_snapshot(c["filterContext"]["data"], c["facts"])
+        if no_retry:
+            from ingest.ai_failure_policy import validate_no_retry_context
+            validate_no_retry_context(c)
     except Exception:
         # Malformed claim context must not be used to fail/complete some other job.
         return AiWorkerResult(status="ai_state_unknown", state_unknown=1)
@@ -211,6 +217,15 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
     except (RpcAmbiguous, RpcTimeout):
         return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
     except Exception as exc:
+        if no_retry:
+            from ingest.ai_failure_policy import terminate_no_retry, uncertain_failure
+            if uncertain_failure(exc):
+                return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
+            try:
+                terminate_no_retry(adapter, c, exc)
+                return AiWorkerResult(status="processed", claimed=1, failed=1)
+            except Exception:
+                return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
         error = exc.code if isinstance(exc, AiJobError) else "ai_or_enqueue_failed"
         try:
             status = adapter.invoke("fail_seoul_program_ai", {**fence, "p_error_code": error})
