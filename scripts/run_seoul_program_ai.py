@@ -114,7 +114,11 @@ def main(argv: Sequence[str] | None = None, *, execute: Callable | None = None) 
         success = (result.status == "processed" and result.claimed == 1 and result.completed == 1
                    and not (result.failed or result.retried or result.state_unknown))
         print(json.dumps({"mode": "execution", "completed": bool(success),
-                          "status": result.status, "automatic_retries": 0, "publish": False}))
+                          "status": result.status, "automatic_retries": 0, "publish": False,
+                          "error_code": getattr(result,'error_code',None),
+                          "failure_scope": getattr(result,'failure_scope',None),
+                          "failure_stage": getattr(result,'failure_stage',None),
+                          "diagnostic": getattr(result,'diagnostic',None)}))
         return 0 if success else 1
     except Exception:
         # Never print SDK errors, tracebacks, key-bearing URLs, or raw responses.

@@ -186,6 +186,7 @@ def process_seoul_queue(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pages
     if type(no_retry) is not bool:
         raise ValueError('seoul_ai_failure_policy_invalid')
     targets,counts=bounded_queue_targets(adapter,max_jobs=max_jobs,queue_pages=queue_pages)
+    counts.update(items=[], batch_stopped=False, stop_reason=None)
     for index,item in enumerate(targets):
         # The existing claim authoritatively rechecks facts/filters, revisions,
         # active attempts and duplicate candidates. A queue read is no claim.
@@ -195,7 +196,31 @@ def process_seoul_queue(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pages
         counts['failed']+=result.failed+result.retried
         counts['unavailable_skipped']+=int(result.status=='ai_no_jobs')
         counts['state_unknown']+=result.state_unknown or int(result.status=='ai_state_unknown')
-        if result.status=='ai_state_unknown' or result.failed or result.retried:
+        counts['items'].append(dict(sourceItemId=item['sourceItemId'], revision=item['revision'],
+            status=result.status, completed=result.completed, failed=result.failed,
+            stateUnknown=result.state_unknown, errorCode=getattr(result,'error_code',None),
+            failureScope=getattr(result,'failure_scope',None),
+            failureStage=getattr(result,'failure_stage',None),
+            diagnostic=getattr(result,'diagnostic',None)))
+        stop = ('state_unknown' if result.status=='ai_state_unknown' or result.state_unknown else
+                'retry_registered' if result.retried else
+                'common_failure' if result.failed else None)
+        if (no_retry and result.failed == 1 and not result.retried and not result.state_unknown
+                and result.status == 'processed' and getattr(result,'failure_scope',None)=='item'):
+            # Only an acknowledged terminal failure releases the per-item Pro
+            # pair budget. Never reset a blocked provider or an uncertain attempt.
+            owner = getattr(summarize_ko,'__self__',None)
+            try:
+                release = getattr(owner,'release_terminated_attempt',None)
+                if release is not None:
+                    if getattr(translate_ja,'__self__',None) is not owner:
+                        raise ValueError('provider_pair_mismatch')
+                    release()
+                stop = None
+            except Exception:
+                stop = 'provider_not_reusable'
+        if stop:
+            counts.update(batch_stopped=True, stop_reason=stop)
             counts['unprocessed']+=len(targets)-index-1
-            break  # Never call another provider or write after ambiguity.
+            break  # Never call another provider or write after ambiguity/common failure.
     return counts

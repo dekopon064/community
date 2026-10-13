@@ -416,7 +416,7 @@ class PlanWorkerTests(unittest.TestCase):
                                    (classified,'ingest.reclassification_ai','process_reclassified_job'),
                                    (seoul,'ingest.program_ai','process_seoul_program_job')]:
             adapter, _, session = self.adapter()
-            args = SimpleNamespace(project_ref='a'*20,source_item_id=ID,revision=REV,classification_version=1)
+            args = SimpleNamespace(project_ref='a'*20,source_item_id=ID,revision=REV,classification_version=1,no_retry=False)
             with patch.dict('os.environ',{'AI_PROVIDER':'chatgpt_plan',
                 'SUPABASE_URL':'https://'+'a'*20+'.supabase.co','SUPABASE_SERVICE_KEY':'synthetic'},clear=True):
                 with patch('ingest.ai_provider.create_provider_adapter',return_value=adapter) as factory:

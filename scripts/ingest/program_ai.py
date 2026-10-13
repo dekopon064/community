@@ -182,12 +182,14 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         # Malformed claim context must not be used to fail/complete some other job.
         return AiWorkerResult(status="ai_state_unknown", state_unknown=1)
     fence = {"p_job_id": c["jobId"], "p_claimed_at": c["claimedAt"], "p_lease_until": c["leaseUntil"], "p_worker_id": worker_id}
+    stage = 'summary'
     try:
         owner = getattr(summarize_ko, "__self__", None)
         summarize_program = getattr(owner, "summarize_program_ko", summarize_ko)
         content_ko, status_ko, model = summarize_program(program_input(c), c["facts"]["official_url"], title=c["title"])
         if status_ko != "success" or not isinstance(content_ko, str):
             raise AiJobError("ai_schema_error")
+        stage = 'korean_validation'
         from ingest.body_sections import normalize_schedule_heading
         content_ko = normalize_schedule_heading(content_ko, 'ko')
         summary_ko = extract_summary_section(content_ko, KO_SUMMARY_HEADER, KO_SECTION_HEADERS)
@@ -195,9 +197,11 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         from ingest.seoul_content import assemble_seoul_body, validate_public_body
         from ingest.translation_validation import validate_translation_fidelity
         content_ko = assemble_seoul_body(content_ko, c['facts'])
+        stage = 'translation'
         title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content_ko)
         if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
             raise AiJobError("ai_schema_error")
+        stage = 'japanese_validation'
         content_ja = normalize_schedule_heading(content_ja, 'ja')
         validate_public_body(content_ja)
         summary_ja = extract_summary_section(content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
@@ -205,6 +209,7 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         validate_translation_fidelity(c['title'], content_ko, title_ja, content_ja)
         output = {"titleKo": c["title"], "summaryKo": summary_ko, "contentKo": content_ko,
             "titleJa": title_ja, "summaryJa": summary_ja, "contentJa": content_ja, "aiModel": model}
+        stage = 'candidate_completion'
         result = adapter.invoke("finish_seoul_program_ai", {**fence, "p_revision": revision,
             "p_facts_version": c["factsVersion"], "p_output": output})
         if not isinstance(result, dict) or result.get("outcome") not in {"inserted", "duplicate"}:
@@ -214,18 +219,22 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         except (KeyError, TypeError, ValueError, AttributeError):
             raise RpcAmbiguous() from None
         return AiWorkerResult(status="processed", claimed=1, completed=1)
-    except (RpcAmbiguous, RpcTimeout):
+    except (RpcAmbiguous, RpcTimeout) as exc:
+        if no_retry:
+            from ingest.ai_failure_policy import unknown_failure_result
+            return unknown_failure_result(exc, stage)
         return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
     except Exception as exc:
         if no_retry:
-            from ingest.ai_failure_policy import terminate_no_retry, uncertain_failure
+            from ingest.ai_failure_policy import (terminate_no_retry, uncertain_failure,
+                terminal_failure_result, unknown_failure_result)
             if uncertain_failure(exc):
-                return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
+                return unknown_failure_result(exc, stage)
             try:
                 terminate_no_retry(adapter, c, exc)
-                return AiWorkerResult(status="processed", claimed=1, failed=1)
-            except Exception:
-                return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
+                return terminal_failure_result(exc, stage)
+            except Exception as finish_exc:
+                return unknown_failure_result(finish_exc, 'failure_termination')
         error = exc.code if isinstance(exc, AiJobError) else "ai_or_enqueue_failed"
         try:
             status = adapter.invoke("fail_seoul_program_ai", {**fence, "p_error_code": error})

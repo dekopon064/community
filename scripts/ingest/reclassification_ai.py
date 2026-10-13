@@ -8,6 +8,7 @@ from uuid import UUID
 from ingest.ai_worker import (AiWorkerResult, extract_summary_section, KO_SUMMARY_HEADER,
     KO_SECTION_HEADERS, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
 from ingest.program_ai import ProgramAIAdapter
+from ingest.ai_errors import AiJobError
 from ingest.rpc_errors import RpcAmbiguous
 from ingest.region_ja_glossary import validate_japanese_output
 from ingest.content_filters import validate_filters, program_application_complete, KEYS
@@ -224,9 +225,11 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             if c['source']!='seoul_reservation':raise RpcAmbiguous()
     except Exception:return AiWorkerResult(status='ai_state_unknown',state_unknown=1)
     fence={'p_job_id':c['jobId'],'p_revision':revision,'p_classification_version':classification_version,'p_claimed_at':c['claimedAt'],'p_lease_until':c['leaseUntil'],'p_worker_id':worker_id}
+    stage='summary'
     try:
         content,status,model=summarize_ko(classification_input(c),c['sourceUrl'],title=c['title'])
-        if status!='success' or not isinstance(content,str):raise ValueError()
+        if status!='success' or not isinstance(content,str):raise AiJobError('ai_schema_error')
+        stage='korean_validation'
         native=c['nativeConfirmedFacts']['programFacts'] or {}
         links=native.get('application_links',[]) if c['source']=='myseoul_program' else []
         content=normalize_application_link_text(normalize_schedule_heading(content,'ko'),links)
@@ -265,8 +268,10 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             from ingest.body_markdown import format_reviewed_block
             fee_block=format_reviewed_block('비용: '+_public_fees(native['fees'])) if native['fees'] else ''
             validate_assembled_fees(content,fact_sections(native)['activity'],canonical_block=fee_block)
+        stage='translation'
         title_ja,content_ja,status_ja,_=translate_ja(c['title'],content)
-        if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise ValueError()
+        if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise AiJobError('ai_schema_error')
+        stage='japanese_validation'
         content_ja=normalize_schedule_heading(content_ja,'ja')
         if native.get('schema_version')=='program-scope-v1-local':
             from ingest.seoul_content import validate_public_body
@@ -280,6 +285,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             numbers=lambda v:{int(x.replace(',','')) for x in re.findall(r'\d[\d,]*',v)}
             if not numbers(verified).issubset(numbers(content_ja)):raise ValueError()
         output={'titleKo':c['title'],'summaryKo':summary,'contentKo':content,'titleJa':title_ja,'summaryJa':summary_ja,'contentJa':content_ja,'aiModel':model}
+        stage='candidate_completion'
         result=adapter.invoke('finish_reclassified_content_ai',{**fence,'p_output':output})
         if not isinstance(result,dict) or result.get('outcome') not in {'inserted','duplicate'}:raise RpcAmbiguous()
         try:UUID(result['candidateId'])
@@ -287,13 +293,14 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         return AiWorkerResult(status='processed',claimed=1,completed=1)
     except Exception as exc:
         if no_retry:
-            from ingest.ai_failure_policy import terminate_no_retry,uncertain_failure
+            from ingest.ai_failure_policy import (terminate_no_retry,uncertain_failure,
+                terminal_failure_result,unknown_failure_result)
             if not uncertain_failure(exc):
                 try:
                     terminate_no_retry(adapter,c,exc)
-                    return AiWorkerResult(status='processed',claimed=1,failed=1)
-                except Exception:
-                    return AiWorkerResult(status='ai_state_unknown',claimed=1,state_unknown=1)
+                    return terminal_failure_result(exc,stage)
+                except Exception as finish_exc:
+                    return unknown_failure_result(finish_exc,'failure_termination')
         # No new write/provider retry. A separate fenced status read can establish
         # completion; expired attempts require an explicit close before any new job.
         try:
@@ -302,4 +309,6 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             if isinstance(result,dict) and result.get('status')=='completed' and result.get('candidateId'):
                 UUID(result['candidateId']);return AiWorkerResult(status='processed',claimed=1,completed=1)
         except Exception:pass
+        if no_retry:
+            return unknown_failure_result(exc,stage)
         return AiWorkerResult(status='ai_state_unknown',claimed=1,state_unknown=1)

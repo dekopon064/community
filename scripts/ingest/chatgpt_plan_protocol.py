@@ -21,8 +21,9 @@ APP_NAME = 'Machimoa local summary translation probe'
 
 class ProbeError(Exception):
     """Fixed, non-secret authentication/stream diagnostics."""
-    def __init__(self, code):
+    def __init__(self, code, *, diagnostic=None):
         self.code = code
+        self.diagnostic = diagnostic
         super().__init__(code)
 
 
@@ -133,14 +134,49 @@ def get_field(value, key, default=None):
     return value.get(key, default) if isinstance(value, dict) else getattr(value, key, default)
 
 
+def stream_failure_diagnostic(exc, *, phase, event_count, completed_seen):
+    """Fixed categories only: never exception messages, URLs, headers or bodies."""
+    kinds = {
+        'APITimeoutError': 'timeout', 'ReadTimeout': 'timeout', 'ConnectTimeout': 'timeout',
+        'WriteTimeout': 'timeout', 'PoolTimeout': 'timeout', 'TimeoutError': 'timeout',
+        'APIConnectionError': 'connection', 'ConnectError': 'connection',
+        'gaierror': 'dns', 'SSLError': 'tls', 'SSLCertVerificationError': 'tls',
+        'ProxyError': 'proxy', 'ConnectionRefusedError': 'connection_refused',
+        'ConnectionResetError': 'connection_reset',
+        'ReadError': 'connection', 'WriteError': 'connection',
+        'RemoteProtocolError': 'protocol', 'LocalProtocolError': 'protocol',
+        'APIStatusError': 'http', 'ProbeError': 'stream_contract',
+        'KeyError': 'local_key', 'TypeError': 'local_type', 'ValueError': 'local_value',
+        'AttributeError': 'local_attribute', 'AssertionError': 'local_assertion',
+        'RuntimeError': 'local_runtime',
+    }
+    def kind(error):
+        return next((kinds[base.__name__] for base in type(error).mro()
+                     if base.__name__ in kinds), 'unknown')
+    status = getattr(exc, 'status_code', None)
+    causes, seen, current = [], {id(exc)}, exc.__cause__
+    while current is not None and id(current) not in seen and len(causes) < 4:
+        seen.add(id(current)); causes.append(kind(current)); current = current.__cause__
+    return dict(phase=phase, exceptionKind=kind(exc),
+        causeKind=kind(exc.__cause__) if exc.__cause__ is not None else None,
+        causeChain=causes,
+        eventCount=event_count, completedSeen=completed_seen,
+        httpStatus=status if type(status) is int and 100 <= status <= 599 else None)
+
+
 def read_completed_stream(client, request, *, observe=None, on_completed=None):
     """Only terminal JSON after completion; never join/accept partial deltas."""
     completed, items = None, {}
+    phase, event_count = 'create', 0
     try:
         with client.responses.create(**request) as stream:
+            phase = 'read'
             for event in stream:
+                event_count += 1
                 if observe:
+                    phase = 'observe'
                     observe(event)
+                    phase = 'read'
                 kind = get_field(event, 'type')
                 if kind in {'response.failed', 'response.incomplete', 'error'}:
                     error = (get_field(get_field(event, 'response'), 'error') or
@@ -161,17 +197,24 @@ def read_completed_stream(client, request, *, observe=None, on_completed=None):
                     if type(index) is not int or index < 0 or index in items:
                         raise ProbeError('invalid_terminal_output_item')
                     items[index] = get_field(event, 'item')
-    except ProbeError:
+            phase = 'close'
+    except ProbeError as exc:
+        exc.diagnostic = stream_failure_diagnostic(exc, phase=phase,
+            event_count=event_count, completed_seen=completed is not None)
         raise
     except Exception as exc:
         status = getattr(exc, 'status_code', None)
-        if type(exc).__name__ in {'APITimeoutError', 'TimeoutError', 'ReadTimeout'}:
-            raise ProbeError('plan_timeout') from None
-        if type(status) is int:
-            raise ProbeError('plan_http_' + str(status)) from None
-        raise ProbeError('plan_transport_unknown') from None
+        diagnostic = stream_failure_diagnostic(exc, phase=phase,
+            event_count=event_count, completed_seen=completed is not None)
+        code = ('plan_timeout' if diagnostic['exceptionKind'] == 'timeout' else
+                'plan_http_' + str(status) if type(status) is int and 100 <= status <= 599 else
+                'plan_transport_unknown')
+        raise ProbeError(code, diagnostic=diagnostic) from None
     if completed is None:
-        raise ProbeError('stream_missing_completed')
+        error = ProbeError('stream_missing_completed')
+        error.diagnostic = stream_failure_diagnostic(error, phase='validation',
+            event_count=event_count, completed_seen=False)
+        raise error
     if get_field(completed, 'model') != GPT_MODEL:
         raise ProbeError('unexpected_response_model')
     final = get_field(completed, 'output')
