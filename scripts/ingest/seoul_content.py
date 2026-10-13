@@ -187,7 +187,7 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
 
 def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = None, periods: dict | None = None) -> str:
     from ingest.body_sections import normalize_schedule_heading
-    from ingest.seoul_schedule_display import normalize_period_labels, clean_schedule_display
+    from ingest.seoul_schedule_display import normalize_period_labels, clean_schedule_display, validate_checkin
     content = normalize_period_labels(normalize_schedule_heading(content, 'ko'))
     view = validation_view(facts)
     # Reclassification supplies its current reviewed date roles without
@@ -202,6 +202,8 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     # These same checks run before cleanup, so conflicting AI facts cannot be
     # hidden by removal/replacement of a generated row.
     validate_summary_period(content, canonical, view)
+    validate_checkin(content, view)
+    validate_participant_quantities(view, content+'\n'+canonical)
     content, sections = clean_schedule_display(content, sections, view)
     content = normalize_summary_schedule(content, view)
     content = without_replaced_announcements(content, view)
@@ -212,6 +214,8 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     boundary = '|'.join(re.escape(h) for h in KO_SECTION_HEADERS)
     content = re.sub(r'(?ms)(^\s*\[주요 내용\][ \t]*)(.*?)(?=^\s*(?:'+boundary+r')|\Z)',
                      lambda match: match[1]+'\n'+(main or '공식 안내의 프로그램 내용')+'\n', content, count=1)
+    from ingest.seoul_body_display import clean_fact_repetitions
+    content, sections = clean_fact_repetitions(content, sections, facts)
     content = merge_reviewed_sections(content, sections)
     validate_participant_quantities(view, content)
     validate_assembled_fees(content, fee_block, canonical_block=fee_block)
