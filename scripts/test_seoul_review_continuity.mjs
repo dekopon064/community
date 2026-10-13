@@ -15,6 +15,9 @@ function load(name){const filename=path.join(root,name);if(cache.has(filename))r
  new Function('require','exports',code)(s=>{if(s==='react')return fakeReact;if(s==='next/link')return {default:()=>null};
   if(s.startsWith('@/')||s.startsWith('.')){const file=s.startsWith('@/')?path.join(root,s.slice(2)):path.resolve(path.dirname(filename),s);for(const suffix of ['.ts','.tsx',''])if(fs.existsSync(file+suffix))return load(path.relative(root,file+suffix));}return require(s);},exports);return exports;}
 const {programItem}=load('app/lib/review/program-store.ts');
+const {ProgramReviewStore}=load('app/lib/review/program-store.ts');
+const {programRequest}=load('app/lib/review/program-handlers.ts');
+const {AdminAccessError}=load('app/lib/auth/admin-policy.ts');
 const {programInputFields,preserveProgramDraft,displayProgramDate,programDateInput}=load('app/lib/review/program-ui.ts');
 const Panel=load('app/components/admin/ProgramReviewPanel.tsx').default;
 const samples=JSON.parse(execFileSync(process.env.MACHIMOA_TEST_PYTHON,['-X','utf8','test_program_db.py','--fixtures'],{cwd:path.join(root,'scripts'),encoding:'utf8'}));
@@ -72,7 +75,7 @@ try{
  states[5]='unavailable';globalThis.fetch=async()=>{throw Error('ambiguous');};
  button(render(),'입력을 유지하고 저장 상태 확인').props.onClick();await new Promise(r=>setImmediate(r));eq(states[1].activity_evidence,['서울 확인 근거']);
  // Existing filters use the ordinary save flow even with a legacy pending flag.
- const activityData={schema:'content-filters-v1',category:'program',topic:{status:'known',value:'culture_experience'},audience:{status:'known',value:'other'},application:{status:'known',value:{deadlineKind:'fixed',start:{value:facts.periods.RCPTBGNDT.value,precision:facts.periods.RCPTBGNDT.precision},end:{value:facts.periods.RCPTENDDT.value,precision:facts.periods.RCPTENDDT.precision},sourceStatus:'open'}},spaceKind:{status:'not_applicable',value:null},schedule:{status:'not_applicable',value:null},location:{status:'known',value:{scope:'specific',venues:[{province:'11',district:null,facility:'',address:''}]}},delivery:{status:'known',value:'onsite'}};
+ const activityData={schema:'content-filters-v1',category:'program',topic:{status:'known',value:'culture_experience'},audience:{status:'known',value:'other'},foreignerProgram:{status:'unknown',value:null},application:{status:'known',value:{deadlineKind:'fixed',start:{value:facts.periods.RCPTBGNDT.value,precision:facts.periods.RCPTBGNDT.precision},end:{value:facts.periods.RCPTENDDT.value,precision:facts.periods.RCPTENDDT.precision},sourceStatus:'open'}},spaceKind:{status:'not_applicable',value:null},schedule:{status:'not_applicable',value:null},location:{status:'known',value:{scope:'specific',venues:[{province:'11',district:null,facility:'',address:''}]}},delivery:{status:'known',value:'onsite'}};
  const capable={...item,activityReview:{supported:true,pending:true,confirmed:false},filterInfo:{schema:'content-filters-v1',revision:item.revision,filterVersion:1,data:activityData,missing:[],origins:{delivery:'operator',location:'operator'}}};
  reset();states[0]=capable;tree=render();
  let overview=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel').props.overview;
@@ -113,5 +116,93 @@ try{
  eq(posts,2);eq(savedCount,1);eq(states[0],edited);ok(states[2].includes('자동 재시도하지'));
  globalThis.fetch=async()=>{posts++;return new Response(JSON.stringify({code:'signed_out'}),{status:401});};
  await nodes(filters()).find(n=>n?.type==='form').props.onSubmit({preventDefault(){}});eq(posts,3);eq(savedCount,1);eq(states[0],edited);
+ // A saved-row change must be saveable without any unresolved input field.
+ // Exercise the actual row editor, panel submit, Auth handler and fake RPC.
+ globalThis.document={getElementById:()=>({closest(){return null;},focus(){focuses.push('input');},scrollIntoView(){}})};
+ const held=programItem({...item,facts:{...facts,description:'합성 설명. 기존 예약·참가 조건 보존.'},observedFacts:structuredClone(facts),
+  result:{decision:'in_scope',disposition:'target',reasons:['ai_recheck_requested']},aiStatus:'cancelled',
+  editableFields:['description','target_raw'],filterInfo:capable.filterInfo},id);
+ let backend,authError=null,rpcCalls=[],saveRequests=[];
+ const fakeStore=new ProgramReviewStore({async rpc(name,args){
+  rpcCalls.push({name,args});
+  if(name==='admin_program_detail')return {data:backend,error:null};
+  eq(name,'admin_program_save');
+  if(args.p_revision!==backend.revision||args.p_version!==backend.version)return {data:null,error:{code:'PT409'}};
+  if(backend.aiStatus==='claimed'||Object.keys(args.p_patch).some(k=>!backend.editableFields.includes(k)))return {data:null,error:{code:'PT409'}};
+  backend={...backend,version:'d'.repeat(64),factsVersion:backend.factsVersion+1,facts:{...backend.facts,...args.p_patch},
+   filterInfo:{...backend.filterInfo,filterVersion:2,missing:['topic'],data:{...backend.filterInfo.data,topic:{status:'unknown',value:null}}}};
+  return {data:backend,error:null};
+ }});
+ const deps={authorize:async()=>{if(authError)throw new AdminAccessError(authError);return {userId:'10000000-0000-4000-8000-000000000001'};},store:()=>fakeStore};
+ function seedHeld(next=held){states=[structuredClone(next),structuredClone(next.facts),false,false,false];refs=[];backend=structuredClone(next);authError=null;rpcCalls=[];saveRequests=[];}
+ function changeRow(label,key,value){button(saved(),label+' 수정').props.onClick();const editor=nodes(saved()).find(n=>n?.type?.name==='FactFields');ok(editor);editor.props.onChange({...editor.props.facts,[key]:value});button(saved(),'초안에 적용').props.onClick();}
+ function saveForm(){const form=nodes(render()).find(n=>n?.type==='form');ok(form);return form;}
+ const tick=()=>new Promise(r=>setImmediate(r));
+ globalThis.fetch=async(url,opt={})=>{
+  eq(url,`/api/admin/program-review/${id}`); // Any other source/AI/DB/network route fails.
+  if(opt.method==='POST')saveRequests.push(JSON.parse(opt.body));
+  return programRequest(new Request('https://example.test'+url,{method:opt.method??'GET',headers:{origin:'https://example.test',...(opt.headers??{})},...(opt.body?{body:opt.body}:{})}),id,deps);
+ };
+ seedHeld();eq(programInputFields(held),[]);
+ ok(!nodes(render()).some(n=>n?.type==='form'));
+ changeRow('확인한 프로그램 설명','description','합성 설명 수정. 기존 예약·참가 조건 보존.');
+ eq(button(render(),'사실 저장·재평가').props.disabled,false); // Fails against the previous UI.
+ ok(!text(render()).includes('확인한 사실 입력'));
+ ok(!nodes(render()).some(n=>n?.type?.name==='FactFields'));
+ ok(nodes(render()).some(n=>n?.type?.name==='OptionalReviewText'&&n.props.label==='추가 메모'));
+ const originalObserved=structuredClone(backend.observedFacts);
+ saveForm().props.onSubmit({preventDefault(){}});await tick();await tick();
+ eq(saveRequests.length,1);eq(saveRequests[0],{action:'save_facts',revision:held.revision,version:held.version,note:'',patch:{description:'합성 설명 수정. 기존 예약·참가 조건 보존.'},resolve:[]});
+ eq(rpcCalls.length,1);eq(rpcCalls[0].args.p_actor,'10000000-0000-4000-8000-000000000001');
+ eq(states[0].observedFacts,originalObserved);eq(states[0].source,held.source);eq(states[0].factsVersion,2);
+ eq(states[0].aiStatus,'cancelled');eq(states[0].result.reasons,['ai_recheck_requested']);eq(states[0].filterInfo.missing,['topic']);
+ eq(states[1],states[0].facts);ok(!nodes(render()).some(n=>n?.type==='form'));ok(!text(render()).includes('미저장 변경'));
+ // Identical values and cancelled edits do not create a change or a write.
+ seedHeld();changeRow('확인한 프로그램 설명','description',held.facts.description);eq(saveRequests.length,0);ok(!nodes(render()).some(n=>n?.type==='form'));
+ button(saved(),'확인한 프로그램 설명 수정').props.onClick();eq(states[3],true);
+ let rowEditor=nodes(saved()).find(n=>n?.type?.name==='FactFields');rowEditor.props.onChange({...rowEditor.props.facts,description:'취소할 설명'});
+ button(saved(),'취소').props.onClick();eq(states[1].description,held.facts.description);eq(states[3],false);eq(saveRequests.length,0);
+ changeRow('확인한 프로그램 설명','description','초안 설명');button(render(),'수정 취소').props.onClick();eq(states[1],held.facts);ok(!nodes(render()).some(n=>n?.type==='form'));
+ // Another editable field uses the same patch/save control without input reasons.
+ seedHeld();changeRow('대상 안내','target_raw','합성 대상 안내 보완');eq(button(render(),'사실 저장·재평가').props.disabled,false);
+ button(saved(),'확인한 프로그램 설명 수정').props.onClick();eq(button(render(),'사실 저장·재평가').props.disabled,true);
+ saveForm().props.onSubmit({preventDefault(){}});await tick();eq(saveRequests.length,0);
+ button(saved(),'취소').props.onClick();saveForm().props.onSubmit({preventDefault(){}});await tick();await tick();eq(Object.keys(saveRequests[0].patch),['target_raw']);
+ // Existing server permissions and processed states remain authoritative.
+ for(const next of [{...held,editableFields:[]},{...held,aiStatus:'claimed',editableFields:[]},{...held,status:'resolved',aiStatus:'completed',editableFields:[]}]){
+  seedHeld(next);ok(!nodes(render()).some(n=>n?.type==='form'));ok(!nodes(saved()).some(n=>n?.props?.['data-edit-program']==='description'));
+ }
+ // Classification activity and any save in progress prevent submitting.
+ seedHeld();changeRow('확인한 프로그램 설명','description','분류 중 초안');
+ nodes(render()).find(n=>n?.type?.name==='ClassificationPanel').props.onActive(true);ok(!nodes(render()).some(n=>n?.type==='form'));
+ nodes(render()).find(n=>n?.type?.name==='ClassificationPanel').props.onActive(false);
+ nodes(render()).find(n=>n?.type?.name==='ClassificationPanel').props.onBlocked(true);eq(button(render(),'분류 검토 중…').props.disabled,true);
+ saveForm().props.onSubmit({preventDefault(){}});await tick();eq(saveRequests.length,0);
+ nodes(render()).find(n=>n?.type?.name==='ClassificationPanel').props.onBlocked(false);
+ let finish;const deferred=new Promise(r=>finish=r);const routed=globalThis.fetch;
+ globalThis.fetch=async(...args)=>{await deferred;return routed(...args);};
+ const pendingForm=saveForm();pendingForm.props.onSubmit({preventDefault(){}});pendingForm.props.onSubmit({preventDefault(){}});
+ eq(button(render(),'저장 중…').props.disabled,true);finish();await tick();await tick();eq(saveRequests.length,1);globalThis.fetch=routed;
+ // Conflict, lost session and ambiguous responses preserve applied drafts.
+ for(const code of ['conflict','signed_out','unavailable']){
+  seedHeld();changeRow('확인한 프로그램 설명','description','오류 후 보존할 설명');
+  if(code==='conflict')backend.version='f'.repeat(64);
+  if(code==='signed_out')authError=code;
+  let attempts=0;globalThis.fetch=async(...args)=>{attempts++;if(code==='unavailable')throw Error('timeout');return routed(...args);};
+  saveForm().props.onSubmit({preventDefault(){}});await tick();await tick();eq(attempts,1);eq(states[1].description,'오류 후 보존할 설명');eq(states[5],code);
+  eq(rpcCalls.length,code==='conflict'?1:0);
+  globalThis.fetch=async(url,opt)=>{attempts++;ok(!opt.method);return Response.json({mode:'database',item:{...held,version:'e'.repeat(64)}});};
+  button(render(),'입력을 유지하고 저장 상태 확인').props.onClick();await tick();eq(attempts,2);eq(states[1].description,'오류 후 보존할 설명');eq(states[0].version,'e'.repeat(64));
+  globalThis.fetch=routed;
+ }
+ // A note remains cancelable if the actual fact change is reverted.
+ seedHeld();changeRow('확인한 프로그램 설명','description','메모와 함께 수정');
+ nodes(render()).find(n=>n?.type?.name==='OptionalReviewText').props.onChange('선택 메모');
+ changeRow('확인한 프로그램 설명','description',held.facts.description);eq(button(render(),'사실 저장·재평가').props.disabled,true);
+ button(render(),'수정 취소').props.onClick();eq(states[7],'');ok(!nodes(render()).some(n=>n?.type==='form'));
+ // Existing missing-input and restored-review forms still render.
+ reset();ok(nodes(render()).some(n=>n?.type==='form'));
+ seedHeld({...held,restoredReviewPending:true,editableFields:[]});eq(button(render(),'사실 저장·재평가').props.disabled,false);
+ ok(!text(render()).includes('확인한 사실 입력'));
  console.log(JSON.stringify({syntheticOnly:true,checks,result:'passed',externalConnections:0}));
 }finally{globalThis.fetch=originalFetch;globalThis.requestAnimationFrame=originalRAF;globalThis.document=originalDocument;}
