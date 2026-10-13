@@ -18,7 +18,7 @@ const rpc=async(name,args)=>{
  calls.push({name,args});
  if(failure)return {data:null,error:{message:failure}};
  if(name==='admin_review_list')return {data:args.p_kind==='candidates'?[{id,title:state.content.titleKo,sourceName:'myseoul_program',status:'pending',reasons:[]}]:[],error:null};
- if(name==='admin_myseoul_save_candidate_image'||name==='admin_review_save_candidate'){
+ if(name==='admin_review_save_candidate_image'||name==='admin_review_save_candidate'){
   if(args.p_version!==state.version)return {data:null,error:{message:'review_conflict'}};
   state={...state,content:args.p_content,version:(seq++).toString(16).padStart(64,'0'),image:args.p_image?{...args.p_image,sourceUrl:state.image.sourceUrl}:state.image,
     history:[{action:'save_candidate',actor:args.p_actor,at:new Date().toISOString(),note:'합성 이미지 저장'},...state.history]};
@@ -54,7 +54,8 @@ if(process.argv.includes('--serve')){
  let checks=0;const eq=(a,b)=>{assert.deepEqual(a,b);checks++;};
  for(const i of [{mode:'source',url:null},{mode:'override',url:' https://images.example.org/test.png '},{mode:'none',url:null}]){
   const r=await reviewDetail(post(command(i)),'candidates',id,deps);eq(r.status,200);eq(r.headers.get('cache-control'),'private, no-store, max-age=0');
-  eq((await r.json()).item.image.mode,i.mode);eq(calls.at(-1).args.p_actor,actor);eq(calls.at(-1).name,'admin_myseoul_save_candidate_image');
+  const saved=calls.findLast(call=>call.name==='admin_review_save_candidate_image');
+  eq((await r.json()).item.image.mode,i.mode);eq(saved.args.p_actor,actor);eq(saved.name,'admin_review_save_candidate_image');
  }
  for(const i of [{mode:'override',url:'http://images.example.org/a.png'},{mode:'override',url:'https://images.example.org/a.svg'},{mode:'override',url:'https://127.0.0.1/a.png'},{mode:'override',url:''},{mode:'none',url:'https://images.example.org/a.png'},{mode:'source',url:null,actor}]){
   const n=calls.length;eq((await reviewDetail(post(command(i)),'candidates',id,deps)).status,422);eq(calls.length,n);

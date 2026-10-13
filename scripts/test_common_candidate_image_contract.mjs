@@ -1,0 +1,26 @@
+// Source/guard inspection only, explicitly not SQL execution or database proof.
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const read=n=>readFileSync(new URL('../supabase/migrations/'+n,import.meta.url),'utf8').replaceAll('\r','');
+const old=read('20261013003454_seoul_candidate_images.sql'),sql=read('20261013012432_common_candidate_images.sql');
+const body=(text,pattern)=>text.match(pattern)[1];
+assert.equal(body(sql,/\$projection_expected\$([\s\S]*?)\$projection_expected\$/),body(old,/create or replace function machimoa_review\.project_published_source_image\(\)[\s\S]*?as \$fn\$([\s\S]*?)\$fn\$/));
+assert.equal(body(sql,/\$save_expected\$([\s\S]*?)\$save_expected\$/),body(old,/create function public\.admin_review_save_candidate_image\([\s\S]*?as \$fn\$([\s\S]*?)\$fn\$/));
+const install=sql.replace(/\$(projection_expected|save_expected)\$[\s\S]*?\$\1\$/g,'');
+const save=body(install,/create or replace function public\.admin_review_save_candidate_image\([\s\S]*?as \$fn\$([\s\S]*?)\$fn\$/);
+const projection=body(install,/create or replace function machimoa_review\.project_published_source_image\(\)[\s\S]*?as \$fn\$([\s\S]*?)\$fn\$/);
+assert(!save.includes("'myseoul_program'")&&!save.includes("'seoul_reservation'"));
+assert(!/new\.source\s+(in|=)/.test(projection));
+assert(save.includes("machimoa_review.admin_review_lock('candidates',p_id,p_revision,p_version,p_actor)"));
+assert(save.includes("machimoa_review.admin_review_candidate_action('save_candidate',p_id,p_revision,p_version,p_content,null,p_actor)"));
+assert(save.includes('si.id=sid')&&save.includes('si.source_id=machimoa_review.canonical_source_id(c.source)')&&save.includes('s.legacy_curation_source=c.source'));
+assert(save.includes('si.external_key=c.source_item_id')&&save.includes('si.revision_hash=c.source_revision_hash'));
+assert(save.includes("c.review_status<>'pending'")&&save.includes('c.published_curation_id is not null'));
+assert(save.includes("array['image_selection_mode','image_override_url']"));
+assert(projection.includes('if not found then return new;end if;')&&projection.includes('si.revision_hash=new.source_revision_hash'));
+assert(projection.includes('machimoa_review.canonical_source_id(c.source)=machimoa_review.canonical_source_id(new.source)'));
+assert(install.includes('revoke all on function public.admin_review_save_candidate_image(uuid,text,text,jsonb,jsonb,uuid) from public,anon,authenticated'));
+assert(install.includes('grant execute on function public.admin_review_save_candidate_image(uuid,text,text,jsonb,jsonb,uuid) to service_role'));
+assert(!/add column|update machimoa_review\.source_items|create .*trigger|create or replace function public\.admin_myseoul_save_candidate_image/i.test(install));
+assert(install.trim().endsWith('commit;'));
+console.log('Common image contract: 16 source/guard inspections passed; SQL runtime not executed.');

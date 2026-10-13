@@ -44,7 +44,7 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
   if (v.publishedBodyVersion !== undefined && (v.status !== "published" || !/^[a-f0-9]{64}$/.test(string(v.publishedBodyVersion)))) throw new ReviewFailure("unavailable");
   let programInfo;
   let image;
-  if (base.source.name === "myseoul_program" && v.image !== undefined) {
+  if (v.image !== undefined) {
     const i = object(v.image);
     const mode = choice(i.mode, ["source", "override", "none"] as const);
     const url = nullable(i.url), sourceUrl = nullable(i.sourceUrl);

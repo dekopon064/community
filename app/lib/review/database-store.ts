@@ -51,6 +51,6 @@ export class DatabaseReviewStore implements ReviewStore {
     if (command.action === "review_change") { args.p_disposition = command.disposition; args.p_content = command.content ?? null; }
     if (command.action === "save_published_body") { args.p_public_version = command.publicVersion; args.p_body = { contentKo: command.contentKo, contentJa: command.contentJa }; }
     if ("note" in command) args.p_note = command.note;
-    return this.item(await this.invoke(command.action === "save_candidate" && command.imageSelection ? "admin_myseoul_save_candidate_image" : command.action === "save_facts" && command.confirmRestored ? "admin_review_save_restored" : names[command.action], args), kind, id);
+    return this.item(await this.invoke(command.action === "save_candidate" && command.imageSelection ? "admin_review_save_candidate_image" : command.action === "save_facts" && command.confirmRestored ? "admin_review_save_restored" : names[command.action], args), kind, id);
   }
 }
