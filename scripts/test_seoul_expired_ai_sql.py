@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 C = 'machimoa-saved-count-sql-20261009-56ca9041'
 BASE = 'event_status_local_65f26d571185'
 ACTOR = '00000000-0000-4000-8000-000000000001'
-MIGRATION = ROOT/'supabase/migrations/20261013063052_seoul_expired_ai_recheck.sql'
+MIGRATION = ROOT/'supabase/migrations/20261013070817_seoul_expired_ai_recheck.sql'
 
 
 def docker(args, body=None):
