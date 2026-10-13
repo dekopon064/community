@@ -185,8 +185,12 @@ def nationality_rule(text):
     # residence, reservation or other clauses make the rule ineligible for
     # deduplication. Negation direction is part of the signature.
     text = re.sub(r'\s+|[.。]', '', plain(text))
-    if re.fullmatch(r'(?:(?:해설|프로그램|체험|교육)(?:은|는))?외국인(?:관람객)?(?:을|관람객을)?대상으로운영(?:하므로|하며)'
-                    r'내국인(?:은)?참여(?:가)?(?:불가합니다|할수없습니다)', text):
+    # A neutral API audience preface is not an extra eligibility condition.
+    # Remove only this bounded preface for comparison, never from public prose.
+    text = _AUDIENCE_PREFACE.sub('', text, count=1)
+    if re.fullmatch(r'(?:(?:해설|프로그램|체험|교육)(?:은|는))?외국인(?:관람객)?(?:을|관람객을)?대상'
+                    r'(?:으로운영(?:하므로|하며)|(?:해설|프로그램|체험|교육)(?:로|이므로|이며))'
+                    r'내국인(?:은)?(?:참여|참가)(?:가)?(?:불가합니다|할수없습니다)', text):
         return ('foreign', 'korean_denied')
     return None
 
@@ -196,30 +200,158 @@ def recurrence_rule(text):
     match = re.fullmatch(r'(?:'+SCHEDULE+r'[:：]|(?:해설|프로그램|체험|교육)(?:은|는)(?:약\d+분이며)?)'
         r'([월화수목금토일])(?:요일)?[~～]([월화수목금토일])요일'
         r'(?:에(?:운영|진행)합니다)?[（(]([월화수목금토일])요일[,.·、]공휴일제외[）)][.。]?', text)
+    if match:
+        return match.groups()
+    match = re.fullmatch(r'(?:(?:해설|프로그램|체험|교육)(?:은|는))?'
+        r'([월화수목금토일])(?:요일)?[~～]([월화수목금토일])요일'
+        r'(?:에)?(?:운영|진행)(?:하며|합니다)[,]?'
+        r'([월화수목금토일])요일[·,]공휴일(?:은|을)?제외합니다[.。]?', text)
     return match.groups() if match else None
 
 
+_AUDIENCE_PREFACE = re.compile(
+    r'^(?:일반(?:안내|대상)|원문(?:안내|대상))(?:은|는)'
+    r'[‘“\'"「]?(?:누구나|제한없음)[’”\'"」]?'
+    r'(?:이나|로안내되어있으나|로안내되어있지만|로안내되지만),')
+
+
+def _prose_sentences(body):
+    """Coverage evidence only; retain generated paragraphs verbatim.
+
+    Read sentence boundaries outside tables/indented continuations. Don't split
+    arbitrary commas, parentheses, URLs or numeric values into new facts.
+    """
+    for line in body.splitlines():
+        if '|' in line or line[:1].isspace():
+            continue
+        yield from re.split(r'(?<=[.!?。])(?=\s|$)', inline_text(line))
+
+
+def _coverage_body(body, canonical):
+    # A previously assembled canonical row cannot prove its own redundancy.
+    # Coverage must come from another same-role sentence/explicit procedure.
+    rows={key(plain(line)) for line in canonical.splitlines() if line.strip()}
+    return '\n'.join(line for line in body.splitlines() if key(plain(line)) not in rows)
+
+
+def _without_covered_rows(body, rows):
+    keys={key(plain(line)) for line in rows}
+    lines=body.splitlines();kept=[]
+    for index,line in enumerate(lines):
+        continuation=index+1<len(lines) and lines[index+1][:1].isspace() and lines[index+1].strip()
+        if ('|' not in line and not line[:1].isspace() and not continuation
+                and key(plain(line)) in keys):
+            continue
+        kept.append(line)
+    return re.sub(r'\n?\*\*진행 일정:\*\*\s*\Z', '', '\n'.join(kept))
+
+
+def _unrestricted_audience_covered(body, facts):
+    if key(facts['target_raw']) not in {'누구나', '제한없음'}:
+        return False
+    # Coverage is a statement about the raw/general audience, never proof that
+    # everyone can participate despite a separately stated restriction.
+    return any(_AUDIENCE_PREFACE.match(key(plain(line))) for line in body.splitlines()
+               if '|' not in line and not line[:1].isspace())
+
+
+def _application_methods_covered(methods, body):
+    """All reviewed method kinds must have explicit method-role evidence.
+
+    Contacts are not phone applications. Keep conditional onsite prose intact;
+    only a redundant bare method list may be omitted. Uncertain/negated methods
+    and unique canonical continuations stay rather than being inferred.
+    """
+    text = inline_text(body)
+    proofs = set()
+    blocked = set()
+    patterns = {
+        'internet': r'(?:온라인|인터넷)\s*(?:예약|신청)(?!자|번호|시간)',
+        'onsite': r'(?:현장|방문)\s*(?:접수|신청)',
+        'phone': r'전화\s*(?:신청|예약|접수)',
+    }
+    for kind, pattern in patterns.items():
+        matches = list(re.finditer(pattern, text))
+        # Never count a negated method as coverage, even if the same noun occurs
+        # elsewhere. No global prohibition list or cross-section inference.
+        tails=[re.split(r'[.!?。\n]',text[m.end():],maxsplit=1)[0] for m in matches]
+        negative = any(re.search(r'불가|금지|없|하지\s*(?:않|마)|할\s*수\s*없|안\s*(?:함|합니다|됨|됩니다)',
+                                tail) for tail in tails)
+        if negative:
+            blocked.add(kind)
+        positive=any(re.match(r'\s*(?:[,;:/]|$|(?:은|는|이|가|을|를)?\s*'
+                             r'(?:가능|진행|신청|예약|접수|할\s*수\s*있|후|로|필수|해야))',tail) for tail in tails)
+        if positive and not negative:
+            proofs.add(kind)
+    # The source-specific named reservation platform plus an explicit ordered
+    # search -> selection -> booking procedure proves the internet method.
+    # A URL, place name, query/contact or stray reservation word alone does not.
+    if 'internet' not in blocked and re.search(r'(?:서울시\s*)?공공서비스\s*예약에서[^\n.。]*검색\s*(?:→|->)'
+                 r'[^\n.。]*선택\s*(?:→|->)[^\n.。]*예약\s*진행', text):
+        proofs.add('internet')
+    return bool(methods and set(methods) <= proofs)
+
+
 def clean_role_repetitions(content, sections, facts):
-    """Omit a canonical rule only when one complete generated sentence covers it.
+    """Omit a canonical rule only when bounded same-role evidence covers it.
 
     Preserve compound prose and any uncertain equivalence. No arbitrary substring
-    deletion. Booking/capacity already have their own role and do not pass here.
+    deletion: compare individual complete sentences without deleting them.
     """
     target=optional_section(content, '[대상]')
     schedule=optional_section(content, '[일정 안내]')
     result=dict(sections)
+    omitted={header:[] for header in ('[대상]','[일정 안내]','[신청 방법]')}
     for header, body, label, parser in (
             ('[대상]', target, '참가 조건', nationality_rule),
             ('[일정 안내]', schedule, None, recurrence_rule)):
-        covered={rule for line in body.splitlines() if (rule:=parser(line))}
+        proof_body=_coverage_body(body,sections[header])
+        covered={rule for sentence in _prose_sentences(proof_body) if (rule:=parser(sentence))}
         kept=[]
-        for line in result[header].splitlines():
+        canonical_lines=result[header].splitlines()
+        for index,line in enumerate(canonical_lines):
+            continuation=index+1<len(canonical_lines) and canonical_lines[index+1][:1].isspace() and canonical_lines[index+1].strip()
+            if '|' in line or line[:1].isspace() or continuation:
+                kept.append(line)
+                continue
             value=plain(line)
             if label:
                 value=re.sub(r'^'+label+r'\s*[:：]\s*', '', value)
-            if parser(value) not in covered or parser(value) is None:
+            if (header == '[대상]' and re.fullmatch(r'대상\s*[:：]\s*(?:누구나|제한없음)', value)
+                    and _unrestricted_audience_covered(proof_body, facts)):
+                omitted[header].append(line)
+                continue
+            rule=parser(value)
+            # A weekday signature cannot cover an additional duration/count in
+            # the canonical source row. Keep that whole row and its qualifiers.
+            if parser is recurrence_rule and re.search(r'\d', value):
+                rule=None
+            if rule not in covered or rule is None:
                 kept.append(line)
+            else:
+                omitted[header].append(line)
         result[header]=re.sub(r'\n?\*\*진행 일정:\*\*\s*\Z', '', '\n'.join(kept))
+    method=optional_section(content, '[신청 방법]')
+    expected=' / '.join(dict(internet='인터넷 예약', onsite='현장 접수', phone='전화 신청')[v]
+                        for v in facts['application_methods'])
+    lines=result['[신청 방법]'].splitlines()
+    if _application_methods_covered(facts['application_methods'], _coverage_body(method,sections['[신청 방법]'])):
+        kept=[]
+        for index,line in enumerate(lines):
+            if (re.fullmatch(r'신청 방법\s*[:：]\s*'+re.escape(expected), plain(line))
+                    and not (index+1<len(lines) and lines[index+1][:1].isspace() and lines[index+1].strip())):
+                omitted['[신청 방법]'].append(line)
+            else:
+                kept.append(line)
+        result['[신청 방법]']='\n'.join(kept)
+    # Handle already-assembled local input without deleting the only copy of a
+    # fact. Only proven redundant canonical rows in the same section qualify.
+    from ingest.ai_worker import KO_SECTION_HEADERS
+    boundary='|'.join(re.escape(h) for h in KO_SECTION_HEADERS)
+    for header,rows in omitted.items():
+        if rows:
+            content=re.sub(r'(?ms)(^\s*'+re.escape(header)+r'[ \t]*)(.*?)(?=^\s*(?:'+boundary+r')|\Z)',
+                lambda m:m[1]+'\n'+_without_covered_rows(m[2],rows)+'\n',content,count=1)
     return content,result
 
 
