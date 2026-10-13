@@ -39,9 +39,10 @@ def weekly_schedule(description):
     try:
         tables = read_body(description).tables
     except AiJobError:
-        if re.search(r'(?m)^\s*\|\s*시간(?:\s*[/·]\s*요일)?\s*\|\s*'+WEEKDAY+r'\s*\|', description):
+        if re.search(r'(?m)^\s*\|\s*시간(?:\s*[/·]\s*요일)?\s*\|', description):
             # A malformed weekly matrix is not absence of a schedule. Do not
-            # let an aggregate response bypass validation by hiding its source.
+            # let an aggregate response bypass validation by hiding its source,
+            # including a missing first weekday header.
             raise
         tables = ()  # Unsupported source markup stays data, not executable HTML.
     matrices = []

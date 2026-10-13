@@ -44,6 +44,8 @@ def fake_translation(body):
     body=re.sub(r'(\d+)\s*회차',r'第\1回',body)
     body=re.sub(r'(\d+)\s*인당',r'\1人当たり',body)
     body=re.sub(r'(\d+)\s*인(?!당|분|가구)',r'\1名',body)
+    for ko, ja in (('일본어', '日本語'), ('중국어', '中国語'), ('영어', '英語'), ('한국어', '韓国語')):
+        body=body.replace('('+ko+')', '('+ja+')')
     for ko,ja in zip('월화수목금토일','月火水木金土日'):
         body=re.sub(r'(?<=\|)\s*'+ko+r'\s*(?=\|)', ' '+ja+' ', body)
     body=body.replace('내외','程度').replace('분','分').replace('불가합니다','できません').replace('수 없습니다','できません')

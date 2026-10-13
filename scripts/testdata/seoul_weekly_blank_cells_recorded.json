@@ -1,0 +1,8 @@
+{
+  "provenance": {
+    "input": "Exact weekday table from the preserved reviewed description used by the failed no-retry run. No operational read in this test.",
+    "failure": "Input parsing failed before generation; summary and translation calls were both zero. This is input evidence, not an AI response.",
+    "replay": "Other claim fields and successful summary/translation are local fixtures; all provider and RPC calls are fake."
+  },
+  "reviewed_table": "| 시간 | 화 | 수 | 목 | 금 | 토 | 일 |\n| --- | --- | --- | --- | --- | --- | --- |\n| 10:00 | 1회차 | 1회차 | 1회차 | 1회차 | | |\n| 11:00 | 2회차 | 2회차 | 2회차 | 2회차 | 1회차 | 1회차 |\n| 14:00 | 3회차 | 3회차 | 3회차 | 3회차 | 2회차 | 2회차 |\n| 15:00 | 4회차 | 4회차 | 4회차 | 4회차 | 3회차 | 3회차 |\n| 16:00 | | 5회차(일본어) | 5회차(중국어) | 5회차(영어) | 4회차 | 4회차 |"
+}
