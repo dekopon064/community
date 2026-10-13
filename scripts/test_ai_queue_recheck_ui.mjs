@@ -91,5 +91,14 @@ for(const [source,slot,other] of [['seoul_reservation',3,4],['myseoul_program',4
 resetWorkspace();let ai=nodes(workspace()).find(n=>n?.type?.name==='AiQueuePanel');ai.props.onReview(initial);eq(states[0],'ai');
 ai.props.onBusy(true);ai=nodes(workspace()).find(n=>n?.type?.name==='AiQueuePanel');ai.props.onReview({...initial,recheckPending:true});eq(states[0],'ai');
 resetWorkspace();states[18]='다른 초안';ai=nodes(workspace()).find(n=>n?.type?.name==='AiQueuePanel');ai.props.onReview({...initial,recheckPending:true});eq(states[0],'ai');eq(states[18],'다른 초안');
+// Only the authoritative failed-Seoul capability exposes the existing recheck
+// controls. No quick exclusion or automatic POST/AI execution is introduced.
+seed({...initial,status:'failed',canRecheck:true,canExclude:false});
+ok(text(render()).includes('AI 작업 실패 · 재검토 가능'));
+eq(button('AI 대기 보류·재검토로 보내기').props.disabled,false);
+ok(!text(render()).includes('빠른 제외'));
+seed({...initial,status:'failed',canRecheck:false,canExclude:false});
+ok(text(render()).includes('현재 상태에서는 재검토 전환 불가'));
+ok(!text(render()).includes('AI 대기 보류·재검토로 보내기'));
 globalThis.fetch=oldFetch;
 console.log(`AI queue component handlers: ${checks} checks passed. Fake fetch only; no DB/AI.`);

@@ -15,9 +15,11 @@ def execute_target(args):
     if CLAUDE_JOB_USD_CAP!=0.10 or MAX_CREATE_CALLS!=2:raise ValueError('unexpected_cost_contract')
     url=os.environ.get('SUPABASE_URL','');key=os.environ.get('SUPABASE_SERVICE_KEY','')
     if url.rstrip('/')!=f'https://{args.project_ref}.supabase.co' or not key.strip():raise ValueError('invalid_server_configuration')
-    provider_name,provider_key=require_configured_provider();provider=create_provider_adapter(provider_name,provider_key)
+    provider_name,provider_key=require_configured_provider()
+    if args.no_retry and provider_name!='chatgpt_plan':raise ValueError('explicit_chatgpt_plan_required')
+    provider=create_provider_adapter(provider_name,provider_key)
     try:
-        return process_reclassified_job(ProgramAIAdapter.from_supabase(create_ingest_client(url,key)),source_item_id=args.source_item_id,revision=args.revision,classification_version=args.classification_version,summarize_ko=provider.summarize_ko,translate_ja=provider.translate_ja,worker_id='classification-manual-'+uuid4().hex)
+        return process_reclassified_job(ProgramAIAdapter.from_supabase(create_ingest_client(url,key)),source_item_id=args.source_item_id,revision=args.revision,classification_version=args.classification_version,summarize_ko=provider.summarize_ko,translate_ja=provider.translate_ja,worker_id='classification-manual-'+uuid4().hex,no_retry=args.no_retry)
     finally:
         close_provider_adapter(provider)
 
@@ -28,11 +30,12 @@ def main(argv=None,*,execute=None):
     parser.add_argument('--classification-version',required=True,type=int)
     parser.add_argument('--project-ref',required=True,type=project_ref)
     parser.add_argument('--execute',action='store_true')
+    parser.add_argument('--no-retry',action='store_true',help='Seoul only: bind terminal failure without retry registration.')
     args=parser.parse_args(argv)
     if args.classification_version<1:parser.error('invalid_classification_version')
     if not args.execute:
         from ingest.ai_provider import provider_validation_limits
-        print(json.dumps({'mode':'validation_only','target_count':1,**provider_validation_limits(),'automatic_retries':0,'network_calls':0,'publish':False}));return 0
+        print(json.dumps({'mode':'validation_only','target_count':1,**provider_validation_limits(),'automatic_retries':0,'failure_policy':'no_retry' if args.no_retry else 'existing','network_calls':0,'publish':False}));return 0
     try:
         r=(execute or execute_target)(args);success=r.status=='processed' and r.completed==1 and not (r.retried or r.failed or r.state_unknown)
         print(json.dumps({'mode':'execution','completed':success,'status':r.status,'automatic_retries':0,'publish':False}));return 0 if success else 1

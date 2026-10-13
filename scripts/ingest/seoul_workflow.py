@@ -182,13 +182,15 @@ def bounded_queue_targets(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pag
 
 
 def process_seoul_queue(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pages: int,
-                        summarize_ko, translate_ja, worker_id: str) -> dict:
+                        summarize_ko, translate_ja, worker_id: str, no_retry: bool = False) -> dict:
+    if type(no_retry) is not bool:
+        raise ValueError('seoul_ai_failure_policy_invalid')
     targets,counts=bounded_queue_targets(adapter,max_jobs=max_jobs,queue_pages=queue_pages)
     for index,item in enumerate(targets):
         # The existing claim authoritatively rechecks facts/filters, revisions,
         # active attempts and duplicate candidates. A queue read is no claim.
         result=process_seoul_program_job(adapter,source_item_id=item['sourceItemId'],revision=item['revision'],
-            summarize_ko=summarize_ko,translate_ja=translate_ja,worker_id=worker_id)
+            summarize_ko=summarize_ko,translate_ja=translate_ja,worker_id=worker_id,no_retry=no_retry)
         counts['completed']+=result.completed
         counts['failed']+=result.failed+result.retried
         counts['unavailable_skipped']+=int(result.status=='ai_no_jobs')

@@ -93,7 +93,7 @@ class SeoulWorkflowTests(unittest.TestCase):
                 self.assertEqual(len(client.calls),2)
                 output=events[-1][1]['p_output']
                 self.assertIn(output['contentKo'],client.calls[1]['input'][0]['content'])
-                self.assertIn('정원',output['contentKo']);self.assertIn('2회차',output['contentKo'])
+                self.assertIn('**모집 인원:** 20명',output['contentKo']);self.assertIn('2회차',output['contentKo'])
                 self.assertNotIn('확인한 참여 안내',output['contentKo'])
                 self.assertEqual(events[-1][1]['p_revision'],REV)
                 self.assertIn('Contextual terminology',client.calls[1]['instructions'])

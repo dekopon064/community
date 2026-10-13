@@ -29,6 +29,7 @@ export interface AiReviewStore {
  execute(jobId:string,command:AiRecheckCommand,actor:string):Promise<AiReview>;
 }
 const hash=/^[a-f0-9]{64}$/;
+function recheckStatus(v:Record<string,unknown>){return v.status==='queued'||v.status==='failed'&&v.sourceName==='seoul_reservation';}
 function obj(x:unknown):Record<string,unknown>{if(!x||typeof x!=='object'||Array.isArray(x))throw new ReviewFailure('unavailable');return x as Record<string,unknown>;}
 function text(x:unknown,max=60000){if(typeof x!=='string'||x.length>max)throw new ReviewFailure('unavailable');return x;}
 export function aiRecheckCommand(raw:unknown):AiRecheckCommand {
@@ -56,7 +57,7 @@ export function aiReview(raw:unknown,jobId:string):AiReview {
  const v=obj(raw),id=text(v.sourceItemId,36),sourceName=text(v.sourceName,40),status=text(v.status,20);
  if(v.jobId!==jobId||!jobUuid.test(jobId)||!jobUuid.test(id)||!hash.test(text(v.revision,64))||!hash.test(text(v.version,64))||
  !['queued','claimed','failed','cancelled','completed'].includes(status)||typeof v.canRecheck!=='boolean'||typeof v.canExclude!=='boolean'||v.canExclude&&!['queued','cancelled'].includes(status)||typeof v.recheckPending!=='boolean'||
- v.canRecheck&&(status!=='queued'||v.recheckPending)||v.recheckPending&&status!=='cancelled')throw new ReviewFailure('unavailable');
+ v.canRecheck&&(!recheckStatus(v)||v.recheckPending)||v.recheckPending&&status!=='cancelled')throw new ReviewFailure('unavailable');
  let source,values;let filterInfo:FilterInfo|undefined;
  if(sourceName==='seoul_reservation'){
   const item=programItem(v.review,id);source=item.source;filterInfo=item.filterInfo;
@@ -85,7 +86,7 @@ export function aiReviewView(raw:unknown,jobId:string):AiReview {
  if(v.jobId!==jobId||!jobUuid.test(jobId)||!jobUuid.test(String(v.sourceItemId))||!hash.test(String(v.revision))||!hash.test(String(v.version))||
  !['youthcenter_policy','youthcenter_content','seoul_reservation','myseoul_program'].includes(String(v.sourceName))||
  !['queued','claimed','failed','cancelled','completed'].includes(String(v.status))||typeof v.canRecheck!=='boolean'||typeof v.canExclude!=='boolean'||v.canExclude&&!['queued','cancelled'].includes(String(v.status))||typeof v.recheckPending!=='boolean'||
- v.canRecheck&&(v.status!=='queued'||v.recheckPending)||v.recheckPending&&v.status!=='cancelled'||!Array.isArray(v.values)||v.values.length>60)throw new ReviewFailure('unavailable');
+ v.canRecheck&&(!recheckStatus(v)||v.recheckPending)||v.recheckPending&&v.status!=='cancelled'||!Array.isArray(v.values)||v.values.length>60)throw new ReviewFailure('unavailable');
  return {jobId,sourceItemId:String(v.sourceItemId),sourceName:String(v.sourceName),title:text(v.title,500),revision:String(v.revision),version:String(v.version),status:String(v.status),canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(text(source.url,2048)),body:text(source.body,200000)},values:v.values.map(row=>{const r=obj(row);return {label:text(r.label,100),value:text(r.value)};}),...expiredCancellation(v)};
 }
 export class DatabaseAiReviewStore implements AiReviewStore {

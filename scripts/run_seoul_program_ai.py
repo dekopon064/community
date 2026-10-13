@@ -55,6 +55,7 @@ def execute_target(args: argparse.Namespace):
             ProgramAIAdapter.from_supabase(client), source_item_id=args.source_item_id,
             revision=args.revision, summarize_ko=provider.summarize_program_ko,
             translate_ja=provider.translate_ja, worker_id="program-manual-" + uuid4().hex,
+            no_retry=args.no_retry,
         )
     finally:
         close_provider_adapter(provider)
@@ -76,7 +77,7 @@ def execute_queue(args: argparse.Namespace):
         client=create_ingest_client(url,key)
         return process_seoul_queue(ProgramAIAdapter.from_supabase(client),max_jobs=args.max_jobs,
             queue_pages=args.queue_pages,summarize_ko=provider.summarize_program_ko,
-            translate_ja=provider.translate_ja,worker_id='program-manual-'+uuid4().hex)
+            translate_ja=provider.translate_ja,worker_id='program-manual-'+uuid4().hex,no_retry=args.no_retry)
     finally:close_provider_adapter(provider)
 
 
@@ -88,6 +89,7 @@ def main(argv: Sequence[str] | None = None, *, execute: Callable | None = None) 
     parser.add_argument('--queue-pages',type=int)
     parser.add_argument("--project-ref", required=True, type=project_ref)
     parser.add_argument("--execute", action="store_true", help="Explicitly allow one claim and provider job; separate approval required.")
+    parser.add_argument('--no-retry', action='store_true', help='Bind this attempt to terminal failure without retry registration.')
     args = parser.parse_args(argv)
     queue=args.max_jobs is not None or args.queue_pages is not None
     if queue:
@@ -100,6 +102,7 @@ def main(argv: Sequence[str] | None = None, *, execute: Callable | None = None) 
         print(json.dumps({"mode": "validation_only", "source": "seoul_reservation",
                           "target_count": args.max_jobs if queue else 1, "queue_pages":args.queue_pages,
                           **provider_validation_limits(), "automatic_retries": 0,
+                          "failure_policy": "no_retry" if args.no_retry else "existing",
                           "network_calls": 0, "publish": False}))
         return 0
     try:

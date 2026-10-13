@@ -8,6 +8,7 @@ from uuid import UUID
 from ingest.ai_worker import (AiWorkerResult, extract_summary_section, KO_SUMMARY_HEADER,
     KO_SECTION_HEADERS, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
 from ingest.program_ai import ProgramAIAdapter
+from ingest.rpc_errors import RpcAmbiguous
 from ingest.region_ja_glossary import validate_japanese_output
 from ingest.content_filters import validate_filters, program_application_complete, KEYS
 from ingest.body_sections import normalize_schedule_heading
@@ -209,13 +210,18 @@ def protected_sections(c:dict)->dict[str,str]:
     return {h:'\n'.join(lines) for h,lines in sections.items()}
 
 def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revision:str,classification_version:int,
-        summarize_ko:Callable,translate_ja:Callable,worker_id:str,lease_seconds:int=300)->AiWorkerResult:
+        summarize_ko:Callable,translate_ja:Callable,worker_id:str,lease_seconds:int=300,no_retry:bool=False)->AiWorkerResult:
     try:
         UUID(source_item_id)
+        if type(no_retry) is not bool:raise ValueError()
         if not re.fullmatch('[a-f0-9]{64}',revision) or type(classification_version) is not int or classification_version<1 or not 30<=lease_seconds<=600 or not 1<=len(worker_id)<=100:raise ValueError()
     except (TypeError,ValueError):return AiWorkerResult(status='ai_state_unknown',state_unknown=1)
     try:
-        c=validate_context(adapter.invoke('claim_reclassified_content_ai',{'p_id':source_item_id,'p_revision':revision,'p_classification_version':classification_version,'p_worker_id':worker_id,'p_lease_seconds':lease_seconds}),source_item_id,revision,classification_version,worker_id)
+        c=validate_context(adapter.invoke('claim_seoul_reclassified_ai_no_retry' if no_retry else 'claim_reclassified_content_ai',{'p_id':source_item_id,'p_revision':revision,'p_classification_version':classification_version,'p_worker_id':worker_id,'p_lease_seconds':lease_seconds}),source_item_id,revision,classification_version,worker_id)
+        if no_retry:
+            from ingest.ai_failure_policy import validate_no_retry_context
+            validate_no_retry_context(c)
+            if c['source']!='seoul_reservation':raise RpcAmbiguous()
     except Exception:return AiWorkerResult(status='ai_state_unknown',state_unknown=1)
     fence={'p_job_id':c['jobId'],'p_revision':revision,'p_classification_version':classification_version,'p_claimed_at':c['claimedAt'],'p_lease_until':c['leaseUntil'],'p_worker_id':worker_id}
     try:
@@ -275,9 +281,19 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             if not numbers(verified).issubset(numbers(content_ja)):raise ValueError()
         output={'titleKo':c['title'],'summaryKo':summary,'contentKo':content,'titleJa':title_ja,'summaryJa':summary_ja,'contentJa':content_ja,'aiModel':model}
         result=adapter.invoke('finish_reclassified_content_ai',{**fence,'p_output':output})
-        if not isinstance(result,dict) or result.get('outcome') not in {'inserted','duplicate'}:raise ValueError()
+        if not isinstance(result,dict) or result.get('outcome') not in {'inserted','duplicate'}:raise RpcAmbiguous()
+        try:UUID(result['candidateId'])
+        except (KeyError,TypeError,ValueError,AttributeError):raise RpcAmbiguous() from None
         return AiWorkerResult(status='processed',claimed=1,completed=1)
-    except Exception:
+    except Exception as exc:
+        if no_retry:
+            from ingest.ai_failure_policy import terminate_no_retry,uncertain_failure
+            if not uncertain_failure(exc):
+                try:
+                    terminate_no_retry(adapter,c,exc)
+                    return AiWorkerResult(status='processed',claimed=1,failed=1)
+                except Exception:
+                    return AiWorkerResult(status='ai_state_unknown',claimed=1,state_unknown=1)
         # No new write/provider retry. A separate fenced status read can establish
         # completion; expired attempts require an explicit close before any new job.
         try:

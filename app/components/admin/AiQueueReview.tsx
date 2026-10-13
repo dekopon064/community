@@ -43,7 +43,7 @@ export default function AiQueueReview({jobId,onClose,onBusy,onChanged,onReview}:
   {error&&<div role="alert" className="mt-4 leading-7 text-info-status"><p>{failureText[error]??failureText.unavailable}</p><p>입력은 유지됩니다. 자동 재전송은 하지 않습니다.</p></div>}
   {notice&&<p role="status" className="mt-4 leading-7 text-info-body">{notice}</p>}
   {item&&<>
-   <p className="mt-3 leading-7 text-info-status">{item.recheckPending?'재검토 중 · AI 대기 보류':item.status==='claimed'?'AI 처리 중 · 재검토 전환 불가':item.canRecheck?'AI 작업 대기 · 실행 전 확인':'현재 상태에서는 재검토 전환 불가'}</p>
+   <p className="mt-3 leading-7 text-info-status">{item.recheckPending?'재검토 중 · AI 대기 보류':item.status==='claimed'?'AI 처리 중 · 재검토 전환 불가':item.canRecheck?item.status==='failed'?'AI 작업 실패 · 재검토 가능':'AI 작업 대기 · 실행 전 확인':'현재 상태에서는 재검토 전환 불가'}</p>
    <details className="mt-5 border-b border-info-rule pb-5"><summary className="min-h-11 cursor-pointer py-2 font-semibold">원문 확인 · 읽기 전용</summary>{item.source.url&&<a href={item.source.url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a>}<p className="mt-3 max-w-3xl whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body||'저장된 본문이 없습니다.'}</p></details>
    <h4 className="mt-6 font-bold">현재 확인값</h4><p className="mt-2 text-sm leading-6 text-info-muted">값이 저장되어 있다는 표시이며, 모든 검토가 완료됐다는 뜻은 아닙니다.</p>
    <dl className="mt-3 divide-y divide-info-rule">{item.values.map((row,i)=><div key={i} className="grid min-w-0 gap-2 py-3 sm:grid-cols-[11rem_minmax(0,1fr)]"><dt className="font-semibold">{row.label}</dt><dd className="min-w-0 whitespace-pre-wrap break-words leading-7 text-info-body">{row.value}</dd></div>)}</dl>
