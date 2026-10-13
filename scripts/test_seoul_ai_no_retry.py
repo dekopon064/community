@@ -97,6 +97,8 @@ class NoRetryTests(unittest.TestCase):
         for classified in (False, True):
             r, e, calls, count = self.replay(classified, 'ko_error')
             self.assertEqual((r.failed, r.retried, r.completed), (1, 0, 0))
+            self.assertEqual(r.failure_scope, 'item')
+            self.assertEqual(r.failure_stage, 'summary')
             self.assertEqual(calls, ['summary']); self.assertEqual(count, 1)
             self.assertEqual([x[0] for x in e][1:], ['fail_seoul_ai_no_retry'])
 
@@ -104,6 +106,8 @@ class NoRetryTests(unittest.TestCase):
         for classified in (False, True):
             r, e, calls, count = self.replay(classified, 'ko_validation')
             self.assertEqual((r.failed, r.retried, r.completed), (1, 0, 0))
+            self.assertEqual(r.failure_scope, 'item')
+            self.assertEqual(r.failure_stage, 'korean_validation')
             self.assertEqual(calls, ['summary']); self.assertEqual(count, 1)
             self.assertEqual(e[-1][0], 'fail_seoul_ai_no_retry')
 
@@ -111,6 +115,7 @@ class NoRetryTests(unittest.TestCase):
         for classified in (False, True):
             r, e, calls, count = self.replay(classified, 'ja_error')
             self.assertEqual((r.failed, r.retried, r.completed), (1, 0, 0))
+            self.assertEqual(r.failure_scope, 'item')
             self.assertEqual(calls, ['summary', 'translation']); self.assertEqual(count, 2)
             self.assertEqual(e[-1][0], 'fail_seoul_ai_no_retry')
 
@@ -119,6 +124,7 @@ class NoRetryTests(unittest.TestCase):
             for mode in ('ko_unknown', 'finish_unknown', 'finish_malformed', 'fail_unknown'):
                 r, e, calls, count = self.replay(classified, mode)
                 self.assertEqual((r.state_unknown, r.retried, r.failed), (1, 0, 0))
+                self.assertEqual(r.failure_scope, 'batch')
                 self.assertNotIn('fail_seoul_program_ai', [n for n, _ in e])
                 self.assertEqual(sum(n == 'fail_seoul_ai_no_retry' for n, _ in e), int(mode == 'fail_unknown'))
                 self.assertEqual(sum(n.startswith('finish_') for n, _ in e), int(mode.startswith('finish')))
@@ -163,7 +169,7 @@ class NoRetryTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()): self.assertEqual(entry(args+['--execute', '--no-retry'], execute=execute), 1)
             self.assertEqual(seen, [True])
 
-    def test_bounded_queue_stops_after_terminal_failure(self):
+    def test_bounded_queue_continues_after_acknowledged_item_failure(self):
         _, c = replay_context(); c['failurePolicy'] = {'policy': 'no_retry', 'attempt': 'f'*64}
         item = dict(sourceName='seoul_reservation', status='queued', currentRevision=True, leaseState='none',
                     retryCount=0, nextRetryAt=None, sourceItemId=c['sourceItemId'], revision=c['revision'])
@@ -172,14 +178,17 @@ class NoRetryTests(unittest.TestCase):
         def rpc(n, a):
             events.append(n)
             if n == 'admin_review_ai_queue': return {'items': [item, second], 'hasMore': False}
-            if n == 'claim_seoul_program_ai_no_retry': return [c]
+            if n == 'claim_seoul_program_ai_no_retry':
+                current=copy.deepcopy(c);current['sourceItemId']=a['p_source_item_id'];return [current]
             if n == 'fail_seoul_ai_no_retry': return 'failed'
             raise AssertionError(n)
         def fail(*a, **k): raise AiJobError('ai_schema_error')
         r = process_seoul_queue(ProgramAIAdapter(rpc), max_jobs=2, queue_pages=1,
             summarize_ko=fail, translate_ja=fail, worker_id=c['workerId'], no_retry=True)
-        self.assertEqual((r['failed'], r['unprocessed']), (1, 1))
-        self.assertEqual(events, ['admin_review_ai_queue', 'claim_seoul_program_ai_no_retry', 'fail_seoul_ai_no_retry'])
+        self.assertEqual((r['failed'], r['unprocessed']), (2, 0))
+        self.assertFalse(r['batch_stopped'])
+        self.assertEqual(events, ['admin_review_ai_queue', 'claim_seoul_program_ai_no_retry',
+            'fail_seoul_ai_no_retry', 'claim_seoul_program_ai_no_retry', 'fail_seoul_ai_no_retry'])
 
 
 if __name__ == '__main__': unittest.main()

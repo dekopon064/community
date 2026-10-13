@@ -13,6 +13,16 @@ from ingest.rpc_errors import RpcAmbiguous
 from ingest.translation_validation import validate_translation_fidelity
 
 
+class PlanResponseUnknown(RpcAmbiguous):
+    def __init__(self, diagnostic):
+        super().__init__()
+        self.diagnostic = diagnostic
+
+
+class PlanCommonFailure(AiJobError):
+    failure_scope = 'batch'
+
+
 def plan_request(*, instructions, user, stage):
     request = build_request(instructions=instructions, user=user, stage=stage)
     # The subscription route rejects these paid-API controls. The same output
@@ -59,6 +69,16 @@ class ChatGPTPlanAdapter:
         self._translation_attempted = False
         self._usage_records = []
 
+    def release_terminated_attempt(self):
+        """Called only after the worker acknowledges a fenced terminal failure.
+
+        Reset the per-item pair ledger, never unblock a transport/auth failure.
+        This does not invoke AI or reopen/retry the terminated server attempt.
+        """
+        if self._blocked:
+            raise RpcAmbiguous()
+        self._reset_job()
+
     def close(self):
         try:
             if self._owned_client:
@@ -91,7 +111,8 @@ class ChatGPTPlanAdapter:
                             'stream_not_completed', 'duplicate_completed_event',
                             'invalid_terminal_output_item', 'conflicting_terminal_output',
                             'invalid_completed_output', 'unexpected_response_model'}:
-                raise RpcAmbiguous() from None
+                raise PlanResponseUnknown({'stage': stage, 'code': exc.code,
+                    **(exc.diagnostic or {})}) from None
             mapping = {'plan_http_401':'ai_http_401', 'plan_http_403':'ai_http_403',
                        'plan_http_400':'ai_http_400', 'plan_http_404':'ai_http_404',
                        'subscription_sharing_user_not_eligible':'ai_http_403',
@@ -100,15 +121,20 @@ class ChatGPTPlanAdapter:
                        'subscription_sharing_usage_limit_exceeded':'ai_http_429',
                        'subscription_sharing_usage_unavailable':'ai_http_429'}
             if exc.code not in mapping:
-                raise RpcAmbiguous() from None
+                raise PlanResponseUnknown({'stage': stage, 'code': exc.code,
+                    **(exc.diagnostic or {})}) from None
             raise AiJobError(mapping[exc.code]) from None
         usage = get_field(response, 'usage')
-        input_tokens = _integer(get_field(usage, 'input_tokens'))
-        output_tokens = _integer(get_field(usage, 'output_tokens'))
-        reasoning = _integer(get_field(get_field(usage, 'output_tokens_details'), 'reasoning_tokens'))
-        total = get_field(usage, 'total_tokens', input_tokens + output_tokens)
-        if _integer(total) != input_tokens + output_tokens or reasoning > output_tokens:
-            raise AiJobError('ai_schema_error')
+        try:
+            input_tokens = _integer(get_field(usage, 'input_tokens'))
+            output_tokens = _integer(get_field(usage, 'output_tokens'))
+            reasoning = _integer(get_field(get_field(usage, 'output_tokens_details'), 'reasoning_tokens'))
+            total = get_field(usage, 'total_tokens', input_tokens + output_tokens)
+            if _integer(total) != input_tokens + output_tokens or reasoning > output_tokens:
+                raise AiJobError('ai_schema_error')
+        except AiJobError:
+            self._blocked = True
+            raise PlanCommonFailure('ai_schema_error') from None
         self._usage_records.append({'provider':'openai', 'model':GPT_MODEL,
             'auth_mode':'chatgpt_plan', 'billing':'chatgpt_plan',
             'input_tokens':input_tokens, 'output_tokens':output_tokens,
