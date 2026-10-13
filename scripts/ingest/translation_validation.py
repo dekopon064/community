@@ -182,19 +182,37 @@ def _local_schedule_text(text: str) -> str:
                   r'(\+\d{2}:?\d{2})(?!\d)', annotation, text)
 
 
-def _dates_and_times(text: str) -> list[tuple]:
+def _dates_and_times(text: str, *, known_years: frozenset = frozenset()) -> list[tuple]:
     text = _local_schedule_text(text)
     text = text.translate(str.maketrans({"年": "년", "月": "월", "日": "일", "時": "시", "分": "분"}))
     pattern = (r"(?P<iso>\d{4}-\d{2}-\d{2})|"
+               r"(?<![\w./-])(?P<dot_year>\d{4})\s*\.\s*(?P<dot_month>\d{1,2})\s*\.\s*"
+               r"(?P<dot_day>\d{1,2})(?![\d]|\.\d)|"
+               r"(?<![\w./-])(?P<short_year>['’]\d{2})\s*\.\s*(?P<short_month>\d{1,2})\s*\.\s*(?P<short_day>\d{1,2})(?!\d|\.\d)|"
+               r"(?<![\w.-])(?P<brief_month>\d{1,2})\s*\.\s*(?P<brief_day>\d{1,2})\.?(?=\s*[（(][월화수목금토일月火水木金土日])|"
                r"(?:(?P<year>\d{4})\s*년\s*)?(?P<month>\d{1,2})\s*월\s*(?P<day>\d{1,2})\s*일|"
                r"(?P<colon_hour>\d{1,2}):(?P<colon_minute>\d{2})(?::(?P<colon_second>\d{2}))?|"
                r"(?P<meridiem>오전|오후|午前|午後)?\s*(?P<hour>\d{1,2})\s*시(?!간|間)(?:\s*(?P<minute>\d{1,2})\s*분)?(?:\s*(?P<second>\d{1,2})\s*[초秒])?")
     values = []
-    year = None
+    year = next(iter(known_years)) if len(known_years) == 1 else None
     for match in re.finditer(pattern, text):
         if match["iso"]:
             year, month, day = (int(x) for x in match["iso"].split("-"))
             values.append(("date", year, month, day))
+        elif match['dot_year']:
+            # Version labels are opaque numeric identifiers, not calendars.
+            if re.search(r'(?:버전|version|ver\.?|v)\s*[:：]?\s*$', text[:match.start()], re.I):
+                continue
+            year, month, day = (int(match[k]) for k in ('dot_year', 'dot_month', 'dot_day'))
+            values.append(('date', year, month, day))
+        elif match['short_year']:
+            candidates = {y for y in known_years if y % 100 == int(match['short_year'][1:])}
+            if len(candidates) != 1:
+                raise AiJobError('ai_schema_error')
+            year = next(iter(candidates))
+            values.append(('date', year, int(match['short_month']), int(match['short_day'])))
+        elif match['brief_month']:
+            values.append(('date', year, int(match['brief_month']), int(match['brief_day'])))
         elif match["month"]:
             if match["year"]:
                 year = int(match["year"])
@@ -208,6 +226,18 @@ def _dates_and_times(text: str) -> list[tuple]:
             if hour > 23 or minute > 59 or second > 59:
                 raise AiJobError('ai_schema_error')
             values.append(("time", hour, minute, second) if second else ("time", hour, minute))
+        if values and values[-1][0] == 'date':
+            _, date_year, month, day = values[-1]
+            try:
+                # Validate month/day without inventing an omitted year.
+                value = datetime(date_year or 2000, month, day)
+            except ValueError:
+                raise AiJobError('ai_schema_error') from None
+            weekday = re.match(r'\.?\s*[（(]\s*([월화수목금토일月火水木金土日])(?:요일|曜日)?\s*[）)]', text[match.end():])
+            if weekday and date_year is not None:
+                alphabet = '월화수목금토일' if weekday[1] in '월화수목금토일' else '月火水木金土日'
+                if alphabet.index(weekday[1]) != value.weekday():
+                    raise AiJobError('ai_schema_error')
     return values
 
 
@@ -216,7 +246,16 @@ def _require_present(required: Counter, actual: Counter) -> None:
         raise AiJobError("ai_schema_error")
 
 
-def _validate_field(korean: str, japanese: str) -> None:
+def _date_year_context(text: str) -> frozenset:
+    # Only explicit full calendar years in the authoritative body. No current
+    # year/century guessing, URL digits, versions or translated-year authority.
+    text = _URL.sub(' ', _normal(comparison_text(text)))
+    pattern = r'(?<![\w./-])(\d{4})(?:-\d{2}-\d{2}|\s*년\s*\d{1,2}\s*월|\s*\.\s*\d{1,2}\s*\.\s*\d{1,2})(?!\d|\.\d)'
+    return frozenset(int(m[1]) for m in re.finditer(pattern, text)
+                     if not re.search(r'(?:버전|version|ver\.?|v)\s*[:：]?\s*$', text[:m.start()], re.I))
+
+
+def _validate_field(korean: str, japanese: str, *, known_years: frozenset = frozenset()) -> None:
     korean, japanese = comparison_text(korean), comparison_text(japanese)
     # URLs are opaque. Do not NFKC-normalize their path, query or identifiers.
     if Counter(_URL.findall(korean)) - Counter(_URL.findall(japanese)):
@@ -230,9 +269,9 @@ def _validate_field(korean: str, japanese: str) -> None:
     _require_present(_durations(ko), _durations(ja))
     for ko_label, ja_label in _PERIOD_ROLES:
         source = _entry(ko, ko_label)
-        if source is not None and (expected := _dates_and_times(source)):
+        if source is not None and (expected := _dates_and_times(source, known_years=known_years)):
             target = _entry(ja, ja_label)
-            if target is None or _dates_and_times(target) != expected:
+            if target is None or _dates_and_times(target, known_years=known_years) != expected:
                 raise AiJobError("ai_schema_error")
     for ko_label, ja_label in _FEE_ROLES:
         source = _entry(ko, ko_label)
@@ -313,19 +352,20 @@ def _explicit_source_cell(text: str) -> str:
     return re.sub(r'(\d[\d,]*)\s*(?:people\b|хүн\b|人)', r'\1명', text)
 
 
-def _validate_cell(korean: str, japanese: str) -> None:
+def _validate_cell(korean: str, japanese: str, *, known_years: frozenset = frozenset()) -> None:
     raw_ko, raw_ja = inline_text(korean), inline_text(japanese)
     # Check opaque URLs before NFKC/source notation normalization.
-    _validate_field(raw_ko, raw_ja)
+    known_years = known_years or _date_year_context(raw_ko)
+    _validate_field(raw_ko, raw_ja, known_years=known_years)
     ko, ja = _normal(raw_ko), _normal(raw_ja)
     source_id, source_text = _cell_ordinal(ko)
     target_id, target_text = _cell_ordinal(ja)
     if source_id != target_id:
         raise AiJobError('ai_schema_error')
     ko, ja = _explicit_source_cell(source_text), target_text
-    _validate_field(ko, ja)
+    _validate_field(ko, ja, known_years=known_years)
     # Within one cell/item a date or time cannot be recovered from another row.
-    if _dates_and_times(_normal(ko)) != _dates_and_times(_normal(ja)):
+    if _dates_and_times(_normal(ko), known_years=known_years) != _dates_and_times(_normal(ja), known_years=known_years):
         raise AiJobError('ai_schema_error')
     for check in (_amounts, _quantities, _per_session, _per_person):
         if check(_normal(ko), japanese=False) != check(_normal(ja), japanese=True):
@@ -336,7 +376,7 @@ def _validate_cell(korean: str, japanese: str) -> None:
         raise AiJobError('ai_schema_error')
     # Class IDs/visa numbers without a recognized amount/date/unit still belong
     # to this cell. This is a bounded numeric check, not meaning interpretation.
-    if not (_dates_and_times(ko) or _amounts(ko, japanese=False) or _quantities(ko, japanese=False) or _durations(ko)):
+    if not (_dates_and_times(ko, known_years=known_years) or _amounts(ko, japanese=False) or _quantities(ko, japanese=False) or _durations(ko)):
         source_digits = _PER_PERSON[False].sub(' ', _without_per_session(ko, japanese=False))
         target_digits = _PER_PERSON[True].sub(' ', _without_per_session(ja, japanese=True))
         if Counter(re.findall(r'\d+', source_digits)) != Counter(re.findall(r'\d+', target_digits)):
@@ -350,6 +390,7 @@ def _validate_cell(korean: str, japanese: str) -> None:
 
 def _validate_markdown(korean: str, japanese: str) -> None:
     ko, ja = read_body(korean), read_body(japanese)
+    known_years = _date_year_context(korean)
     if len(ko.tables) != len(ja.tables) or len(ko.items) != len(ja.items):
         raise AiJobError('ai_schema_error')
     for source, target in zip(ko.tables, ja.tables):
@@ -363,17 +404,17 @@ def _validate_markdown(korean: str, japanese: str) -> None:
             for source_cell, target_cell in zip(source_row, target_row):
                 if is_weekday_matrix(source.headers):
                     _validate_weekday_cell(source_cell, target_cell)
-                _validate_cell(source_cell, target_cell)
+                _validate_cell(source_cell, target_cell, known_years=known_years)
     for source, target in zip(ko.items, ja.items):
         if (source.section, source.indent, source.number) != (target.section, target.indent, target.number):
             raise AiJobError('ai_schema_error')
-        _validate_cell(source.text, target.text)
+        _validate_cell(source.text, target.text, known_years=known_years)
     source_bold, target_bold = strong_spans(korean), strong_spans(japanese)
     if source_bold and not target_bold:
         raise AiJobError('ai_schema_error')
     if len(source_bold) == len(target_bold):
         for source, target in zip(source_bold, target_bold):
-            _validate_cell(source, target)
+            _validate_cell(source, target, known_years=known_years)
     # Recognized emphasized fact labels must keep their translated emphasis.
     # Arbitrary natural-language emphasis remains a model/human review task.
     for ko_label, ja_label in (*_PERIOD_ROLES, *_FEE_ROLES):
@@ -417,7 +458,7 @@ def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str,
     content_ko = normalize_schedule_heading(content_ko, 'ko')
     content_ja = normalize_schedule_heading(content_ja, 'ja')
     for korean, japanese in ((title_ko, title_ja), (content_ko, content_ja)):
-        _validate_field(korean, japanese)
+        _validate_field(korean, japanese, known_years=_date_year_context(korean))
     _validate_markdown(content_ko, content_ja)
     expected = [_HEADERS[h] for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ko) if h in _HEADERS]
     actual = [h for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ja) if h in _HEADERS.values()]
