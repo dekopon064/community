@@ -13,6 +13,7 @@ export class LocalAiReviewStore implements AiReviewStore {
  }
  async get(id:string){const v=this.items.find(v=>v.jobId===id);if(!v)throw new ReviewFailure('not_found');return structuredClone(v);}
  async execute(id:string,c:AiRecheckCommand,_actor:string){
+  if(c.action==='cancel_expired')throw new ReviewFailure('conflict'); // This fixture has no server-verified expired claim.
   void _actor;const v=this.items.find(v=>v.jobId===id);if(!v)throw new ReviewFailure('not_found');
   if(v.revision!==c.revision||v.version!==c.version||v.status==='claimed'||c.action==='request_recheck'&&!v.canRecheck||c.action==='complete_recheck'&&!v.recheckPending||c.action==='exclude'&&!v.canExclude)throw new ReviewFailure('conflict');
   if(c.action==='request_recheck'){v.status='cancelled';v.recheckPending=true;v.canRecheck=false;v.note=c.note;v.version='c'.repeat(64);}

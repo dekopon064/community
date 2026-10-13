@@ -19,9 +19,10 @@ import type {QuickReason} from './trash';
 export type AiReview = {
  jobId:string; sourceItemId:string; sourceName:string; title:string; revision:string; version:string;
  status:string; canRecheck:boolean; canExclude:boolean; recheckPending:boolean; note:string;
+ expiredCancellation?:{attempt:string};
  source:{url:string|null;body:string}; values:{label:string;value:string}[];
 };
-export type AiRecheckCommand={revision:string;version:string;requestId:string} & ({action:'request_recheck'|'complete_recheck';note:string}|{action:'exclude';reasonCode:QuickReason});
+export type AiRecheckCommand={revision:string;version:string;requestId:string} & ({action:'request_recheck'|'complete_recheck';note:string}|{action:'exclude';reasonCode:QuickReason}|{action:'cancel_expired';attempt:string;note:string});
 export interface AiReviewStore {
  readonly mode:'database'|'local-fixture';
  get(jobId:string):Promise<AiReview>;
@@ -33,6 +34,10 @@ function text(x:unknown,max=60000){if(typeof x!=='string'||x.length>max)throw ne
 export function aiRecheckCommand(raw:unknown):AiRecheckCommand {
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new ReviewFailure('invalid_input');
  const v=obj(raw);
+ if(v.action==='cancel_expired'){
+  if(Object.keys(v).sort().join(',')!=='action,attempt,note,requestId,revision,version'||typeof v.revision!=='string'||typeof v.version!=='string'||typeof v.attempt!=='string'||typeof v.requestId!=='string'||!hash.test(v.revision)||!hash.test(v.version)||!hash.test(v.attempt)||!jobUuid.test(v.requestId)||typeof v.note!=='string'||v.note.length>1000)throw new ReviewFailure('invalid_input');
+  return {action:'cancel_expired',revision:String(v.revision),version:String(v.version),attempt:String(v.attempt),requestId:String(v.requestId),note:v.note.trim()};
+ }
  if(v.action==='exclude'){
   if(Object.keys(v).sort().join(',')!=='action,reasonCode,requestId,revision,version'||!Object.hasOwn(quickReasons,String(v.reasonCode))||!hash.test(String(v.revision))||!hash.test(String(v.version))||!jobUuid.test(String(v.requestId)))throw new ReviewFailure('invalid_input');
   return {action:'exclude',revision:String(v.revision),version:String(v.version),requestId:String(v.requestId),reasonCode:v.reasonCode as QuickReason};
@@ -40,6 +45,12 @@ export function aiRecheckCommand(raw:unknown):AiRecheckCommand {
  if(Object.keys(v).sort().join(',')!=='action,note,requestId,revision,version'||!['request_recheck','complete_recheck'].includes(String(v.action))||
  !hash.test(String(v.revision))||!hash.test(String(v.version))||!jobUuid.test(String(v.requestId))||typeof v.note!=='string'||v.note.length>1000)throw new ReviewFailure('invalid_input');
  return {action:v.action as 'request_recheck'|'complete_recheck',revision:String(v.revision),version:String(v.version),requestId:String(v.requestId),note:v.note.trim()};
+}
+function expiredCancellation(v:Record<string,unknown>):{expiredCancellation?:{attempt:string}} {
+ if(v.expiredCancellation===undefined||v.expiredCancellation===null)return {};
+ const fence=obj(v.expiredCancellation);
+ if(v.sourceName!=='seoul_reservation'||v.status!=='claimed'||v.canRecheck||v.recheckPending||Object.keys(fence).join(',')!=='attempt'||!hash.test(text(fence.attempt,64)))throw new ReviewFailure('unavailable');
+ return {expiredCancellation:{attempt:String(fence.attempt)}};
 }
 export function aiReview(raw:unknown,jobId:string):AiReview {
  const v=obj(raw),id=text(v.sourceItemId,36),sourceName=text(v.sourceName,40),status=text(v.status,20);
@@ -67,7 +78,7 @@ export function aiReview(raw:unknown,jobId:string):AiReview {
  }else if(filterInfo)values.push(...filterKeys.map(k=>({label:`공개 필터 · ${filterLabels[k]}`,value:filterInfo!.data[k].status==='unknown'?'저장된 값 없음':filterValueLabel(filterInfo!.data,k)})));
  const review=obj(v.review);
  if(review.revision!==v.revision||source.name!==sourceName)throw new ReviewFailure('unavailable');
- return {jobId,sourceItemId:id,sourceName,title:source.title,revision:String(v.revision),version:String(v.version),status,canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(source.url),body:source.body},values};
+ return {jobId,sourceItemId:id,sourceName,title:source.title,revision:String(v.revision),version:String(v.version),status,canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(source.url),body:source.body},values,...expiredCancellation(v)};
 }
 export function aiReviewView(raw:unknown,jobId:string):AiReview {
  const v=obj(raw),source=obj(v.source);
@@ -75,7 +86,7 @@ export function aiReviewView(raw:unknown,jobId:string):AiReview {
  !['youthcenter_policy','youthcenter_content','seoul_reservation','myseoul_program'].includes(String(v.sourceName))||
  !['queued','claimed','failed','cancelled','completed'].includes(String(v.status))||typeof v.canRecheck!=='boolean'||typeof v.canExclude!=='boolean'||v.canExclude&&!['queued','cancelled'].includes(String(v.status))||typeof v.recheckPending!=='boolean'||
  v.canRecheck&&(v.status!=='queued'||v.recheckPending)||v.recheckPending&&v.status!=='cancelled'||!Array.isArray(v.values)||v.values.length>60)throw new ReviewFailure('unavailable');
- return {jobId,sourceItemId:String(v.sourceItemId),sourceName:String(v.sourceName),title:text(v.title,500),revision:String(v.revision),version:String(v.version),status:String(v.status),canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(text(source.url,2048)),body:text(source.body,200000)},values:v.values.map(row=>{const r=obj(row);return {label:text(r.label,100),value:text(r.value)};})};
+ return {jobId,sourceItemId:String(v.sourceItemId),sourceName:String(v.sourceName),title:text(v.title,500),revision:String(v.revision),version:String(v.version),status:String(v.status),canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(text(source.url,2048)),body:text(source.body,200000)},values:v.values.map(row=>{const r=obj(row);return {label:text(r.label,100),value:text(r.value)};}),...expiredCancellation(v)};
 }
 export class DatabaseAiReviewStore implements AiReviewStore {
  readonly mode='database' as const;
@@ -87,9 +98,10 @@ export class DatabaseAiReviewStore implements AiReviewStore {
  }
  async get(jobId:string){return aiReview(await this.invoke('admin_ai_queue_review_detail',{p_job_id:jobId}),jobId);}
  async execute(jobId:string,c:AiRecheckCommand,actor:string){
-  const result=aiReview(await this.invoke(c.action==='exclude'?'admin_ai_queue_exclude':c.action==='request_recheck'?'admin_ai_queue_request_recheck':'admin_ai_queue_complete_recheck',{
-   p_job_id:jobId,p_revision:c.revision,p_version:c.version,p_request_id:c.requestId,...(c.action==='exclude'?{p_reason:c.reasonCode}:{p_note:c.note}),p_actor:actor}),jobId);
+  const result=aiReview(await this.invoke(c.action==='cancel_expired'?'admin_seoul_ai_cancel_expired':c.action==='exclude'?'admin_ai_queue_exclude':c.action==='request_recheck'?'admin_ai_queue_request_recheck':'admin_ai_queue_complete_recheck',{
+   p_job_id:jobId,p_revision:c.revision,p_version:c.version,p_request_id:c.requestId,...(c.action==='exclude'?{p_reason:c.reasonCode}:{p_note:c.note}),...(c.action==='cancel_expired'?{p_attempt:c.attempt}:{}),p_actor:actor}),jobId);
   if(result.revision!==c.revision||c.action==='request_recheck'&&!result.recheckPending||c.action==='complete_recheck'&&result.recheckPending||c.action==='exclude'&&(result.recheckPending||result.canExclude||result.status!=='cancelled'))throw new ReviewFailure('unavailable');
+  if(c.action==='cancel_expired'&&(result.sourceName!=='seoul_reservation'||result.status!=='cancelled'||!result.recheckPending||result.expiredCancellation))throw new ReviewFailure('unavailable');
   return result;
  }
 }
