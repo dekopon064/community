@@ -1,7 +1,7 @@
 """Seoul-only presentation cleanup AFTER fact validation, never stored edits."""
 from __future__ import annotations
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from ingest.ai_errors import AiJobError
 from ingest.body_markdown import inline_text, read_body
 from ingest.myseoul_ai_support import schedule_values
@@ -86,8 +86,8 @@ def _covered(values: dict, rows: list[dict]) -> bool:
         for row in rows)
 
 
-def _single_day_operation_display(sections: dict, view: dict) -> dict:
-    """Project one midnight API day as a date only with explicit daytime evidence.
+def _operation_period_display(sections: dict, view: dict) -> dict:
+    """Separate calendar bounds from independently verified session clocks.
 
     Never change endpoint precision, application cutoffs or temporal gating.
     Without clear independent sessions, keep all times (including real midnight).
@@ -99,18 +99,44 @@ def _single_day_operation_display(sections: dict, view: dict) -> dict:
     try:
         dates=[datetime.fromisoformat(p['value']).astimezone(timezone(timedelta(hours=9))) for p in pair]
     except (ValueError,TypeError): return sections
-    if dates[0]!=dates[1] or any((d.hour,d.minute,d.second,d.microsecond)!=(0,0,0,0) for d in dates):
+    if dates[0]>dates[1] or any((d.hour,d.minute,d.second,d.microsecond)!=(0,0,0,0) for d in dates):
         return sections
-    day=dates[0].date(); evidence=[schedule_values(record) for record in schedule_lines(view)]
-    if (not evidence or any(not v['dates'] or v['dates']!={(day.month,day.day)}
-            or v['years']-{day.year} or v['weekdays']-{day.weekday()}
-            or not v['times'] or any(a==0 or b==0 or a>=b for a,b in v['times']) for v in evidence)):
+    start,end=(d.date() for d in dates)
+    matrix=view.get('weekly_schedule')
+    explicit=[schedule_values(record)['times'] for record in schedule_lines(view)]
+    if any(a==0 or b==0 or a>=b for times in explicit for a,b in times):
         return sections
+    if matrix:
+        # Clocks are taken from the source matrix, not the generated table or
+        # ordinary opening/contact hours elsewhere in the description.
+        clocks=[tuple(map(int,row[0].split(':'))) for row in matrix.rows]
+        if not clocks or any(hour==minute==0 for hour,minute in clocks):
+            return sections
+    else:
+        evidence=[schedule_values(record) for record in schedule_lines(view)]
+        if not evidence or any(not v['dates'] or not v['times']
+                or any(a==0 or b==0 or a>=b for a,b in v['times']) for v in evidence):
+            return sections
+        represented=set()
+        for values in evidence:
+            for month,day in values['dates']:
+                candidates=[]
+                for year in range(start.year,end.year+1):
+                    try: occurrence=date(year,month,day)
+                    except ValueError: continue
+                    if start<=occurrence<=end: candidates.append(occurrence)
+                if (len(candidates)!=1 or values['years']-{candidates[0].year}
+                        or values['weekdays']-{candidates[0].weekday()}):
+                    return sections
+                represented.add(candidates[0])
+        if not {start,end}.issubset(represented):
+            return sections
     # Only the bare reviewed operation row. Qualified period prose stays intact.
-    key=day.isoformat()
-    pattern=rf'(?m)^(- \*\*(?:진행기간|개최 기간):\*\*) {key} 00:00 ~ {key} 00:00$'
+    first,last=start.isoformat(),end.isoformat()
+    pattern=rf'(?m)^(- \*\*(?:진행기간|개최 기간):\*\*) {first} 00:00 ~ {last} 00:00$'
     result=dict(sections)
-    result['[일정 안내]']=re.sub(pattern,rf'\1 {key}',sections['[일정 안내]'])
+    rendered=first if first==last else first+' ~ '+last
+    result['[일정 안내]']=re.sub(pattern,rf'\1 {rendered}',sections['[일정 안내]'])
     return result
 
 
@@ -159,7 +185,7 @@ def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[st
             canonical=canonical.replace(table.markdown,'',1)
     if notes: canonical+='\n'+'\n'.join('- **집결 안내:** '+n for n in dict.fromkeys(notes))
     sections['[일정 안내]']=canonical.strip()
-    sections=_single_day_operation_display(sections,view)
+    sections=_operation_period_display(sections,view)
     roles={role for role,labels in (
         ('신청기간',r'신청\s*기간'),('진행기간',r'진행\s*기간|운영\s*기간|개최\s*기간'))
         if _entry(supplied['[일정 안내]'],labels) is not None}

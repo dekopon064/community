@@ -11,6 +11,8 @@ from ingest.ai_errors import AiJobError
 from ingest.ai_worker import KO_SECTION_HEADERS
 from ingest.body_markdown import format_reviewed_block, schedule_tables, read_body, schedule_table_lines, inline_text
 from ingest.myseoul_ai_support import section_body
+from ingest.seoul_fact_roles import (public_roles, weekly_schedule, validate_weekly_schedule,
+                                   booking_covered, clean_role_repetitions, optional_section, plain)
 from ingest.myseoul_content import (
     announcement_lines, deduplicate_summary_fees, merge_reviewed_sections,
     normalize_summary_schedule, participation_constraints, schedule_block,
@@ -107,11 +109,12 @@ def _recruitment_session_lines(view: dict) -> list[str]:
 def validation_view(facts: dict) -> dict:
     description = facts['description']
     # Only explicitly labelled capacity text; V_MIN/V_MAX have no known role.
-    capacity = [line.strip() for line in description.splitlines()
-                if re.match(r'^\s*(?:[-*■]\s*)?(?:모집\s*인원|정원)\s*[:：]', line)]
+    roles = public_roles(facts)
+    capacity = list(dict.fromkeys(roles['capacity'] + [line.strip() for line in description.splitlines()
+                if re.match(r'^(?:모집\s*인원|참가\s*인원|인원|정원)\s*[:：]', plain(line))]))
     sessions = schedule_table_lines(description)
     view = {'target': facts['target_raw'], 'description': description,
-            'conditions': facts['conditions'], 'capacity_raw': capacity,
+            'conditions': roles['eligibility'], 'capacity_raw': capacity,
             **({'session_evidence': sessions} if sessions else {}),
             'periods': {role: [{'status': 'ok', 'endpoints': [facts['periods'][k] for k in pair]}]
                         for role, pair in PAIRS.items()}}
@@ -120,6 +123,16 @@ def validation_view(facts: dict) -> dict:
         # Retain existing tables/ordinary schedules as well as this narrowly
         # supported source label. The shared MySeoul extraction is unchanged.
         view['session_evidence'] = list(dict.fromkeys(schedule_lines(view) + recruitment))
+    matrix = weekly_schedule(description)
+    if matrix:
+        # Separate validation evidence from public rendering: bare table cells
+        # are never independently appended as sessions or participation rules.
+        records = [line for line in schedule_lines(view)
+                   if not re.fullmatch(r'(?:제\s*)?\d+\s*회차', plain(line))]
+        matrix_records = ['해설회차: ' + ' '.join(row) for row in matrix.rows]
+        view['session_evidence'] = list(dict.fromkeys(records + roles['schedule'] + matrix_records))
+        view['weekly_validation_records'] = matrix_records
+        view['weekly_schedule'] = matrix
     return view
 
 
@@ -152,11 +165,13 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
     target = ['대상: ' + facts['target_raw']]
     target += ['참가 조건: ' + value for value in participation_constraints(view)]
     target += ['거주 조건 근거: ' + value for value in facts['residence_evidence']]
-    target += view['capacity_raw']
+    target += ['모집 인원: ' + re.sub(r'^(?:모집\s*인원|참가\s*인원|인원|정원)\s*[:：]\s*', '', plain(v))
+               for v in view['capacity_raw']]
     dates = ['신청기간: ' + period_text(facts, 'application'),
              '진행기간: ' + period_text(facts, 'operation'),
              '접수 상태: ' + reception_status(facts, now)]
-    sessions = schedule_block(schedule_lines(view))
+    sessions = schedule_block([line for line in schedule_lines(view)
+                               if line not in view.get('weekly_validation_records', [])])
     if sessions:
         dates.append('\n' + sessions)
     # Explicit table cells come from current description, not an old observed
@@ -199,6 +214,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     # A model-contract explanation is not a program instruction. Reject only
     # recognized standalone output directives; a class teaching JSON stays data.
     validate_public_body(content)
+    validate_weekly_schedule(content, facts['description'])
     # These same checks run before cleanup, so conflicting AI facts cannot be
     # hidden by removal/replacement of a generated row.
     validate_summary_period(content, canonical, view)
@@ -216,9 +232,19 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
                      lambda match: match[1]+'\n'+(main or '공식 안내의 프로그램 내용')+'\n', content, count=1)
     from ingest.seoul_body_display import clean_fact_repetitions
     content, sections = clean_fact_repetitions(content, sections, facts)
+    content, sections = clean_role_repetitions(content, sections, facts)
+    # Booking procedures were historically extracted as eligibility. Keep them
+    # in the method section unless the generated method proves their explicit
+    # search/selection tokens; never discard unique numbers/URLs/restrictions.
+    method = optional_section(content, '[신청 방법]')
+    sections = dict(sections)
+    for value in public_roles(facts)['booking']:
+        if not booking_covered(value, method):
+            sections['[신청 방법]'] += '\n- **예약 절차:** ' + plain(value)
     content = merge_reviewed_sections(content, sections)
     validate_participant_quantities(view, content)
     validate_assembled_fees(content, fee_block, canonical_block=fee_block)
+    validate_weekly_schedule(content, facts['description'])
     # Source tables are evidence. They are not blindly copied, but every
     # generated table is validated above before a candidate can be created.
     if schedule_tables(facts['description']) and not schedule_tables(content):

@@ -488,13 +488,24 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
                 clocks_match = not actual_clocks or actual_clocks == expected_clocks
             elif actual_clocks:
                 endpoint = -1
-                clocks_match = len(expected_dates) == len(expected_clocks)
+                # Each endpoint carries its own precision. A date-only start
+                # and timed end are valid; never shift the end clock to start.
+                expected_endpoint = -1
+                endpoint_clocks = {}
+                clocks_match = True
+                for value in expected_values:
+                    if value[0] == 'date':
+                        expected_endpoint += 1
+                    elif value[0] == 'time':
+                        if expected_endpoint < 0 or expected_endpoint in endpoint_clocks:
+                            clocks_match = False
+                        endpoint_clocks[expected_endpoint] = value
                 seen = set()
                 for value in actual_values:
                     if value[0] == 'date':
                         endpoint += 1
                     elif value[0] == 'time':
-                        if endpoint in seen or not 0 <= endpoint < len(expected_clocks) or value != expected_clocks[endpoint]:
+                        if endpoint in seen or value != endpoint_clocks.get(endpoint):
                             clocks_match = False
                         seen.add(endpoint)
             if len(actual_dates) == 1 and len(expected_dates) == 2 and expected_dates[0] == expected_dates[1]:

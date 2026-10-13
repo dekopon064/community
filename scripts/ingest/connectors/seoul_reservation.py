@@ -124,12 +124,18 @@ def parse_body(raw: str) -> dict[str, Any]:
     parts = parser.parts[:]
     for start, end, index in reversed(parser.table_ranges):
         table = parser.tables[index]
-        if (len(table) < 2 or not table[0] or not all(cell['header'] for cell in table[0])
+        weekly = bool(table and len(table[0]) >= 3
+            and re.fullmatch(r'시간(?:\s*[/·]\s*요일)?', table[0][0]['text'])
+            and all(re.fullmatch(r'[월화수목금토일](?:요일)?', c['text']) for c in table[0][1:]))
+        if (len(table) < 2 or not table[0] or not (weekly or all(cell['header'] for cell in table[0]))
                 or any(len(row) != len(table[0]) for row in table)
-                or any(not cell['text'] or cell['rowspan'] != 1 or cell['colspan'] != 1 or cell.get('nested_tables')
-                       for row in table for cell in row)):
+                or any((not cell['text'] and not (weekly and row_index > 0 and cell_index > 0))
+                       or cell['rowspan'] != 1 or cell['colspan'] != 1 or cell.get('nested_tables')
+                       for row_index,row in enumerate(table) for cell_index,cell in enumerate(row))):
             continue
-        row_text = lambda row: '| ' + ' | '.join(cell['text'].replace('|', r'\|') for cell in row) + ' |'
+        # Empty cells are an explicit source position, never an inferred session.
+        # Only regular weekday matrices permit them; unsupported spans stay raw.
+        row_text = lambda row: '| ' + ' | '.join((cell['text'] or '—').replace('|', r'\|') for cell in row) + ' |'
         markdown = '\n\n' + row_text(table[0]) + '\n| ' + ' | '.join('---' for _ in table[0]) + ' |\n'
         markdown += '\n'.join(row_text(row) for row in table[1:]) + '\n\n'
         parts[start:end] = [markdown]
