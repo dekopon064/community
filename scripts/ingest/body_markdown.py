@@ -44,6 +44,20 @@ def _cells(line: str) -> tuple[str, ...]:
     return tuple(cell.strip() for cell in re.split(r'(?<!\\)\|', text))
 
 
+def is_weekday_matrix(headers: tuple[str, ...]) -> bool:
+    """Only explicit time-by-weekday columns allow unoccupied session cells.
+
+    Recognize both sides of the translation contract; don't infer weekdays
+    from prose or allow blank dates/activities in unrelated session tables.
+    """
+    labels = tuple(inline_text(h).strip() for h in headers)
+    return len(labels) >= 2 and (
+        bool(re.fullmatch(r'시간(?:\s*[/·]\s*요일)?', labels[0]))
+        and all(re.fullmatch(r'[월화수목금토일](?:요일)?', h) for h in labels[1:])
+        or bool(re.fullmatch(r'(?:時間|時刻)(?:\s*[/・·]\s*曜日)?', labels[0]))
+        and all(re.fullmatch(r'[月火水木金土日](?:曜日)?', h) for h in labels[1:]))
+
+
 @dataclass(frozen=True)
 class Table:
     section: int
@@ -92,11 +106,16 @@ def read_body(content: str) -> Body:
                 headers = _cells(line)
                 if len(headers) < 2 or len(headers) != len(separators) or any(not h for h in headers):
                     raise AiJobError('ai_schema_error')
+                weekday_matrix = is_weekday_matrix(headers)
                 index += 2
                 rows = []
                 while index < len(lines) and '|' in lines[index] and lines[index].strip():
                     row = _cells(lines[index])
-                    if len(row) != len(headers) or any(not c for c in row):
+                    # A present empty session cell differs from a missing
+                    # delimiter/column. Retain it, including adjacent/trailing
+                    # empties; the required row clock and all widths stay strict.
+                    if (len(row) != len(headers) or not row[0]
+                            or (not weekday_matrix and any(not c for c in row))):
                         raise AiJobError('ai_schema_error')
                     rows.append(row)
                     values = [inline_text(c) for c in row]

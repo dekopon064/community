@@ -13,7 +13,7 @@ import unicodedata
 
 from ingest.ai_errors import AiJobError
 from ingest.body_sections import normalize_schedule_heading
-from ingest.body_markdown import read_body, inline_text, comparison_text, strong_spans
+from ingest.body_markdown import read_body, inline_text, comparison_text, strong_spans, is_weekday_matrix
 
 _HEADERS = {
     "한 줄 요약": "要約", "대상": "対象", "일정 안내": "日程案内",
@@ -361,6 +361,8 @@ def _validate_markdown(korean: str, japanese: str) -> None:
         for source_row, target_row in zip(source.rows, target.rows):
             _validate_role_label(source_row[0], target_row[0])
             for source_cell, target_cell in zip(source_row, target_row):
+                if is_weekday_matrix(source.headers):
+                    _validate_weekday_cell(source_cell, target_cell)
                 _validate_cell(source_cell, target_cell)
     for source, target in zip(ko.items, ja.items):
         if (source.section, source.indent, source.number) != (target.section, target.indent, target.number):
@@ -377,6 +379,24 @@ def _validate_markdown(korean: str, japanese: str) -> None:
     for ko_label, ja_label in (*_PERIOD_ROLES, *_FEE_ROLES):
         if any(re.search(ko_label, span) for span in source_bold) and not any(
                 re.search(ja_label, span) for span in target_bold):
+            raise AiJobError('ai_schema_error')
+
+
+def _validate_weekday_cell(korean: str, japanese: str) -> None:
+    """Preserve known empty positions and explicit per-session languages.
+
+    An empty source cell cannot become a new cancellation/absence claim.
+    This is a bounded matrix check, not free-text language interpretation.
+    """
+    source, target = inline_text(korean).strip(), inline_text(japanese).strip()
+    empty = {'', '—', '–', '-'}
+    if source in empty or target in empty:
+        if source not in empty or target not in empty:
+            raise AiJobError('ai_schema_error')
+    languages = ((r'일본어|日本語', r'日本語'), (r'중국어|中国語', r'中国語'),
+                 (r'영어|英語', r'英語'), (r'한국어|韓国語', r'韓国語'))
+    for ko_pattern, ja_pattern in languages:
+        if len(re.findall(ko_pattern, source)) != len(re.findall(ja_pattern, target)):
             raise AiJobError('ai_schema_error')
 
 
