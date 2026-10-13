@@ -20,6 +20,7 @@ _HEADERS = {
     "주요 내용": "主な内容", "신청 방법": "申請方法",
 }
 _NUMBER = r"\d[\d,]*(?:\.\d+)?"
+_QUANTITY_UNITS = {False: r"명|인(?!당|분|가구|치|승)|세|회|가족", True: r"名|人(?!分)|歳|回|家族"}
 _URL = re.compile(r"https?://[^\s<>\"'）)\]。、「」]+")
 # Only explicit labeled entries are checked by role. Synonymous Japanese labels
 # are accepted; unlabeled prose is not interpreted as a new eligibility policy.
@@ -57,6 +58,15 @@ _PER_SESSION = {
     True: re.compile(r'(?<![\d第一二三四五六七八九十百千万])(?:(?P<count>\d+|一)\s*)?回\s*(?:につき|当たり|あたり|ごと(?:に)?)|'
                      r'(?:毎|各)\s*回'),
 }
+_PER_PERSON = {
+    False: re.compile(r'(?P<count>\d+)\s*인\s*당'),
+    True: re.compile(r'(?P<count>\d+|一)\s*(?:人|名)\s*(?:当たり|あたり|につき)'),
+}
+
+
+def _per_person(text: str, *, japanese: bool) -> Counter:
+    return Counter(1 if m['count'] == '一' else int(m['count'])
+                   for m in _PER_PERSON[japanese].finditer(text))
 
 
 def _per_session(text: str, *, japanese: bool) -> Counter:
@@ -73,13 +83,15 @@ def _without_per_session(text: str, *, japanese: bool) -> str:
 
 def _quantities(text: str, *, japanese: bool) -> Counter:
     text = _without_per_session(text, japanese=japanese)
-    units = r"名|人|歳|回|家族" if japanese else r"명|세|회|가족"
-    unit_names = {"名": "people", "人": "people", "명": "people", "家族": "families", "가족": "families",
+    text = _PER_PERSON[japanese].sub(' ', text)
+    units = _QUANTITY_UNITS[japanese]
+    unit_names = {"名": "people", "人": "people", "명": "people", "인": "people", "家族": "families", "가족": "families",
                   "歳": "age", "세": "age", "回": "count", "회": "count"}
     comparisons = {None: None, "이상": "minimum", "以上": "minimum",
                    "이하": "maximum", "以下": "maximum", "미만": "under", "未満": "under",
-                   "초과": "over", "超": "over"}
-    suffix = r"以上|以下|未満|超" if japanese else r"이상|이하|미만|초과"
+                   "초과": "over", "超": "over", "내외": "approximately", "정도": "approximately",
+                   "程度": "approximately", "前後": "approximately", "ほど": "approximately"}
+    suffix = r"以上|以下|未満|程度|前後|ほど|超" if japanese else r"이상|이하|미만|초과|내외|정도"
     quantities = Counter()
     spans = []
     # A shared unit in an inclusive range is not an omitted first endpoint.
@@ -91,7 +103,10 @@ def _quantities(text: str, *, japanese: bool) -> Counter:
         spans.append(match.span())
     for match in re.finditer(rf"(\d[\d,]*)\s*({units})\s*({suffix})?", text):
         if not any(start <= match.start() < end for start, end in spans):
-            quantities[(int(match[1].replace(',', '')), unit_names[match[2]], comparisons[match[3]])] += 1
+            qualifier = comparisons[match[3]]
+            if qualifier is None and re.search(r'(?:약|約)\s*$', text[:match.start()]):
+                qualifier = 'approximately'
+            quantities[(int(match[1].replace(',', '')), unit_names[match[2]], qualifier)] += 1
     return quantities
 
 
@@ -101,7 +116,7 @@ def _per_session_allocations(text: str, *, japanese: bool) -> Counter:
     Limited to quantity runs next to a marker (including 20名・9家族). Other
     prose is left to the existing unit/condition checks and human review.
     """
-    units = r'名|人|歳|回|家族' if japanese else r'명|세|회|가족'
+    units = _QUANTITY_UNITS[japanese]
     suffix = r'以上|以下|未満|超' if japanese else r'이상|이하|미만|초과'
     atom = rf'\d[\d,]*\s*(?:{units})(?:\s*(?:{suffix}))?'
     run = rf'{atom}(?:[·・,、\s-]*{atom})*'
@@ -120,7 +135,7 @@ def _per_session_allocations(text: str, *, japanese: bool) -> Counter:
 
 def _first_come(text: str, *, japanese: bool) -> Counter:
     pattern = (r"先着(?:順)?[で、\s]*(\d[\d,]*)\s*(?:名|人)|"
-               r"(\d[\d,]*)\s*(?:名|人)[（(、\s]*先着(?:順)?") if japanese else r"선착순\s*(\d[\d,]*)\s*명"
+               r"(\d[\d,]*)\s*(?:名|人)[（(、\s]*先着(?:順)?") if japanese else r"선착순\s*(\d[\d,]*)\s*(?:명|인(?!당|분))"
     return Counter(int(next(v for v in match.groups() if v).replace(",", ""))
                    for match in re.finditer(pattern, text))
 
@@ -209,6 +224,7 @@ def _validate_field(korean: str, japanese: str) -> None:
     ko, ja = _normal(korean), _normal(japanese)
     _require_present(_amounts(ko, japanese=False), _amounts(ja, japanese=True))
     _require_present(_per_session(ko, japanese=False), _per_session(ja, japanese=True))
+    _require_present(_per_person(ko, japanese=False), _per_person(ja, japanese=True))
     _require_present(_quantities(ko, japanese=False), _quantities(ja, japanese=True))
     _require_present(_first_come(ko, japanese=False), _first_come(ja, japanese=True))
     _require_present(_durations(ko), _durations(ja))
@@ -311,7 +327,7 @@ def _validate_cell(korean: str, japanese: str) -> None:
     # Within one cell/item a date or time cannot be recovered from another row.
     if _dates_and_times(_normal(ko)) != _dates_and_times(_normal(ja)):
         raise AiJobError('ai_schema_error')
-    for check in (_amounts, _quantities, _per_session):
+    for check in (_amounts, _quantities, _per_session, _per_person):
         if check(_normal(ko), japanese=False) != check(_normal(ja), japanese=True):
             raise AiJobError('ai_schema_error')
     source_allocation = _per_session_allocations(_normal(ko), japanese=False)
@@ -321,8 +337,8 @@ def _validate_cell(korean: str, japanese: str) -> None:
     # Class IDs/visa numbers without a recognized amount/date/unit still belong
     # to this cell. This is a bounded numeric check, not meaning interpretation.
     if not (_dates_and_times(ko) or _amounts(ko, japanese=False) or _quantities(ko, japanese=False) or _durations(ko)):
-        source_digits = _without_per_session(ko, japanese=False)
-        target_digits = _without_per_session(ja, japanese=True)
+        source_digits = _PER_PERSON[False].sub(' ', _without_per_session(ko, japanese=False))
+        target_digits = _PER_PERSON[True].sub(' ', _without_per_session(ja, japanese=True))
         if Counter(re.findall(r'\d+', source_digits)) != Counter(re.findall(r'\d+', target_digits)):
             raise AiJobError('ai_schema_error')
     for source, target in ((r'필수|의무', r'必須|必要|義務'),
@@ -365,6 +381,12 @@ def _validate_markdown(korean: str, japanese: str) -> None:
 
 
 def _validate_role_label(korean: str, japanese: str) -> None:
+    source = inline_text(korean).strip()
+    day = re.fullmatch(r'([월화수목금토일])(?:요일)?', source)
+    if day:
+        target = '月火水木金土日'['월화수목금토일'.index(day[1])]
+        if not re.fullmatch(target+r'(?:曜日)?', inline_text(japanese).strip()):
+            raise AiJobError('ai_schema_error')
     for ko_label, ja_label in (*_PERIOD_ROLES, *_FEE_ROLES):
         if re.fullmatch(r'(?:' + ko_label + r')(?:\s*\([^)]*\))?', inline_text(korean)):
             if not re.fullmatch(r'(?:' + ja_label + r')(?:\s*[（(][^）)]*[）)])?', inline_text(japanese)):
