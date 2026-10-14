@@ -104,7 +104,8 @@ class DateHoursReplayTests(unittest.TestCase):
             else:
                 assembled = assemble_seoul_body(summary['content_ko'],native)
         except AiJobError: assembled = '[한 줄 요약]\n사용되지 않는 합성 번역 입력'
-        japanese = (d['translation'] if index == 0 and not classified and not bad_ko else
+        japanese = (d['translation'] if index == 0 and not classified and not bad_ko
+                    and assembled == d['translation_input_ko'] else
                     {'title_ja':'合成日程案内','content_ja':synthetic_translation(assembled)})
         if bad_ja: japanese = {**japanese,'content_ja':bad_ja(japanese['content_ja'])}
         client = streamed([response(json.dumps(summary,ensure_ascii=False)),
@@ -157,7 +158,11 @@ class DateHoursReplayTests(unittest.TestCase):
                     out = outputs[0]
                     self.assertEqual(calls[1]['input'][0]['content'], 'title_ko: '+out['titleKo']+'\ncontent_ko:\n'+out['contentKo'])
                     if index == 0 and not classified:
-                        self.assertEqual(out['contentJa'],recorded()[0]['translation']['content_ja'])
+                        old=recorded()[0]
+                        # Historical JA belongs to the historical KO. A changed
+                        # final body needs an explicitly synthetic translation.
+                        self.assertEqual(out['contentJa'], old['translation']['content_ja']
+                            if out['contentKo']==old['translation_input_ko'] else synthetic_translation(out['contentKo']))
                     if index == 1:
                         for text in ('09:00~17:00 안에서 일정을 협의','설·추석','근로자의 날',
                                      '02-305-1334','2일 전까지','개인정보 동의서','주차비는 지원하지 않습니다',
