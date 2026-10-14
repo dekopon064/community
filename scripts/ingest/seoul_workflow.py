@@ -12,6 +12,7 @@ from uuid import UUID
 from ingest.connectors.seoul_reservation import (
     normalize_seoul_item, SeoulContractError, KST, COLLECTION_STATUSES,
     CULTURE_PAGE_SIZE, CULTURE_MAX_PAGES, require_culture_reader, read_culture_collection,
+    seoul_item_id, invalid_id_error,
 )
 from ingest.program_ai import ProgramAIAdapter, process_seoul_program_job
 from ingest.program_db import program_rpc_item, new_only_payload_bytes, NEW_ONLY_BATCH_BYTES
@@ -34,6 +35,7 @@ def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_
     if type(rows) is not list or len(rows) > MAX_SCAN_ITEMS or type(existing_keys) is not frozenset or type(natural_end) is not bool:
         raise ValueError('seoul_collection_limits_invalid')
     counts = dict(scanned=len(rows), culture_count=0, target=0, other_category=0, existing_skipped=0,
+                  invalid_id_count=0,
                   status_excluded=0, status_excluded_by_reason={}, status_exclusions=[],
                   audience_excluded=0, audience_excluded_by_reason={}, audience_exclusions=[],
                   failed=0, new_planned=0, new_saved=0, review_waiting=None,
@@ -44,6 +46,13 @@ def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_
         if not isinstance(row, dict):
             counts['failed'] += 1
             counts['item_errors'].append(dict(row_index=index,stage='row_normalization',error_code='seoul_item_invalid'))
+            continue
+        try:
+            sid = seoul_item_id(row)
+        except SeoulContractError:
+            counts['invalid_id_count'] += 1
+            counts['failed'] += 1
+            counts['item_errors'].append(invalid_id_error(index, index // PAGE_SIZE + 1))
             continue
         if row.get('MAXCLASSNM') != '문화체험':
             counts['other_category'] += 1
@@ -65,7 +74,7 @@ def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_
             counts['audience_exclusions'].append(dict(row_index=index, reason=audience.reason))
             continue
         counts['target'] += 1
-        if row.get('SVCID') in existing_keys:
+        if sid in existing_keys:
             counts['existing_skipped'] += 1
             continue
         try:
@@ -128,6 +137,7 @@ def process_seoul_collection(store, adapter, connector) -> dict:
     if run.skipped:
         return dict(status='skipped', reason=run.skip_reason, scanned=0, ai_calls=0)
     counts = dict(status='failed', scanned=0, culture_count=0, target=0, other_category=0, existing_skipped=0,
+                  invalid_id_count=0, item_errors=[],
                   status_excluded=0, status_excluded_by_reason={}, status_exclusions=[],
                   audience_excluded=0, audience_excluded_by_reason={}, audience_exclusions=[],
                   failed=0, new_planned=0, new_saved=0, review_waiting=0, ai_waiting=0,
@@ -172,6 +182,8 @@ def process_seoul_collection(store, adapter, connector) -> dict:
         if stage is None:
             counts['scanned'] = counts['diagnostic'].get('scanned_rows', 0)
             counts['total_count'] = counts['diagnostic'].get('total_count')
+            counts['item_errors'] = list(connector.identity_errors)
+            counts['invalid_id_count'] = counts['failed'] = len(connector.identity_errors)
         try:
             store.finish_ingest_run(run.run_id, status='failed', stop_reason='collection_failed',
                 http_request_count=connector.http.request_count, bootstrap_complete=False, batches_ok=batches_ok)

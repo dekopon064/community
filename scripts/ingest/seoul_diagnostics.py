@@ -86,4 +86,5 @@ def diagnose_culture_read(connector):
                     request_count=connector.http.request_count, writes=0)
     except Exception as exc:
         return dict(mode='diagnostic_read_only', status='failed', diagnostic=failure_diagnostic(connector, exc),
+                    invalid_id_count=len(connector.identity_errors), item_errors=list(connector.identity_errors),
                     request_count=connector.http.request_count, writes=0, ai_calls=0)

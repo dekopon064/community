@@ -1,5 +1,6 @@
 """Culture full-range collection: synthetic HTTP + atomic in-memory RPC only."""
 import copy
+import hashlib
 import io
 import json
 import os
@@ -11,7 +12,7 @@ from unittest.mock import patch
 
 from ingest.connectors.seoul_reservation import (
     CULTURE_SERVICE, SeoulCultureConnector, SeoulContractError,
-    normalize_seoul_item, read_culture_collection,
+    normalize_seoul_item, read_culture_collection, SOURCE_FIELDS,
 )
 from ingest.http_client import HttpClient
 from ingest.program_db import ProgramNewOnlyObservationAdapter, program_rpc_item, new_only_payload_bytes
@@ -300,6 +301,193 @@ class CultureCollectionTests(unittest.TestCase):
         self.assertEqual(policy['ordering'], 'RCPTBGNDT_desc_then_SVCID')
         self.assertTrue(policy['full_range_required'])
         self.assertEqual(policy['network_calls'], 0)
+
+    def test_invalid_nine_hundredth_row_continues_two_pages_and_sorted_new_only_storage(self):
+        items = rows(1098)
+        items[899]['SVCID'] = 'invalid?synthetic'
+        items[-1]['RCPTBGNDT'] = '2026-12-04 20:00:00.0'
+        original = copy.deepcopy(items)
+        old = {'culture_0000': {'revision_hash': 'b' * 64, 'facts': {'verified': True},
+                               'candidate': {'version': 7}, 'history': ['keep']}}
+        result, events, stored = self.execute(pages(items), originals=old)
+        self.assertEqual((result['request_count'], result['pages'], result['scanned']), (2, 2, 1098))
+        self.assertEqual((result['invalid_id_count'], result['failed'], result['culture_count']), (1, 1, 1097))
+        self.assertEqual(result['item_errors'], [dict(row_index=899, api_row=900, page=1,
+            stage='row_identity', error_code='seoul_id_invalid')])
+        self.assertEqual((result['target'], result['existing_skipped'], result['new_saved']), (1097, 1, 1096))
+        self.assertEqual((result['status'], result['reason'], result['coverage']),
+                         ('incomplete', 'invalid_items', 'listing_natural_end'))
+        self.assertEqual((result['unprocessed'], result['ai_calls']), (0, 0))
+        self.assertEqual(stored['culture_0000'], old['culture_0000'])
+        self.assertNotIn('invalid?synthetic', stored)
+        self.assertNotIn('culture_0899', stored)
+        writes = [args for name, args in events if name == 'observe_seoul_program_new_only']
+        sent = [r for a in writes for r in a['p_items']]
+        self.assertEqual(sent[0]['external_key'], 'culture_1097')
+        self.assertTrue(all(len(a['p_items']) <= 40 for a in writes))
+        self.assertTrue(all(a['p_next_checkpoint']['scanned'] == 1098 for a in writes))
+        self.assertTrue(all(r['external_key'] in {v['SVCID'] for v in items if isinstance(v['SVCID'], str)} for r in sent))
+        self.assertFalse(any('\0' in r['external_key'] for r in sent))
+        self.assertEqual(items, original)
+
+    def test_missing_typed_oversized_and_noncanonical_ids_are_errors_before_selection(self):
+        invalid = [None, '', '  ', [], {'id': 'nested'}, 'x' * 65, 'invalid?', '한글ID', 'bad\nID']
+        items = [row(sid=f'bad_{i}', SVCNM=f'synthetic {i}') for i in range(len(invalid))]
+        for item, value in zip(items, invalid):
+            item['SVCID'] = value
+        del items[0]['SVCID']
+        items[1]['USETGTINFO'] = '가족'
+        items[2]['SVCSTATNM'] = '접수종료'
+        items[3]['MAXCLASSNM'] = '교육강좌'
+        items.append(row(sid='normal'))
+        before = copy.deepcopy(items)
+        result, events, stored = self.execute(pages(items))
+        self.assertEqual(set(stored), {'normal'})
+        self.assertEqual((result['scanned'], result['invalid_id_count'], result['failed']), (10, 9, 9))
+        self.assertEqual((result['culture_count'], result['target'], result['audience_excluded'], result['status_excluded']), (1, 1, 0, 0))
+        self.assertEqual([e['api_row'] for e in result['item_errors']], list(range(1, 10)))
+        self.assertTrue(all(set(e) == {'row_index', 'api_row', 'page', 'stage', 'error_code'} for e in result['item_errors']))
+        self.assertEqual(items, before)
+
+    def test_second_page_invalid_id_has_global_position_in_read_and_planning_diagnostics(self):
+        items = rows(1002)
+        items[-1]['SVCID'] = 'invalid?last'
+        c, _ = self.reader(pages(items))
+        page = read_culture_collection(c)
+        self.assertEqual(len(page.items), 1002)  # Bad rows retain their API positions.
+        expected = [dict(row_index=1001, api_row=1002, page=2, stage='row_identity', error_code='seoul_id_invalid')]
+        self.assertEqual(list(page.progress['identity_errors']), expected)
+        plan = plan_collection(list(page.items), existing_keys=frozenset(), natural_end=True)
+        self.assertEqual(plan.counters['item_errors'], expected)
+        self.assertEqual(plan.counters['new_planned'], 1001)
+
+    def test_malformed_identity_does_not_hide_valid_duplicate_or_revision_change(self):
+        first = rows(1000)
+        first[899]['SVCID'] = 'invalid?first'
+        for changed in (False, True):
+            repeated = copy.deepcopy(first[0])
+            if changed:
+                repeated['SVCNM'] = 'changed'
+            result, events, stored = self.execute([
+                Response(envelope(first, 1002, CULTURE_SERVICE)),
+                Response(envelope([repeated, row(sid='new')], 1002, CULTURE_SERVICE)),
+            ])
+            self.assertEqual(result['diagnostic']['error_code'],
+                             'seoul_revision_changed_during_scan' if changed else 'seoul_overlapping_pages')
+            self.assertEqual((result['invalid_id_count'], result['request_count']), (1, 2))
+            self.assertEqual(stored, {})
+            self.assertFalse(any(n == 'observe_seoul_program_new_only' for n, _ in events))
+        repeated = rows(3)
+        repeated[0]['SVCID'] = 'invalid?first'
+        repeated[2] = copy.deepcopy(repeated[1])
+        result, events, _ = self.execute(pages(repeated))
+        self.assertEqual(result['diagnostic']['error_code'], 'seoul_duplicate_id_in_page')
+        self.assertFalse(any(n == 'observe_seoul_program_new_only' for n, _ in events))
+
+    def test_invalid_nonempty_identity_still_detects_overlap_and_changed_content(self):
+        first = rows(1000)
+        first[899]['SVCID'] = 'invalid?stable'
+        for changed in (False, True):
+            repeated = copy.deepcopy(first[899])
+            if changed:
+                repeated['SVCNM'] = 'changed'
+            result, events, _ = self.execute([
+                Response(envelope(first, 1002, CULTURE_SERVICE)),
+                Response(envelope([repeated, row(sid='new')], 1002, CULTURE_SERVICE)),
+            ])
+            self.assertEqual(result['diagnostic']['error_code'],
+                             'seoul_revision_changed_during_scan' if changed else 'seoul_overlapping_pages')
+            self.assertFalse(any(n == 'observe_seoul_program_new_only' for n, _ in events))
+        result, _, _ = self.execute(pages([row(SVCID='invalid?stable')] * 2))
+        self.assertEqual(result['diagnostic']['error_code'], 'seoul_duplicate_id_in_page')
+
+    def test_distinct_missing_ids_continue_but_all_invalid_repeated_page_stops(self):
+        items = [row(sid=f'row_{i}', SVCNM=f'row {i}') for i in range(1000)]
+        for item in items:
+            item['SVCID'] = None
+        result, events, _ = self.execute([
+            Response(envelope(items, 2000, CULTURE_SERVICE)),
+            Response(envelope(copy.deepcopy(items), 2000, CULTURE_SERVICE)),
+        ])
+        self.assertEqual(result['diagnostic']['error_code'], 'seoul_repeated_page')
+        self.assertEqual(result['request_count'], 2)
+        self.assertFalse(any(n == 'observe_seoul_program_new_only' for n, _ in events))
+        result, events, stored = self.execute(pages(items[:3]))
+        self.assertEqual((result['scanned'], result['invalid_id_count'], result['new_saved']), (3, 3, 0))
+        self.assertEqual(result['status'], 'incomplete')
+        self.assertEqual(stored, {})
+        writes = [a for n, a in events if n == 'observe_seoul_program_new_only']
+        self.assertEqual([a['p_items'] for a in writes], [[]])
+
+    def test_total_drift_or_second_http_failure_preserves_row_error_and_never_stores(self):
+        first = rows(1000)
+        first[899]['SVCID'] = 'invalid?first'
+        for second, initial_total, expected in (
+            (Response(envelope([row(sid='new')], 1001, CULTURE_SERVICE)), 1002, 'seoul_listing_changed'),
+            (Response(data=b'not json'), 1001, 'invalid_json'),
+            (Response({}, status=503), 1001, 'http_status_error'),
+        ):
+            result, events, _ = self.execute([Response(envelope(first, initial_total, CULTURE_SERVICE)), second])
+            self.assertEqual(result['diagnostic']['error_code'], expected)
+            self.assertEqual((result['scanned'], result['invalid_id_count'], result['new_saved']),
+                             (1001 if expected == 'seoul_listing_changed' else 1000, 1, 0))
+            self.assertEqual(result['item_errors'][0]['api_row'], 900)
+            self.assertFalse(any(n == 'observe_seoul_program_new_only' for n, _ in events))
+
+    def test_quarantine_does_not_weaken_page_shape_limit_or_credential_checks(self):
+        items = rows(1000)
+        items[899]['SVCID'] = 'invalid?first'
+        for responses, code, requests in (
+            ([Response(envelope(items, 2001, CULTURE_SERVICE))], 'seoul_culture_range_exceeded', 1),
+            ([Response(envelope(items[:999], 1000, CULTURE_SERVICE))], 'seoul_page_shape_invalid', 1),
+            (pages([row(SVCID=TEST_KEY + '?')]), 'seoul_credential_in_response', 1),
+        ):
+            result, events, _ = self.execute(responses)
+            self.assertEqual(result['diagnostic']['error_code'], code)
+            self.assertEqual(result['request_count'], requests)
+            self.assertFalse(any(n == 'observe_seoul_program_new_only' for n, _ in events))
+            self.assertNotIn(TEST_KEY, json.dumps(result))
+
+    def test_other_invalid_row_shapes_remain_global_contract_failures(self):
+        for item, code in ((None, 'seoul_item_invalid'), (row(DTLCONT=[]), 'seoul_field_type_invalid')):
+            result, events, _ = self.execute(pages([item]))
+            self.assertEqual(result['diagnostic']['error_code'], code)
+            self.assertFalse(any(n == 'observe_seoul_program_new_only' for n, _ in events))
+
+    def test_valid_identity_revision_and_existing_key_contract_remain_unchanged(self):
+        for value in ('standard-id_1', 'a' * 64, ' padded ', 123):
+            canonical = str(value).strip()
+            item = row(sid=canonical)
+            item['SVCID'] = value
+            raw = {name: '' if item.get(name) is None else str(item[name]).strip() for name in SOURCE_FIELDS}
+            expected = hashlib.sha256(json.dumps(raw, ensure_ascii=False, sort_keys=True,
+                separators=(',', ':')).encode('utf-8')).hexdigest()
+            normalized = normalize_seoul_item(item)
+            self.assertEqual((normalized.external_key, normalized.revision_hash), (canonical, expected))
+            plan = plan_collection([item], existing_keys=frozenset({canonical}), natural_end=True)
+            self.assertEqual((plan.counters['invalid_id_count'], plan.counters['existing_skipped']), (0, 1))
+            self.assertEqual(plan.batches, ())
+
+    def test_unknown_write_after_quarantine_never_retries_or_finishes(self):
+        items = rows(42)
+        items[0]['SVCID'] = 'invalid?first'
+        result, events, _ = self.execute(pages(items), failure=RpcAmbiguous())
+        self.assertEqual((result['status'], result['invalid_id_count'], result['unprocessed']), ('state_unknown', 1, 41))
+        self.assertEqual(sum(n == 'observe_seoul_program_new_only' for n, _ in events), 1)
+        self.assertFalse(any(n == 'finish' for n, _ in events))
+
+    def test_read_only_diagnostic_keeps_bad_id_errors_on_success_and_failure(self):
+        items = rows(1001)
+        items[899]['SVCID'] = 'invalid?first'
+        c, _ = self.reader(pages(items))
+        result = diagnose_culture_read(c)
+        self.assertEqual((result['status'], result['scanned'], result['invalid_id_count'], result['request_count']),
+                         ('read_complete', 1001, 1, 2))
+        self.assertEqual((result['new_planned'], result['writes'], result['ai_calls']), (1000, 0, 0))
+        c, _ = self.reader([Response(envelope(items[:1000], 1001, CULTURE_SERVICE)), Response(data=b'bad')])
+        result = diagnose_culture_read(c)
+        self.assertEqual((result['status'], result['invalid_id_count'], result['request_count']), ('failed', 1, 2))
+        self.assertEqual(result['item_errors'][0]['api_row'], 900)
 
 
 if __name__ == '__main__':

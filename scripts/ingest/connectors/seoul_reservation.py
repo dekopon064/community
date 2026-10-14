@@ -171,17 +171,54 @@ def parse_seoul_date(raw: str) -> dict[str, str | None]:
     return {"raw": raw, "value": None, "status": "unparsed", "precision": None}
 
 
-def _source_fields(item: dict[str, Any]) -> dict[str, str]:
+def seoul_item_id(item: dict[str, Any]) -> str:
+    """The existing ID alphabet/length, without repairing or inventing keys."""
     if not isinstance(item, dict):
         raise SeoulContractError("seoul_item_invalid")
+    value = item.get('SVCID')
+    if value is not None and not isinstance(value, (str, int, float)):
+        raise SeoulContractError('seoul_id_invalid')
+    sid = '' if value is None else str(value).strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', sid):
+        raise SeoulContractError('seoul_id_invalid')
+    return sid
+
+
+def invalid_id_error(row_index: int, page: int) -> dict:
+    # Do not echo provider values, URLs, titles or credential-like ID strings.
+    return dict(row_index=row_index, api_row=row_index + 1, page=page,
+                stage='row_identity', error_code='seoul_id_invalid')
+
+
+def _invalid_page_identity(item: dict[str, Any]) -> tuple[str, str]:
+    """Unstorable IDs still participate in page integrity via private hashes.
+
+    Nonempty malformed IDs retain a stable identity across content changes.
+    Missing/empty IDs have no usable identity: fingerprint their source fields
+    so distinct missing-ID rows can be quarantined independently, while exact
+    repeated rows/pages remain detectable. These keys never reach storage.
+    """
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                        separators=(',', ':')).encode('utf-8')).hexdigest()
+    revision = digest({name: item.get(name) for name in SOURCE_FIELDS})
+    value = item.get('SVCID')
+    if isinstance(value, (str, int, float)):
+        value = str(value).strip()
+    identity = ('\0invalid-row:' + revision if value is None or value == ''
+                else '\0invalid-id:' + digest(value))
+    return identity, revision
+
+
+def _source_fields(item: dict[str, Any]) -> dict[str, str]:
+    sid = seoul_item_id(item)
     raw: dict[str, str] = {}
     for name in SOURCE_FIELDS:
         value = item.get(name)
         if value is not None and not isinstance(value, (str, int, float)):
             raise SeoulContractError("seoul_field_type_invalid")
         raw[name] = "" if value is None else str(value).strip()
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", raw["SVCID"]):
-        raise SeoulContractError("seoul_id_invalid")
+    raw['SVCID'] = sid
     return raw
 
 
@@ -233,6 +270,7 @@ def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
 
 class SeoulReservationConnector(BatchConnector):
     service = SERVICE
+    isolate_invalid_ids = False
     canonical_source_id = SEOUL_SOURCE_ID
     provider = "seoul"
     source_kind = "content"
@@ -253,6 +291,7 @@ class SeoulReservationConnector(BatchConnector):
         self._api_key_provider = api_key_provider
         self._expected_total: int | None = None
         self._seen: dict[str, str] = {}
+        self.identity_errors: list[dict] = []
         self.last_diagnostic: dict[str, Any] = {}
 
     def fetch_batch(self, checkpoint: Checkpoint | None) -> BatchResult:
@@ -262,6 +301,7 @@ class SeoulReservationConnector(BatchConnector):
             raise SeoulContractError("seoul_checkpoint_out_of_range")
         if page == 1:
             self._seen.clear()
+            self.identity_errors.clear()
             self._expected_total = None
         self.last_diagnostic.update(stage="configuration", page=page)
         key = self._api_key_provider() if self._api_key_provider else os.environ.get(SEOUL_API_KEY_ENV, "")
@@ -305,8 +345,14 @@ class SeoulReservationConnector(BatchConnector):
         identities = []
         for index, row in enumerate(rows):
             self.last_diagnostic.update(stage="row_identity", row_index=index)
-            raw = _source_fields(row)
-            identities.append((raw['SVCID'], _raw_revision(raw)))
+            try:
+                raw = _source_fields(row)
+                identities.append((raw['SVCID'], _raw_revision(raw)))
+            except SeoulContractError as exc:
+                if not self.isolate_invalid_ids or exc.args != ('seoul_id_invalid',):
+                    raise
+                self.identity_errors.append(invalid_id_error(first + index - 1, page))
+                identities.append(_invalid_page_identity(row))
         self.last_diagnostic.pop("row_index", None)
         self.last_diagnostic["stage"] = "page_identity"
         ids = [sid for sid, _ in identities]
@@ -339,6 +385,7 @@ class SeoulReservationConnector(BatchConnector):
 class SeoulCultureConnector(SeoulReservationConnector):
     """Culture listing with two HTTP attempts total, without retry/redirect."""
     service = CULTURE_SERVICE
+    isolate_invalid_ids = True
 
     def __init__(self, http: HttpClient | None = None, *, api_key_provider: Callable[[], str] | None = None):
         super().__init__(http or HttpClient(budget=CULTURE_MAX_PAGES, max_attempts=1),
@@ -376,7 +423,8 @@ def read_culture_collection(connector: SeoulCultureConnector) -> BatchResult:
         if page.progress['total_changed']:
             raise SeoulContractError('seoul_listing_changed')
         if page.natural_end:
-            return BatchResult(tuple(rows), None, True, page.progress, page.meta)
+            return BatchResult(tuple(rows), None, True,
+                               dict(page.progress, identity_errors=tuple(connector.identity_errors)), page.meta)
         checkpoint = page.next_checkpoint
     raise SeoulContractError('seoul_culture_range_incomplete')
 
