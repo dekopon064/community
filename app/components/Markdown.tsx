@@ -79,7 +79,41 @@ export const markdownComponents: Components = {
   ),
 };
 
-export default function Markdown({ children }: { children: string }) {
+type MarkdownNode = { type: string; value?: string; children?: MarkdownNode[] };
+
+// Opt-in soft-break rendering for detail content; code nodes remain untouched.
+function detailLineBreaks() {
+  return (root: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (!node.children) return;
+      node.children = node.children.flatMap((child) => {
+        if (child.type === "text" && child.value?.includes("\n")) {
+          return child.value.split("\n").flatMap((value, index) =>
+            index === 0 ? [{ type: "text", value }] : [{ type: "break" }, { type: "text", value }]
+          );
+        }
+        visit(child);
+        return [child];
+      });
+    };
+    visit(root);
+  };
+}
+
+export default function Markdown({ children, preserveLineBreaks = false }: {
+  children: string;
+  preserveLineBreaks?: boolean;
+}) {
+  if (preserveLineBreaks) {
+    return (
+      <ReactMarkdown
+        remarkPlugins={[[remarkGfm, { singleTilde: false }], detailLineBreaks]}
+        components={markdownComponents}
+      >
+        {children}
+      </ReactMarkdown>
+    );
+  }
   return (
     <ReactMarkdown
       remarkPlugins={[[remarkGfm, { singleTilde: false }]]}

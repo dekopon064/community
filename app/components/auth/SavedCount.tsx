@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import styles from "./AuthSurfaces.module.css";
 
-export default function SavedCount({ id, refreshKey }: { id: string; refreshKey: number }) {
+export default function SavedCount({ id, refreshKey, listenForChanges = false }: { id: string; refreshKey: number; listenForChanges?: boolean }) {
   const t = useTranslations("Saved");
   const [count, setCount] = useState<number | null>(null);
   const [failed, setFailed] = useState(false), [retry, setRetry] = useState(0);
@@ -23,11 +23,15 @@ export default function SavedCount({ id, refreshKey }: { id: string; refreshKey:
       } catch { if (active && !request.signal.aborted) setFailed(true); }
     }
     const refresh = () => { void load(); };
+    const savedChange = (event: Event) => {
+      if ((event as CustomEvent<{ id?: string }>).detail?.id === id) refresh();
+    };
     const show = (event: PageTransitionEvent) => { if (event.persisted) refresh(); };
     void Promise.resolve().then(() => { if (active) refresh(); });
+    if (listenForChanges) window.addEventListener("machimoa-saved-count-change", savedChange);
     window.addEventListener("focus", refresh); window.addEventListener("pageshow", show);
-    return () => { active = false; controller?.abort(); window.removeEventListener("focus", refresh); window.removeEventListener("pageshow", show); };
-  }, [id, refreshKey, retry]);
+    return () => { if (listenForChanges) window.removeEventListener("machimoa-saved-count-change", savedChange); active = false; controller?.abort(); window.removeEventListener("focus", refresh); window.removeEventListener("pageshow", show); };
+  }, [id, refreshKey, retry, listenForChanges]);
   return <div className={styles.saveCount}>
     <span role="status" aria-live="polite">{count !== null ? t("count", { count }) : t(failed ? "countUnavailable" : "countLoading")}</span>
     {failed && <button type="button" className={styles.countRetry} onClick={() => setRetry(value => value + 1)}>{t("countRetry")}</button>}
