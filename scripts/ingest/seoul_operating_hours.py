@@ -51,13 +51,12 @@ def facility_hours_evidence(description):
     return records
 
 
-def validate_facility_hours_clause(line, facts):
+def _validate_hour_sentence(text, facts):
     """Return True only for proven facility clocks in their original role.
 
     The caller must still validate dates, weekdays, counts and durations. A
     matching clock is never proof of a daily session or an agreed appointment.
     """
-    text = _plain(line)
     records = facts.get('facility_hours_evidence', [])
     ranges = _ranges(text)
     if not ranges:
@@ -80,6 +79,17 @@ def validate_facility_hours_clause(line, facts):
             if any(r not in allowed for r in ranges):
                 raise AiJobError('ai_schema_error')
         return False
+    # A time-free arrangement clause is a separate role, not a fixed session.
+    # Recognize only this complete qualified tail and require current evidence;
+    # don't erase an arbitrary '회차' word or borrow another clause's clocks.
+    arrangement = re.search(r'(?:이며|이고)[,]?\s*(?:실제\s*)?(?:회차\s*)?'
+        r'(?:시간|일정)(?:은|는)\s*(?:별도\s*|사전\s*)?(?:협의|조율)'
+        r'(?:가\s*필요합니다|합니다|해야\s*합니다)[.。]?\s*$', text)
+    if arrangement:
+        if not re.search(r'(?:일정|시간)[^\n.。]{0,100}(?:협의|조율)|'
+                         r'(?:협의|조율)[^\n.。]{0,100}(?:일정|시간)', facts.get('description','')):
+            raise AiJobError('ai_schema_error')
+        text = text[:arrangement.start()]
     expected = {tuple(tuple(clock) for clock in record['clocks']) for record in records}
     if (len(ranges) != 1 or ranges[0] not in expected
             or re.search(r'접수|신청|관람|회차|매일.*(?:프로그램|체험|수업)|'
@@ -90,3 +100,19 @@ def validate_facility_hours_clause(line, facts):
             facts.get('description', '')):
         raise AiJobError('ai_schema_error')
     return True
+
+
+def validate_facility_hours_clause(line, facts):
+    """Every clock-bearing sentence must prove its own role and values.
+
+    Sentence boundaries don't split dates, decimals or clock ranges. Time-free
+    coordination prose remains unchanged, and cannot authorize another clock.
+    """
+    sentences = re.split(r'(?<=[.!?。])\s+', _plain(line))
+    timed = [text for text in sentences if _ranges(text)]
+    results = [_validate_hour_sentence(text, facts) for text in timed]
+    # Mixed facility/session prose still passes through the existing general
+    # schedule checks; no global time-set exemption for a single proven clause.
+    if any(results) and not all(results):
+        raise AiJobError('ai_schema_error')
+    return bool(results and all(results))

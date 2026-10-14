@@ -5,8 +5,11 @@ from datetime import date, datetime, timezone, timedelta
 from ingest.ai_errors import AiJobError
 from ingest.body_markdown import inline_text, read_body
 from ingest.myseoul_ai_support import schedule_values
-from ingest.myseoul_content import schedule_block, schedule_lines
+from ingest.myseoul_content import schedule_block, schedule_lines, _dated_schedule_details
 from ingest.translation_validation import _entry
+from ingest.translation_validation import _dates_and_times
+from ingest.seoul_calendar_sessions import (record_calendar_sessions, session_text,
+                                          _DATE as SESSION_DATE, _CLOCK as SESSION_CLOCK)
 
 _SECTION = re.compile(r'(?ms)(^[ \t]*\[일정 안내\][ \t]*)(.*?)(?=^[ \t]*\[|\Z)')
 _DATE = r'(?:\d{4}-\d{2}-\d{2}|(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일)'
@@ -46,16 +49,37 @@ def _table_rows(section: str) -> list[str]:
     return result
 
 
-def _pure_session(record: str) -> bool:
+def _years(view):
+    pair = view['periods']['operation'][0]['endpoints']
+    return frozenset(range(int(pair[0]['value'][:4]), int(pair[1]['value'][:4])+1))
+
+
+def _display_values(text, *, years=frozenset()):
+    # Keep comparison-only metadata separate from the unchanged public text.
+    # Reuse the date/AM-PM parser that already validates calendar table cells.
+    values = schedule_values(text)
+    parsed = _dates_and_times(text, known_years=years)
+    values['dates'] = {v[2:] for v in parsed if v[0]=='date'} | values['dates']
+    if re.search(r"\d{4}(?:\s*[년.-])|['’]\d{2}\s*\.", text):
+        values['years'] |= {v[1] for v in parsed if v[0]=='date' and v[1] is not None}
+    ranges = re.finditer(rf'({SESSION_CLOCK})\s*(?:~|～|〜|–|—|-|부터)\s*({SESSION_CLOCK})', text)
+    clocks = [tuple(v for v in _dates_and_times(m[0]) if v[0]=='time') for m in ranges]
+    if clocks:
+        values['times'] = {tuple(v[1]*60+v[2]+(v[3]/60 if len(v)>3 else 0) for v in pair)
+                           for pair in clocks if len(pair)==2}
+    return values
+
+
+def _pure_session(record: str, view: dict) -> bool:
     # Do not remove meeting instructions, activities, per-session conditions or
     # duration/count notes just because a table has the same numeric values.
-    text=_plain(record)
-    if not schedule_values(text)['dates']:
+    text=session_text(record)
+    if not _display_values(text, years=_years(view))['dates']:
         return False
-    text=re.sub(_DATE,'',text)
-    text=re.sub(_CLOCK,'',text)
+    text=re.sub(SESSION_DATE,'',text)
+    text=re.sub(SESSION_CLOCK,'',text)
     text=re.sub(r'[（(]\s*[월화수목금토일](?:요일)?\s*[）)]|오전|오후','',text)
-    return not text.strip(' \t/,·、・;；~～〜–—-')
+    return not text.strip(' \t/.,·、・;；~～〜–—-')
 
 
 _CHECKIN = re.compile(r'시작\s*(\d+)\s*분\s*(전|후)(?:까지|에)?\s*도착')
@@ -80,7 +104,18 @@ def validate_checkin(content: str, view: dict) -> None:
         if tuple(m.groups()) not in expected: raise AiJobError('ai_schema_error')
 
 
-def _covered(values: dict, rows: list[dict]) -> bool:
+def _covered(values: dict, rows: list[dict], occurrences=None) -> bool:
+    if occurrences:
+        # Shared-date lists are covered one date at a time, using the same
+        # ordered source-clock associations as calendar validation. A global
+        # bag of table dates/times cannot cover independently timed sessions.
+        return all(any(row['dates']=={day[1:]} and values['years'].issubset(row['years'])
+                       and {tuple(v[1]*60+v[2]+(v[3]/60 if len(v)>3 else 0) for v in clocks[i:i+2])
+                            for i in range(0,len(clocks),2)}.issubset(row['times'])
+                       and ({date(*day).weekday()} if values['weekdays'] and day[0] is not None
+                            else values['weekdays']).issubset(row['weekdays'])
+                       and values['counts'].issubset(row['counts']) for row in rows)
+                   for day,clocks in occurrences if clocks) and all(clocks for _,clocks in occurrences)
     return any(values['dates']==row['dates'] and
         all(values[key].issubset(row[key]) for key in ('years','times','weekdays','counts'))
         for row in rows)
@@ -103,7 +138,7 @@ def _operation_period_display(sections: dict, view: dict) -> dict:
         return sections
     start,end=(d.date() for d in dates)
     matrix=view.get('weekly_schedule')
-    explicit=[schedule_values(record)['times'] for record in schedule_lines(view)]
+    explicit=[_display_values(record,years=_years(view))['times'] for record in schedule_lines(view)]
     if any(a==0 or b==0 or a>=b for times in explicit for a,b in times):
         return sections
     if matrix:
@@ -113,20 +148,23 @@ def _operation_period_display(sections: dict, view: dict) -> dict:
         if not clocks or any(hour==minute==0 for hour,minute in clocks):
             return sections
     else:
-        evidence=[schedule_values(record) for record in schedule_lines(view)]
+        evidence=[_display_values(record,years=_years(view)) for record in schedule_lines(view)]
         if not evidence or any(not v['dates'] or not v['times']
                 or any(a==0 or b==0 or a>=b for a,b in v['times']) for v in evidence):
             return sections
         represented=set()
-        for values in evidence:
+        for record,values in zip(schedule_lines(view),evidence):
+            details=_dated_schedule_details(record,known_years=_years(view))
             for month,day in values['dates']:
                 candidates=[]
                 for year in range(start.year,end.year+1):
                     try: occurrence=date(year,month,day)
                     except ValueError: continue
                     if start<=occurrence<=end: candidates.append(occurrence)
+                matching=[weekdays for dated,weekdays,_ in details if dated==(month,day)]
+                weekdays=set().union(*matching) if matching else values['weekdays']
                 if (len(candidates)!=1 or values['years']-{candidates[0].year}
-                        or values['weekdays']-{candidates[0].weekday()}):
+                        or weekdays-{candidates[0].weekday()}):
                     return sections
                 represented.add(candidates[0])
         if not {start,end}.issubset(represented):
@@ -152,14 +190,15 @@ def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[st
     if not match:
         return content,sections
     original=match[2]
-    rows=[schedule_values(row) for row in _table_rows(original)]
+    rows=[_display_values(row) for row in _table_rows(original)]
     records=schedule_lines(view)
     covered=[]
     notes=[]
     for record in records:
-        values=schedule_values(record)
+        values=_display_values(record,years=_years(view))
         parts=_session_and_checkin(record)
-        if (_pure_session(record) or parts) and _covered(values,rows):
+        occurrences=record_calendar_sessions(record,years=_years(view))
+        if (_pure_session(record,view) or parts) and _covered(values,rows,occurrences):
             covered.append(record)
             if parts:
                 rendered='- **집결 안내:** '+parts[1]

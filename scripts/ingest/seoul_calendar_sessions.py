@@ -7,7 +7,7 @@ import re
 
 from ingest.ai_errors import AiJobError
 from ingest.body_markdown import read_body, inline_text
-from ingest.myseoul_content import schedule_lines, _operation_date_bounds, _dated_schedule_details
+from ingest.myseoul_content import schedule_lines, _operation_date_bounds
 from ingest.translation_validation import _dates_and_times
 
 _DATE = (r"(?:\d{4}-\d{2}-\d{2}|(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일|"
@@ -15,27 +15,51 @@ _DATE = (r"(?:\d{4}-\d{2}-\d{2}|(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일
 _DAY = r'(?:\s*[（(]\s*[월화수목금토일](?:요일)?\s*[）)])?'
 _CLOCK = r'(?:오전|오후)?\s*\d{1,2}(?::\d{2}(?::\d{2})?|\s*시(?!간)(?:\s*\d{1,2}\s*분)?)'
 _SHARED = re.compile(rf'^(?P<dates>{_DATE}{_DAY}(?:\s*[/,·、・]\s*{_DATE}{_DAY})+)'
-                     rf'\s*[,;:]?\s*(?P<clocks>{_CLOCK}\s*[~～〜–—-]\s*{_CLOCK})\s*$')
+                     rf'\s*[,;:]?\s*(?P<clocks>{_CLOCK}\s*[~～〜–—-]\s*{_CLOCK})'
+                     r'(?P<note>\s+.*)?\s*$')
 
 
-def validate_calendar_sessions(content, view):
+def session_text(line):
+    text = re.sub(r'^[^\w가-힣]+', '', inline_text(line)).strip()
+    return re.sub(r'^[ㅇ]?\s*(?:운영|진행|교육|수업)?\s*(?:일시|일정)\s*[:：]\s*', '', text)
+
+
+def record_calendar_sessions(line, *, years=frozenset()):
+    """Same date/ordered-clock evidence for validation and display coverage."""
+    text = session_text(line)
+    match = _SHARED.fullmatch(text)
+    if match and not _dates_and_times(match['note'] or '',known_years=years):
+        # Time-free conditions don't change the explicit shared clocks. They
+        # remain source text for public display; never deduplicate this note.
+        # Another date/clock in the tail needs its own association, not sharing.
+        clocks = tuple(v for v in _dates_and_times(match['clocks']) if v[0]=='time')
+        return [(v[1:],clocks) for v in _dates_and_times(match['dates'],known_years=years) if v[0]=='date']
+    records = []; day = None; clocks = []
+    # Each date opens its own ordered interval. Repeated identical clocks on
+    # another date are not additional clocks belonging to this date's session.
+    for value in _dates_and_times(text,known_years=years):
+        if value[0]=='date':
+            if day is not None:records.append((day,tuple(clocks)))
+            day=value[1:];clocks=[]
+        elif day is not None:clocks.append(value)
+    if day is not None:records.append((day,tuple(clocks)))
+    return records
+
+
+def calendar_session_records(view):
     bounds = _operation_date_bounds(view)
     years = frozenset(y for start,end in bounds for y in range(start.year,end.year+1))
     records = []
     for line in schedule_lines(view):
         # Strip an explicit source schedule label, never a title/invitation.
-        text = re.sub(r'^[^\w가-힣]+', '', inline_text(line)).strip()
-        text = re.sub(r'^[ㅇ]?\s*(?:운영|진행|교육|수업)?\s*(?:일시|일정)\s*[:：]\s*', '', text)
-        match = _SHARED.fullmatch(text)
-        if match:
-            clocks = tuple(v for v in _dates_and_times(match['clocks']) if v[0]=='time')
-            records += [(v[1:],clocks) for v in _dates_and_times(match['dates'],known_years=years) if v[0]=='date']
-        else:
-            for day,_,clocks in _dated_schedule_details(text,known_years=years):
-                candidates = {v[1:] for v in _dates_and_times(text,known_years=years)
-                              if v[0]=='date' and v[2:]==day}
-                ordered = tuple(v for v in _dates_and_times(text,known_years=years) if v[0]=='time' and v in clocks)
-                records += [(v,ordered) for v in candidates]
+        records += record_calendar_sessions(line, years=years)
+    return records
+
+
+def validate_calendar_sessions(content, view):
+    bounds = _operation_date_bounds(view)
+    years = frozenset(y for start,end in bounds for y in range(start.year,end.year+1))
+    records = calendar_session_records(view)
     for table in read_body(content).tables:
         headers = [inline_text(h).strip() for h in table.headers]
         dates = [i for i,h in enumerate(headers) if h in {'날짜','일자','일시','일정','수업일','교육일'}]
