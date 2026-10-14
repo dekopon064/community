@@ -206,6 +206,8 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         stage = 'japanese_validation'
         content_ja = normalize_schedule_heading(content_ja, 'ja')
         validate_public_body(content_ja)
+        from ingest.seoul_public_guidance import validate_public_guidance
+        validate_public_guidance(content_ja, 'ja')
         summary_ja = extract_summary_section(content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
         validate_japanese_output(title_ja, content_ja, korean_source=c["title"] + "\n" + content_ko)
         validate_translation_fidelity(c['title'], content_ko, title_ja, content_ja)
