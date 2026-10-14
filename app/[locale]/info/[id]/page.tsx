@@ -46,15 +46,16 @@ export default async function InfoDetailPage({
   const canSave = isUserCategory(item.userCategory);
   return (
     <div className="mx-auto min-h-[60vh] max-w-6xl bg-canvas px-5 pt-8 pb-24 md:px-8 md:pt-12 lg:px-10 lg:pt-16">
-      <Link
-        href={item.userCategory ? `/info/category/${item.userCategory}` : "/info"}
-        className="mb-8 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-ink-sub transition-colors hover:text-ink"
-      >
-        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-        {t("back")}
-      </Link>
-
       <CurationDetailHeading
+        back={(
+          <Link
+            href={item.userCategory ? `/info/category/${item.userCategory}` : "/info"}
+            className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-ink-sub transition-colors hover:text-ink"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            {t("back")}
+          </Link>
+        )}
         url={item.source_image_url}
         title={item.title}
         locale={locale}
@@ -70,7 +71,7 @@ export default async function InfoDetailPage({
 
       <CurationMobileSourceLink sourceUrl={item.source_url} />
 
-      <div className="mt-10 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
+      <div className="mt-8 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
         <article className="public-readable min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">
           <CurationBody content={item.content} locale={locale} />
         </article>
