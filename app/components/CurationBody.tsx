@@ -9,13 +9,13 @@ export default function CurationBody({
   locale: string;
 }) {
   const parsed = parseCurationBodySections(content, locale);
-  if (!parsed) return <Markdown>{content}</Markdown>;
+  if (!parsed) return <Markdown preserveLineBreaks>{content}</Markdown>;
 
   return (
     <div>
       {parsed.introduction && (
         <div className="pb-6 [&>p:first-child]:mt-0">
-          <Markdown>{parsed.introduction}</Markdown>
+          <Markdown preserveLineBreaks>{parsed.introduction}</Markdown>
         </div>
       )}
       {parsed.sections.map(({ heading, body }, index) => (
@@ -29,7 +29,7 @@ export default function CurationBody({
             {heading}
           </h2>
           <div className="mt-2 [&>p:first-child]:mt-0 [&>p:last-child]:mb-0">
-            <Markdown>{body}</Markdown>
+            <Markdown preserveLineBreaks>{body}</Markdown>
           </div>
         </section>
       ))}

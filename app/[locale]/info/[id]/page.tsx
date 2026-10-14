@@ -9,6 +9,7 @@ import CurationBody from "@/app/components/CurationBody";
 import CurationDetailHeading from "@/app/components/CurationDetailHeading";
 import CurationMobileSourceLink from "@/app/components/CurationMobileSourceLink";
 import SaveControl from "@/app/components/auth/SaveControl";
+import SavedCount from "@/app/components/auth/SavedCount";
 import ContentComments from "@/app/components/ContentComments";
 import { getCurationPeriodPresentation, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
@@ -64,7 +65,7 @@ export default async function InfoDetailPage({
           </div>
         ) : null}
         period={hasPeriod ? <CurationPeriodText {...periodInput} detail /> : null}
-        save={canSave ? <SaveControl id={item.id} slug={id} locale={locale} /> : null}
+        save={canSave ? <SaveControl id={item.id} slug={id} locale={locale} showCount={false} /> : null}
       />
 
       <CurationMobileSourceLink sourceUrl={item.source_url} />
@@ -83,6 +84,13 @@ export default async function InfoDetailPage({
           />
         </div>
       </div>
+      {canSave ? (
+        <div className="mt-5 grid min-w-0 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:gap-10" data-detail-saved-count>
+          <div className="flex min-w-0 justify-end">
+            <SavedCount id={item.id} refreshKey={0} listenForChanges />
+          </div>
+        </div>
+      ) : null}
       {canSave ? <ContentComments key={item.id} id={item.id} slug={id} locale={locale} /> : null}
     </div>
   );
