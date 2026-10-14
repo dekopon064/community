@@ -5,7 +5,9 @@ from unittest.mock import patch
 from ingest.program_db import ProgramNewOnlyObservationAdapter
 from ingest.seoul_workflow import process_seoul_collection
 from ingest.rpc_errors import RpcAmbiguous,RpcFailure
-from test_seoul_reservation import row
+from test_seoul_reservation import row, Response, envelope, TEST_KEY
+from ingest.connectors.seoul_reservation import SeoulCultureConnector, CULTURE_SERVICE
+from ingest.http_client import HttpClient
 from test_program_ai import context,ProgramAITests
 
 CAP={'contract':'seoul-new-only-v1','maxBatch':40,'category':'문화체험'}
@@ -28,8 +30,9 @@ class SeoulCollectionContractTests(unittest.TestCase):
                     revision=v['revision_hash'],outcome='existing_skipped' if v['external_key'].endswith('_1') else 'new_saved',
                     reviewWaiting=True,aiWaiting=False) for i,v in enumerate(args['p_items'])]
             self.fail(name)
-        connector=SimpleNamespace(page_size=50,max_pages=1,http=SimpleNamespace(request_count=1))
-        connector.fetch_batch=lambda cp:SimpleNamespace(items=rows or [row(sid=f'synthetic_{n}') for n in range(50)],natural_end=natural,progress={})
+        items=rows if rows is not None else [row(sid=f'synthetic_{n}') for n in range(50)]
+        connector=SeoulCultureConnector(HttpClient(budget=2,max_attempts=1,
+            transport=lambda *_a,**_k:Response(envelope(items,service=CULTURE_SERVICE))),api_key_provider=lambda:TEST_KEY)
         result=process_seoul_collection(Store(),ProgramNewOnlyObservationAdapter(rpc),connector)
         return result,events
     def test_fifty_split_authoritative_counts_and_no_ai(self):
@@ -39,7 +42,7 @@ class SeoulCollectionContractTests(unittest.TestCase):
         writes=[e[1] for e in events if isinstance(e,tuple) and e[0]=='observe_seoul_program_new_only']
         self.assertEqual([len(a['p_items']) for a in writes],[40,10])
         self.assertEqual([a['p_next_checkpoint']['targetOffset'] for a in writes],[40,50])
-        self.assertEqual(result['status'],'incomplete');self.assertEqual(result['ai_calls'],0)
+        self.assertEqual(result['status'],'complete');self.assertEqual(result['ai_calls'],0)
         self.assertEqual(result['unprocessed'],0)
     def test_unknown_second_batch_never_finishes_or_retries(self):
         result,events=self.flow(fail=RpcAmbiguous())
@@ -83,7 +86,7 @@ class SeoulCollectionContractTests(unittest.TestCase):
     def test_missing_server_capability_blocks_before_run_and_http(self):
         adapter=ProgramNewOnlyObservationAdapter(lambda *_:{'contract':'old'})
         forbidden=SimpleNamespace(start_ingest_run=lambda *_a,**_k:self.fail('write forbidden'))
-        connector=SimpleNamespace(page_size=50,max_pages=1,fetch_batch=lambda *_:self.fail('HTTP forbidden'))
+        connector=SeoulCultureConnector(HttpClient(budget=2,max_attempts=1,transport=lambda *_a,**_k:self.fail('HTTP forbidden')))
         with self.assertRaisesRegex(ValueError,'atomic_new_only'):process_seoul_collection(forbidden,adapter,connector)
     def test_malformed_ack_is_unknown_not_success(self):
         adapter=ProgramNewOnlyObservationAdapter(lambda *_:[{'outcome':'changed'}])

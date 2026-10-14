@@ -56,8 +56,8 @@ class Response:
         self.closed = True
 
 
-def envelope(rows, total=None):
-    return {SERVICE: {"RESULT": {"CODE": "INFO-000"}, "row": rows,
+def envelope(rows, total=None, service=SERVICE):
+    return {service: {"RESULT": {"CODE": "INFO-000"}, "row": rows,
                       "list_total_count": len(rows) if total is None else total}}
 
 

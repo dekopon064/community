@@ -103,8 +103,8 @@ class SeoulDiagnosticTests(unittest.TestCase):
         self.assertEqual(result['diagnostic']['error_code'],'seoul_id_invalid')
     def test_cli_read_has_no_store_and_execute_is_exclusive(self):
         from run_seoul_program_collection import main
-        with patch('ingest.connectors.seoul_reservation.SeoulReservationConnector',return_value='fake'),\
-             patch('ingest.seoul_diagnostics.diagnose_read',return_value={'status':'read_complete','writes':0}) as read,\
+        with patch('ingest.connectors.seoul_reservation.SeoulCultureConnector',return_value='fake'),\
+             patch('ingest.seoul_diagnostics.diagnose_culture_read',return_value={'status':'read_complete','writes':0}) as read,\
              patch('ingest.supabase_store.create_ingest_client',side_effect=AssertionError('DB forbidden')),\
              redirect_stdout(io.StringIO()):
             self.assertEqual(main(['--diagnose-read']),0);read.assert_called_once_with('fake')
@@ -114,7 +114,8 @@ class SeoulDiagnosticTests(unittest.TestCase):
         store=SimpleNamespace(start_ingest_run=lambda *_a,**_k:SimpleNamespace(skipped=False,run_id='fake'),
                               finish_ingest_run=lambda *_a,**_k:events.append('finish'))
         adapter=SimpleNamespace(require_contract=lambda:None,observe=lambda *_a:self.fail('write forbidden'))
-        c=SeoulReservationConnector(HttpClient(budget=1,max_attempts=1,transport=lambda *_a,**_k:Response(data=b'not json')),api_key_provider=lambda:TEST_KEY)
+        from ingest.connectors.seoul_reservation import SeoulCultureConnector
+        c=SeoulCultureConnector(HttpClient(budget=2,max_attempts=1,transport=lambda *_a,**_k:Response(data=b'not json')),api_key_provider=lambda:TEST_KEY)
         result=process_seoul_collection(store,adapter,c)
         self.assertEqual(result['diagnostic']['stage'],'json_decode')
         self.assertEqual(result['diagnostic']['error_code'],'invalid_json')

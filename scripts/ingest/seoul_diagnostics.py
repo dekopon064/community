@@ -10,6 +10,9 @@ SEOUL_CODES = frozenset({
     'seoul_credential_in_response', 'seoul_response_invalid', 'seoul_api_result_error',
     'seoul_page_shape_invalid', 'seoul_duplicate_id_in_page', 'seoul_repeated_page',
     'seoul_revision_changed_during_scan', 'seoul_overlapping_pages',
+    'seoul_culture_limits_invalid', 'seoul_culture_range_exceeded',
+    'seoul_listing_changed', 'seoul_culture_range_incomplete', 'seoul_reception_start_invalid',
+    'seoul_store_item_too_large',
 })
 HTTP_CODES = frozenset({'timeout', 'request_failed', 'non_json', 'invalid_json', 'invalid_utf8',
                         'http_status_error', 'http_budget_exhausted', 'response_too_large'})
@@ -18,7 +21,7 @@ STAGES = frozenset({'checkpoint', 'configuration', 'api_read', 'response_contrac
                     'http_status', 'body_read', 'json_decode', 'http_complete', 'planning',
                     'new_only_store', 'finish_run'})
 NUMBERS = ('page', 'attempt', 'http_status', 'response_bytes', 'declared_bytes',
-           'json_error_position', 'row_count', 'total_count', 'row_index')
+           'json_error_position', 'row_count', 'total_count', 'row_index', 'scanned_rows')
 
 def failure_diagnostic(connector, exc, *, stage=None):
     source = getattr(connector, 'last_diagnostic', {})
@@ -66,6 +69,21 @@ def diagnose_read(connector):
                     validation='incomplete' if plan.counters['failed'] else 'valid',item_errors=plan.counters['item_errors'],
                     coverage='listing_natural_end' if page.natural_end else 'bounded_page_only',
                     request_count=connector.http.request_count, writes=0, ai_calls=0)
+    except Exception as exc:
+        return dict(mode='diagnostic_read_only', status='failed', diagnostic=failure_diagnostic(connector, exc),
+                    request_count=connector.http.request_count, writes=0, ai_calls=0)
+
+
+def diagnose_culture_read(connector):
+    """The same bounded culture read/planning path without run, DB or AI."""
+    from ingest.connectors.seoul_reservation import read_culture_collection
+    from ingest.seoul_workflow import plan_collection
+    try:
+        page = read_culture_collection(connector)
+        plan = plan_collection(list(page.items), existing_keys=frozenset(), natural_end=True)
+        return dict(plan.counters, mode='diagnostic_read_only', status='read_complete',
+                    total_count=page.progress['total_count'], pages=page.progress['page_num'],
+                    request_count=connector.http.request_count, writes=0)
     except Exception as exc:
         return dict(mode='diagnostic_read_only', status='failed', diagnostic=failure_diagnostic(connector, exc),
                     request_count=connector.http.request_count, writes=0, ai_calls=0)

@@ -5,12 +5,20 @@ the existing run lease; Seoul is disabled in SQL until a separate rollout.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
 from ingest.models import ObservationRecord
 from ingest.program_scope import extract_program_facts
 from ingest.content_filters import SCHEMA, extract_filter_facts
 from ingest.rpc_errors import RpcAmbiguous, RpcError
+
+# Existing new-only RPC limit on octet_length(p_items::text).
+NEW_ONLY_BATCH_BYTES = 1_000_000
+
+
+def new_only_payload_bytes(items) -> int:
+    return len(json.dumps(items, ensure_ascii=False, allow_nan=False).encode('utf-8'))
 
 
 def program_rpc_item(record: ObservationRecord) -> dict[str, Any]:
@@ -64,9 +72,15 @@ class ProgramNewOnlyObservationAdapter:
         from ingest.seoul_audience import collection_audience
         if any(not collection_audience((record.normalized_payload or {}).get('provider_fields', {}).get('USETGTINFO')).selected for record in records):
             raise ValueError('seoul_collection_audience_not_selected')
+        from ingest.connectors.seoul_reservation import COLLECTION_STATUSES
+        if any((record.normalized_payload or {}).get('provider_fields', {}).get('SVCSTATNM') not in COLLECTION_STATUSES for record in records):
+            raise ValueError('seoul_collection_status_not_selected')
+        items = [program_rpc_item(r) for r in records]
+        if new_only_payload_bytes(items) > NEW_ONLY_BATCH_BYTES:
+            raise ValueError('program_batch_bytes_invalid')
         try:
             result = self.rpc('observe_seoul_program_new_only', {
-                'p_run_id': run_id, 'p_items': [program_rpc_item(r) for r in records],
+                'p_run_id': run_id, 'p_items': items,
                 'p_next_checkpoint': checkpoint,
             })
         except RpcError: raise

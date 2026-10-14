@@ -40,7 +40,7 @@ class SeoulWorkflowTests(unittest.TestCase):
         for key,value in [('scanned',4),('target',3),('existing_skipped',1),('other_category',1),('failed',1)]:
             self.assertEqual(plan.counters[key],value)
         self.assertEqual(rows,original)
-        with self.assertRaises(ValueError):plan_collection(rows*20,existing_keys=frozenset(),natural_end=False)
+        with self.assertRaises(ValueError):plan_collection(rows*501,existing_keys=frozenset(),natural_end=False)
     def test_collection_execution_stops_before_any_credentials_run_or_write(self):
         with self.assertRaisesRegex(ValueError,'atomic_new_only'):require_new_only_collection_contract()
         from run_seoul_program_collection import main
