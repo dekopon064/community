@@ -280,6 +280,8 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         if native.get('schema_version')=='program-scope-v1-local':
             from ingest.seoul_content import validate_public_body
             validate_public_body(content_ja)
+            from ingest.seoul_public_guidance import validate_public_guidance
+            validate_public_guidance(content_ja,'ja')
         summary_ja=extract_summary_section(content_ja,JA_SUMMARY_HEADER,JA_SECTION_HEADERS)
         validate_japanese_output(title_ja,content_ja,korean_source=c['title']+'\n'+content)
         if native.get('schema_version')=='program-scope-v1-local':

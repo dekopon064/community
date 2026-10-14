@@ -172,8 +172,7 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
     target += ['모집 인원: ' + re.sub(r'^(?:모집\s*인원|참가\s*인원|인원|정원)\s*[:：]\s*', '', plain(v))
                for v in view['capacity_raw']]
     dates = ['신청기간: ' + period_text(facts, 'application'),
-             '진행기간: ' + period_text(facts, 'operation'),
-             '접수 상태: ' + reception_status(facts, now)]
+             '진행기간: ' + period_text(facts, 'operation')]
     sessions = schedule_block([line for line in schedule_lines(view)
                                if line not in view.get('weekly_validation_records', [])])
     if sessions:
@@ -206,6 +205,7 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
 
 def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = None, periods: dict | None = None) -> str:
     from ingest.body_sections import normalize_schedule_heading
+    from ingest.seoul_public_guidance import without_reception_status, ensure_application_guidance, validate_public_guidance
     from ingest.seoul_schedule_display import normalize_period_labels, clean_schedule_display, validate_checkin
     content = normalize_period_labels(normalize_schedule_heading(content, 'ko'))
     view = validation_view(facts)
@@ -213,7 +213,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     # mutating the source facts or discarding original session evidence.
     if periods:
         view['periods']={**view['periods'],**periods}
-    sections = reviewed or reviewed_sections(facts)
+    sections = {h: without_reception_status(value) for h, value in (reviewed or reviewed_sections(facts)).items()}
     canonical = '\n'.join(sections.values())
     # A model-contract explanation is not a program instruction. Reject only
     # recognized standalone output directives; a class teaching JSON stays data.
@@ -226,6 +226,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     validate_summary_period(content, canonical, view)
     validate_checkin(content, view)
     validate_participant_quantities(view, content+'\n'+canonical)
+    content = without_reception_status(content)
     content, sections = clean_schedule_display(content, sections, view)
     content = normalize_summary_schedule(content, view)
     content = without_replaced_announcements(content, view)
@@ -248,6 +249,8 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
         if not booking_covered(value, method):
             sections['[신청 방법]'] += '\n- **예약 절차:** ' + plain(value)
     content = merge_reviewed_sections(content, sections)
+    content = ensure_application_guidance(content, facts)
+    validate_public_guidance(content, 'ko')
     validate_participant_quantities(view, content)
     validate_assembled_fees(content, fee_block, canonical_block=fee_block)
     validate_weekly_schedule(content, facts['description'])
