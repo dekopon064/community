@@ -1,4 +1,4 @@
-"""Explicit local ChatGPT sign-in, verified access in memory, no inference or DB."""
+"""Explicit ChatGPT authentication; shared protected reuse, no inference or DB."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,14 +15,17 @@ from ingest.chatgpt_plan_protocol import (AuthorizationAttempt, ProbeError, DISC
     TOKEN, JWKS, RESOURCE, verify_grant, validate_discovery, model_available)
 
 _VERIFIED = object()
+LOGIN_PAGE = '<h1>마치모아 worker 로그인</h1><p>선택한 ChatGPT 계정의 구독 사용량으로 요약·번역합니다. 작업당 최대 2회 호출합니다. 유료 API 전환은 없습니다. 인증은 이 사용자의 OS 보호 저장소에서 재사용합니다. 로그인 자체는 AI를 실행하지 않습니다.</p><a href="/auth/start">Continue with ChatGPT</a>'
 
 
 @dataclass(repr=False)
 class PlanSession:
-    """One selected account; no raw key constructor or silent refresh/fallback."""
+    """One verified account; renewal never resends a generation request."""
     _access: str = field(repr=False)
     expires_at: float
     _verified: object = field(repr=False)
+    _renew: object = field(default=None, repr=False)
+    _record: object = field(default=None, repr=False)
 
     def __post_init__(self):
         if self._verified is not _VERIFIED:
@@ -41,11 +44,17 @@ class PlanSession:
         if type(expiry) not in {int, float}:
             raise ProbeError('invalid_access_expiry')
         session = cls(access, expiry, _VERIFIED)
+        subject = jwt.decode(access, options={'verify_signature':False})['sub']
+        session._record = {'client_id':client_id, 'nonce':nonce, 'subject':subject, 'grant':dict(grant)}
         session.require_active()
         return session
 
     def require_active(self):
         # Leave enough time for both existing 120-second stages before a claim.
+        if self._access and time.time() + 250 >= self.expires_at and self._renew:
+            renewed = self._renew()
+            self._access, self.expires_at = renewed._access, renewed.expires_at
+            renewed.clear()
         if not self._access or time.time() + 250 >= self.expires_at:
             raise ProbeError('chatgpt_plan_reauthentication_required')
 
@@ -55,6 +64,10 @@ class PlanSession:
 
     def clear(self):
         self._access = ''
+        self._renew = None
+        if self._record:
+            self._record['grant'].clear()
+            self._record = None
 
 
 def registration(path):
@@ -79,13 +92,13 @@ def fetch(session, url, **kwargs):
     return response.json()
 
 
-def authenticate_worker():
-    """Invoked only by explicit plan provider execution; never in dry-run."""
+def _interactive_worker(saved_registration=None):
+    """Normal loopback OAuth, only when no reusable credential is available."""
     if not sys.stdin.isatty():
         raise ProbeError('chatgpt_plan_login_requires_terminal')
     import requests
     path = Path(tempfile.gettempdir()) / 'machimoa-chatgpt-plan-probe' / 'registration.json'
-    record = registration(path)
+    record = saved_registration or registration(path)
     with requests.Session() as http:
         validate_discovery(fetch(http, DISCOVERY))
         result = {}
@@ -109,7 +122,7 @@ def authenticate_worker():
                     return
                 route = urlsplit(self.path)
                 if route.path == '/':
-                    self.reply(200, '<h1>마치모아 worker 로그인</h1><p>선택한 ChatGPT 계정의 구독 사용량으로 요약·번역합니다. 작업당 최대 2회 호출합니다. 유료 API 전환은 없습니다. 인증은 이 실행의 메모리에만 보관합니다.</p><a href="/auth/start">Continue with ChatGPT</a>')
+                    self.reply(200, LOGIN_PAGE)
                 elif route.path == '/auth/start':
                     self.send_response(302)
                     self.send_header('Location', attempt.url)
@@ -129,7 +142,7 @@ def authenticate_worker():
             server.timeout = 1
             attempt = AuthorizationAttempt(record['host_id'],
                 f'http://127.0.0.1:{server.server_port}/auth/callback', record.get('client_id'),
-                renewable=False, app_name='Machimoa summary translation worker')
+                renewable=True, app_name='Machimoa summary translation worker')
             print(f'ChatGPTWorkerLogin http://127.0.0.1:{server.server_port}/', flush=True)
             deadline = time.monotonic() + 600
             while not result and time.monotonic() < deadline:
@@ -150,6 +163,7 @@ def authenticate_worker():
                 catalog = fetch(http, RESOURCE + '/models', headers={'Authorization':'Bearer ' + access})
                 selected = PlanSession.from_grant(grant, client_id=form['client_id'],
                     nonce=attempt.nonce, keys=keys, catalog=catalog)
+                selected._record['host_id'] = record['host_id']
                 try:
                     record['client_id'] = form['client_id']
                     temporary = path.with_suffix('.new')
@@ -163,3 +177,17 @@ def authenticate_worker():
                 grant.clear()
         finally:
             form.clear()
+
+
+def authenticate_worker(*, manager=None):
+    """Only explicit provider execution; valid credentials need no browser/TTY."""
+    if manager is None:
+        from ingest.chatgpt_plan_sessions import PlanSessionManager
+        manager = PlanSessionManager()
+    try:
+        return manager.acquire()
+    except ProbeError as exc:
+        if exc.code in {'chatgpt_plan_reauthentication_required','chatgpt_plan_permission_missing',
+                        'chatgpt_plan_login_requires_terminal','plan_renewable_session_required'}:
+            print('ChatGPTWorkerAuth 재인증이 필요합니다. 다음 명시적 실행에서 정상 worker 로그인으로 인증해 주세요. 인증 실패로 AI 작업을 시작하지 않았으며 자동 재시도하지 않습니다.',file=sys.stderr)
+        raise

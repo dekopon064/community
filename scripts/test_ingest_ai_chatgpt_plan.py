@@ -100,13 +100,14 @@ class PlanWorkerTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 'ai_http_401')
         self.assertEqual(client.calls, [])
 
-    def test_no_renewable_session_or_noninteractive_login(self):
+    def test_ephemeral_probe_option_and_noninteractive_browser_login(self):
         attempt = AuthorizationAttempt('urn:uuid:00000000-0000-4000-8000-000000000001',
             'http://127.0.0.1:1234/auth/callback', renewable=False)
         self.assertNotIn('offline_access', parse_qs(urlsplit(attempt.url).query)['scope'][0])
         with patch('ingest.chatgpt_plan_auth.sys.stdin.isatty', return_value=False):
             with self.assertRaises(ProbeError) as error:
-                authenticate_worker()
+                from ingest.chatgpt_plan_auth import _interactive_worker
+                _interactive_worker()
         self.assertEqual(error.exception.code, 'chatgpt_plan_login_requires_terminal')
 
     def test_all_summary_interfaces_and_shared_translation_rules(self):
@@ -564,9 +565,9 @@ class PlanWorkerTests(unittest.TestCase):
                                     with redirect_stdout(io.StringIO()) as out:
                                         if denied:
                                             with self.assertRaises(ProbeError):
-                                                authenticate_worker()
+                                                auth._interactive_worker()
                                         else:
-                                            selected = authenticate_worker()
+                                            selected = auth._interactive_worker()
                                             self.assertEqual(selected.access_token(),grant['access_token'])
                                             selected.clear()
                 metadata = json.loads((Path(folder)/'machimoa-chatgpt-plan-probe'/'registration.json').read_text())
