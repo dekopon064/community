@@ -13,7 +13,7 @@
 .preview a {display:block;}
 .previewImage {display:block;width:100%;height:auto;max-height:min(380px,calc(100dvh - 140px));object-fit:contain;}
 .preview p {font-size:12px;line-height:1.5;color:var(--color-info-muted);margin-top:8px;}
-/* One top region lets the poster start at the back link without reserving extra height. */
+/* Shared top region; desktop posters with dates end at the last metadata row. */
 .heading {display:grid;width:100%;grid-template-columns:minmax(0,1fr) minmax(16rem,.36fr);grid-template-rows:auto auto 1fr;column-gap:40px;align-items:start;}
 .back {grid-column:1;grid-row:1;padding-bottom:24px;}
 .headingText {grid-column:1;grid-row:2;min-width:0;}
@@ -28,6 +28,10 @@
 .noImage {grid-template-rows:auto auto auto;}
 .zoomCue {position:absolute;right:-6px;bottom:-4px;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--color-info-rule);border-radius:6px;background:var(--color-canvas-white);color:var(--color-primary-text);}
 .headerPoster .image {object-position:center top;}
+@media(min-width:1024px){
+  .withPeriod .headerPoster {align-self:end;}
+  .withPeriod .headerPoster .image {object-position:center bottom;}
+}
 .headerPoster:hover .zoomCue {background:var(--color-info-hover);}
 .headerPoster:active {opacity:.85;}
 .thumbnail:focus-visible,.headerPoster:focus-visible,.preview a:focus-visible {outline:3px solid var(--color-focus);outline-offset:4px;}
@@ -64,6 +68,7 @@
   .heading h1 {font-size:32px;line-height:1.2;}
   .period {grid-column:1;grid-row:1;margin-top:0;}
   .headerPoster {grid-column:2;grid-row:1;justify-self:end;width:88px;height:117px;}
+  .saveSlot,.headerPoster {position:relative;right:4px;}
   .noImage .lower {grid-template-columns:minmax(0,1fr);}
   .zoomCue {width:20px;height:20px;right:-5px;bottom:-3px;}
 }
