@@ -88,7 +88,7 @@ def create_provider_adapter(provider: str, api_key: str | None, *, client=None, 
 
 
 def close_provider_adapter(adapter):
-    """Only the ephemeral plan session needs cleanup; preserve legacy clients."""
+    """Clear runtime plan credentials; protected registration survives closure."""
     close = getattr(adapter, 'close', None)
     if close is not None:
         close()

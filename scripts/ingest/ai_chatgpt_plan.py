@@ -86,6 +86,8 @@ class ChatGPTPlanAdapter:
                     self._client.close()
                 finally:
                     self._client.api_key = ''
+            elif getattr(self._client,'api_key',None) == self._session._access:
+                self._client.api_key = ''
         finally:
             self._session.clear()
             self._blocked = True
@@ -95,9 +97,20 @@ class ChatGPTPlanAdapter:
             raise RpcAmbiguous()
         try:
             self._session.require_active()
-        except ProbeError:
+        except ProbeError as exc:
             self._blocked = True
-            raise AiJobError('ai_http_401') from None
+            # Pre-request auth/refresh failure is common, not a content failure.
+            code = 'ai_http_401' if exc.code == 'chatgpt_plan_reauthentication_required' else 'ai_http_403' if exc.code == 'chatgpt_plan_permission_missing' else 'ai_network'
+            failure = PlanCommonFailure(code)
+            failure.diagnostic = {'stage':stage,'code':exc.code,'generation_sent':False}
+            raise failure from None
+        token = self._session.access_token()
+        headers = {str(k).lower():v for k,v in getattr(self._client,'default_headers',{}).items()}
+        if headers.get('authorization') not in (None,'Bearer '+token):
+            self._blocked = True
+            raise PlanCommonFailure('ai_http_401')
+        if hasattr(self._client,'api_key'):
+            self._client.api_key = token
         if self._create_calls >= 2:
             raise AiJobError('ai_call_budget')
         self._create_calls += 1
