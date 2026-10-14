@@ -14,7 +14,7 @@ export default function CurationDetailHeading({ url, title, locale, back, catego
   const trigger = useRef<HTMLButtonElement>(null);
   const hasImage = !!src && src !== failed;
   const hasPeriod = !!period;
-  return <header className={`${styles.heading} ${hasImage ? "" : styles.noImage}`} data-source-heading>
+  return <header className={`${styles.heading} ${hasPeriod ? styles.withPeriod : ""} ${hasImage ? "" : styles.noImage}`} data-source-heading>
     <div className={styles.back}>{back}</div>
     <div className={styles.headingText}>
       <div className={styles.categoryRow}>
