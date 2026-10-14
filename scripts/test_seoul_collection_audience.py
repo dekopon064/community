@@ -11,7 +11,7 @@ from unittest.mock import patch
 from ingest.seoul_audience import collection_audience
 from ingest.seoul_workflow import plan_collection, process_seoul_collection
 from ingest.program_db import ProgramNewOnlyObservationAdapter
-from ingest.connectors.seoul_reservation import normalize_seoul_item, SeoulReservationConnector
+from ingest.connectors.seoul_reservation import normalize_seoul_item, SeoulReservationConnector, SeoulCultureConnector, CULTURE_SERVICE
 from ingest.http_client import HttpClient
 from ingest.seoul_diagnostics import diagnose_read
 from ingest.rpc_errors import RpcAmbiguous
@@ -112,7 +112,7 @@ class SeoulCollectionAudienceTests(unittest.TestCase):
         self.assertEqual([len(batch) for batch in plan.batches], [40, 10])
         self.assertEqual(plan.counters['audience_excluded'], 0)
         with self.assertRaises(ValueError):
-            plan_collection([row()] * 51, existing_keys=frozenset(), natural_end=False)
+            plan_collection([row()] * 2001, existing_keys=frozenset(), natural_end=False)
 
     def run_collection(self, rows, *, ambiguous=False):
         events, calls = [], []
@@ -141,9 +141,9 @@ class SeoulCollectionAudienceTests(unittest.TestCase):
             finish_ingest_run=lambda *_a, **kw:events.append(('finish', kw)))
         def transport(*_a, **_kw):
             calls.append(1)
-            return Response(envelope(rows, 100))
-        connector = SeoulReservationConnector(HttpClient(budget=1, max_attempts=1, transport=transport),
-            api_key_provider=lambda:TEST_KEY, page_size=50, max_pages=1)
+            return Response(envelope(rows, service=CULTURE_SERVICE))
+        connector = SeoulCultureConnector(HttpClient(budget=2, max_attempts=1, transport=transport),
+            api_key_provider=lambda:TEST_KEY)
         result = process_seoul_collection(store, ProgramNewOnlyObservationAdapter(rpc), connector)
         self.assertEqual(len(calls), 1)
         self.assertEqual({k:stored[k] for k in originals}, originals)
@@ -161,8 +161,8 @@ class SeoulCollectionAudienceTests(unittest.TestCase):
         self.assertEqual(result['review_waiting'], 22)
         self.assertEqual(result['unprocessed'], 0)
         self.assertEqual(result['ai_calls'], 0)
-        self.assertEqual(result['status'], 'incomplete')
-        self.assertEqual(result['reason'], 'page_limit')
+        self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['reason'], 'natural_end')
         self.assertEqual(stored['audience_3']['program_facts']['target_raw'], rows[3]['USETGTINFO'])
         self.assertEqual(stored['audience_3']['normalized_payload']['provider_fields']['USETGTINFO'], rows[3]['USETGTINFO'])
         writes = [args for name, args in events if name == 'observe_seoul_program_new_only']
@@ -177,7 +177,7 @@ class SeoulCollectionAudienceTests(unittest.TestCase):
         self.assertEqual(result['audience_excluded'], 50)
         self.assertEqual(result['unprocessed'], 0)
         self.assertEqual(next(a['p_items'] for n, a in events if n == 'observe_seoul_program_new_only'), [])
-        self.assertEqual(result['status'], 'incomplete')
+        self.assertEqual(result['status'], 'complete')
 
     def test_existing_now_family_is_preserved_without_refresh_or_deletion(self):
         rows = page_rows()
@@ -224,7 +224,7 @@ class SeoulCollectionAudienceTests(unittest.TestCase):
         result = json.loads(output.getvalue())
         self.assertEqual(result['audience_any_of'], ['제한없음', '성인', '청년'])
         self.assertNotIn('audience_exclude', result)
-        self.assertEqual((result['page_size'], result['max_pages'], result['store_batch_size']), (50, 1, 40))
+        self.assertEqual((result['page_size'], result['max_pages'], result['store_batch_size']), (1000, 2, 40))
         self.assertEqual(result['network_calls'], 0)
 
 

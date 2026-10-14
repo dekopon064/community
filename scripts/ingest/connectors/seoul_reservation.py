@@ -1,4 +1,4 @@
-"""서울 예약 read/normalize only. Not registered in the DB/AI runner."""
+"""서울 예약 read/normalize connectors; no storage or AI execution here."""
 
 from __future__ import annotations
 
@@ -20,6 +20,10 @@ from ingest.source_images import source_image_url
 SEOUL_SOURCE_ID = "seoul_reservation"
 SEOUL_API_KEY_ENV = "SEOUL_OPEN_DATA_API_KEY"
 SERVICE = "tvYeyakCOllect"
+CULTURE_SERVICE = "ListPublicReservationCulture"
+CULTURE_PAGE_SIZE = 1000
+CULTURE_MAX_PAGES = 2
+COLLECTION_STATUSES = frozenset({'안내중', '접수중'})
 KST = timezone(timedelta(hours=9), name="Asia/Seoul")
 DATE_FIELDS = ("RCPTBGNDT", "RCPTENDDT", "SVCOPNBGNDT", "SVCOPNENDDT")
 SOURCE_FIELDS = (
@@ -228,6 +232,7 @@ def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
 
 
 class SeoulReservationConnector(BatchConnector):
+    service = SERVICE
     canonical_source_id = SEOUL_SOURCE_ID
     provider = "seoul"
     source_kind = "content"
@@ -265,7 +270,7 @@ class SeoulReservationConnector(BatchConnector):
         first, last = (page - 1) * self.page_size + 1, page * self.page_size
         self.last_diagnostic["stage"] = "api_read"
         payload, status, size = self.http.get_json(
-            f"http://openapi.seoul.go.kr:8088/{key}/json/{SERVICE}/{first}/{last}/",
+            f"http://openapi.seoul.go.kr:8088/{key}/json/{self.service}/{first}/{last}/",
             source_id=SEOUL_SOURCE_ID, page_num=page, sensitive_values=(key,),
         )
         self.last_diagnostic.update(stage="response_contract", http_status=status, response_bytes=size)
@@ -275,7 +280,7 @@ class SeoulReservationConnector(BatchConnector):
             raise SeoulContractError("seoul_credential_in_response")
         if status != 200 or not isinstance(payload, dict):
             raise SeoulContractError("seoul_response_invalid")
-        service = payload.get(SERVICE)
+        service = payload.get(self.service)
         result = service.get("RESULT") if isinstance(service, dict) else payload.get("RESULT")
         code = result.get("CODE") if isinstance(result, dict) else None
         if isinstance(code, str) and re.fullmatch(r"(?:INFO|ERROR)-[0-9]{3}", code):
@@ -329,6 +334,51 @@ class SeoulReservationConnector(BatchConnector):
     def to_observation(self, item: dict[str, Any], *, permission_status: str, enabled: bool) -> ObservationRecord:
         # No permission grant, job creation or DB-compatible v1 facts here.
         return normalize_seoul_item(item)
+
+
+class SeoulCultureConnector(SeoulReservationConnector):
+    """Culture listing with two HTTP attempts total, without retry/redirect."""
+    service = CULTURE_SERVICE
+
+    def __init__(self, http: HttpClient | None = None, *, api_key_provider: Callable[[], str] | None = None):
+        super().__init__(http or HttpClient(budget=CULTURE_MAX_PAGES, max_attempts=1),
+                         api_key_provider=api_key_provider,
+                         page_size=CULTURE_PAGE_SIZE, max_pages=CULTURE_MAX_PAGES)
+        self.http_budget = CULTURE_MAX_PAGES
+
+
+def require_culture_reader(connector) -> None:
+    if (connector.service != CULTURE_SERVICE or connector.page_size != CULTURE_PAGE_SIZE
+            or connector.max_pages != CULTURE_MAX_PAGES
+            or connector.http.budget != CULTURE_MAX_PAGES or connector.http.max_attempts != 1
+            or connector.http.request_count != 0):
+        raise SeoulContractError('seoul_culture_limits_invalid')
+
+
+def read_culture_collection(connector: SeoulCultureConnector) -> BatchResult:
+    """Read the complete bounded range before any planning or observation write.
+
+    Unchanged totals and disjoint IDs detect observable page drift; the API
+    does not provide a snapshot token, so a transactional snapshot is not claimed.
+    """
+    require_culture_reader(connector)
+    rows, checkpoint = [], None
+    for _ in range(CULTURE_MAX_PAGES):
+        try:
+            page = connector.fetch_batch(checkpoint)
+        except Exception:
+            connector.last_diagnostic['scanned_rows'] = len(rows)
+            raise
+        rows.extend(page.items)
+        connector.last_diagnostic['scanned_rows'] = len(rows)
+        if page.progress['total_count'] > CULTURE_PAGE_SIZE * CULTURE_MAX_PAGES:
+            raise SeoulContractError('seoul_culture_range_exceeded')
+        if page.progress['total_changed']:
+            raise SeoulContractError('seoul_listing_changed')
+        if page.natural_end:
+            return BatchResult(tuple(rows), None, True, page.progress, page.meta)
+        checkpoint = page.next_checkpoint
+    raise SeoulContractError('seoul_culture_range_incomplete')
 
 
 @dataclass(frozen=True)
