@@ -5,7 +5,7 @@ import re
 from datetime import date
 
 VENUE_LABELS = ('진행장소', '체험장소', '운영장소', '개최장소', '개최지', '교육장소', '장소')
-ACTIVITY_LABELS = ('목적', '주요활동', '주요내용', '교육내용', '프로그램내용', '내용')
+ACTIVITY_LABELS = ('목적', '주요활동', '활동내용', '주요내용', '교육내용', '프로그램내용', '내용')
 _BULLET = re.compile(r'^[\s□■○ㅇ❐•●▪▶▷※*·\-✅☑✔✓◆◇🔸🔹\ufe0f]+')
 _COLUMN = re.compile(r'^(?:제목\s*[/·]\s*소요시간|활동\s*내용|시간|요일|장\s*소|내\s*용)$')
 _UNCLEAR = re.compile(r'미정|불명확|확인\s*필요|추후\s*안내')

@@ -31,9 +31,16 @@ export function reviewDetailPath(kind:string,id:string,source:string) {
 export function programPatch(saved:ProgramFacts,draft:ProgramFacts,editable:string[]) {
  return Object.fromEntries(editable.filter(k=>JSON.stringify(saved[k as ProgramField])!==JSON.stringify(draft[k as ProgramField])).map(k=>[k,draft[k as ProgramField]])) as Partial<ProgramFacts>;
 }
-export function buildProgramSave(item:{revision:string;version:string;facts:ProgramFacts;editableFields:string[];restoredReviewPending?:boolean},draft:ProgramFacts,note:string,resolve:string[]):ProgramCommand {
+export function canReconfirmProgramPeriods(item:{editableFields:string[];result?:{reasons:string[]}},resolve:string[]):boolean {
+ return item.editableFields.includes('periods')&&resolve.length===1&&resolve[0]==='body_period_needs_confirmation'&&Boolean(item.result?.reasons.includes(resolve[0]));
+}
+export function buildProgramSave(item:{revision:string;version:string;facts:ProgramFacts;editableFields:string[];restoredReviewPending?:boolean;result?:{reasons:string[]}},draft:ProgramFacts,note:string,resolve:string[]):ProgramCommand {
  const cleaned=Object.fromEntries(Object.entries(draft).map(([k,v])=>[k,Array.isArray(v)?v.map(x=>x.trim()).filter(Boolean):v])) as ProgramFacts;
  const patch=programPatch(item.facts,cleaned,item.editableFields);
+ // The server must prove support from current role-labelled evidence; this
+ // merely carries an explicit same-value review through the normal save path.
+ const reconfirm=!Object.keys(patch).length&&canReconfirmProgramPeriods(item,resolve);
+ if(reconfirm)patch.periods=item.facts.periods;
  if(!Object.keys(patch).length&&!item.restoredReviewPending)throw new ReviewFailure("invalid_input",{form:"확인한 사실을 변경해 주세요."});
  if(resolve.some(code=>!reasonPatchFields[code]?.some(field=>!["activity_evidence","residence_evidence","period_evidence"].includes(field)&&Object.hasOwn(patch,field))))throw new ReviewFailure("invalid_input",{resolve:"해소를 확인한 사유에 해당하는 사실을 입력해 주세요."});
  return programCommand({action:"save_facts",revision:item.revision,version:item.version,note,patch,resolve,...(item.restoredReviewPending?{confirmRestored:true}:{})});

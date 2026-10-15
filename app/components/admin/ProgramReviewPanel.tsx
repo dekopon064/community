@@ -6,7 +6,7 @@ import Link from "next/link";
 import type {ProgramFacts,ProgramField,Period,ProgramCommand} from "@/app/lib/review/program-contract";
 import {programItem} from "@/app/lib/review/program-store";
 import {programReasonText} from "@/app/lib/review/program-contract";
-import {buildProgramSave,displayProgramValue,displayProgramDate,programDateInput,periodLabels,programChoices,programLabels,programPatch,programInputFields,programValueMissing,preserveProgramDraft,reasonPatchFields} from "@/app/lib/review/program-ui";
+import {canReconfirmProgramPeriods,buildProgramSave,displayProgramValue,displayProgramDate,programDateInput,periodLabels,programChoices,programLabels,programPatch,programInputFields,programValueMissing,preserveProgramDraft,reasonPatchFields} from "@/app/lib/review/program-ui";
 import {ReviewStatus,ReviewValueRow} from './ReviewStates';
 import {ReviewFailure} from "@/app/lib/review/contracts";
 import {failureText,sourceLink,statusText} from "@/app/lib/review/presentation";
@@ -113,7 +113,7 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  {flagReasons.filter(code=>!activityFilters||!['delivery_mode_unknown','activity_location_unknown'].includes(code)).length>0&&<fieldset disabled={busy||confirm} className="mt-7"><legend className="font-semibold">확인한 사실로 해소한 부족·충돌 사유</legend><p className="mt-1 text-sm leading-6 text-info-muted">사실을 보충하고 해당 충돌을 확인한 경우만 선택하세요. 저장 후 서버가 다시 판정합니다.</p>{flagReasons.filter(code=>!activityFilters||!['delivery_mode_unknown','activity_location_unknown'].includes(code)).map(code=><label key={code} className="mt-2 flex min-h-11 items-start gap-3 leading-7"><input className="mt-2 size-5 shrink-0" type="checkbox" checked={resolve.includes(code)} onChange={e=>setResolve(e.target.checked?[...resolve,code]:resolve.filter(c=>c!==code))}/><span>{programReasonText[code]}</span></label>)}</fieldset>}
  <div className="mt-7"><OptionalReviewText id="program-note" label="추가 메모" value={note} onChange={setNote} disabled={busy||confirm} help="수정 이력에 남길 설명이 있을 때만 입력합니다. 담당자·시각·변경 항목은 자동 기록됩니다."/></div>
  {unsaved&&<p className="mt-4 text-info-status">아직 저장하지 않은 입력이 있습니다. 저장하거나 수정을 취소한 뒤 다른 항목으로 이동해 주세요.</p>}
- <div className="my-6 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={busy||confirm||factEditing||(!dirty&&!item.restoredReviewPending)}>{classificationBlocked?"분류 검토 중…":busy?"저장 중…":"사실 저장·재평가"}</button>{unsaved&&<button type="button" className={secondaryButton} disabled={busy||factEditing} onClick={()=>{accept(item);setError("");}}>수정 취소</button>}</div>
+ <div className="my-6 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={busy||confirm||factEditing||(!dirty&&!item.restoredReviewPending&&!canReconfirmProgramPeriods(item,resolve))}>{classificationBlocked?"분류 검토 중…":busy?"저장 중…":"사실 저장·재평가"}</button>{unsaved&&<button type="button" className={secondaryButton} disabled={busy||factEditing} onClick={()=>{accept(item);setError("");}}>수정 취소</button>}</div>
  </form>}
  <p className="mb-6 text-sm leading-6 text-info-muted">사실 저장은 AI를 실행하지 않습니다.</p>
  <p className="mb-6 text-info-body">현재 접수 상태: {displayProgramValue("source_status",item.facts.source_status)}</p>
