@@ -40,9 +40,11 @@ export default function AiQueuePanel({active,onBusy,onReview}:{active:boolean;on
   const currentFlight=flight;
   return()=>{if(timer!==null)clearTimeout(timer);currentFlight.current?.abort();};
  },[active,load]);
+ const waiting=snapshot?.items.filter(job=>job.status==='queued')??[];
+ const activity=[...(snapshot?.items.filter(job=>job.status!=='queued')??[]),...(snapshot?.held??[])];
  return <section hidden={!active} aria-label="AI 작업 대기" aria-busy={loading} className="mt-5">
   <div className="flex flex-wrap items-start justify-between gap-4">
-   <div><h2 className="text-xl font-bold">AI 작업 대기</h2><p className="mt-2 max-w-3xl leading-7 text-info-body">사실 검토 이후의 AI 상태를 확인합니다. 새로고침은 상태 조회만 수행합니다.</p></div>
+   <div><h2 className="text-xl font-bold">AI 작업 대기</h2><p className="mt-2 max-w-3xl leading-7 text-info-body">현재 검토를 마치고 실행 가능한 항목을 표시합니다. 검토 미완료 항목은 사람 사실 review에서 확인하세요. 새로고침은 상태 조회만 수행합니다.</p></div>
    <button type="button" className={secondaryButton} disabled={loading||detailBlocked} onClick={()=>void load(offset)}>{loading?"확인 중…":"새로고침"}</button>
   </div>
   <p className="mt-3 text-sm leading-6 text-info-muted">{snapshot?`갱신 기준: ${time(snapshot.checkedAt)} (한국 시간)`:"수동으로 최신 상태를 확인합니다."} 화면에서 확인한 작업의 완료만 안내합니다.</p>
@@ -50,15 +52,17 @@ export default function AiQueuePanel({active,onBusy,onReview}:{active:boolean;on
   {error&&<div role="alert" className="my-5 border-y border-info-rule py-4 leading-7"><p className="text-info-status">AI 작업 목록을 불러오지 못했습니다. {failureText[error]??failureText.unavailable}</p>{snapshot&&<p className="mt-2 text-info-muted">아래는 마지막으로 확인한 상태입니다. 새로고침으로 다시 확인해 주세요.</p>}</div>}
   {notice&&<p role="status" className="my-5 border-y border-info-rule py-4 leading-7 text-info-body">{notice}</p>}
   {loading&&!snapshot&&<p role="status" className="my-6 text-info-muted">AI 작업 상태를 불러오는 중입니다.</p>}
-  {!loading&&!error&&snapshot&&!snapshot.items.length&&!snapshot.held?.length&&<p className="my-8 leading-7 text-info-muted">현재 AI 작업 대기 항목이 없습니다. 완료 결과는 AI 결과 후보 검토에서 확인할 수 있습니다.</p>}
-  {snapshot&&<ul className="mt-6 divide-y divide-info-rule border-y border-info-rule">{[...snapshot.items,...(snapshot.held??[])].map(job=><li key={job.jobId} className="grid gap-3 py-5 sm:grid-cols-[minmax(0,1fr)_16rem]">
-   <div className="min-w-0"><h3 className="break-keep font-semibold leading-7">{job.title}</h3><p className="mt-1 text-sm leading-6 text-info-muted">{sources[job.sourceName]}</p><button type="button" className={`${secondaryButton} mt-3`} disabled={detailBlocked||loading} aria-expanded={selected===job.jobId} onClick={()=>setSelected(job.jobId)}>원문·확인값 보기</button></div>
+  {!loading&&!error&&snapshot&&!waiting.length&&<p className="my-8 leading-7 text-info-muted">현재 AI 작업 대기 항목이 없습니다. 완료 결과는 AI 결과 후보 검토에서 확인할 수 있습니다.</p>}
+  {snapshot&&[{label:'실행 가능한 대기 항목',jobs:waiting},{label:'처리·실패·재검토 상태',jobs:activity}].map(group=>group.jobs.length>0&&<section key={group.label} aria-label={group.label} className="mt-6">
+   <h3 className="font-semibold">{group.label}</h3>
+   <ul className="mt-3 divide-y divide-info-rule border-y border-info-rule">{group.jobs.map(job=><li key={job.jobId} className="grid gap-3 py-5 sm:grid-cols-[minmax(0,1fr)_16rem]">
+   <div className="min-w-0"><h4 className="break-keep font-semibold leading-7">{job.title}</h4><p className="mt-1 text-sm leading-6 text-info-muted">{sources[job.sourceName]}</p><button type="button" className={`${secondaryButton} mt-3`} disabled={detailBlocked||loading} aria-expanded={selected===job.jobId} onClick={()=>setSelected(job.jobId)}>원문·확인값 보기</button></div>
    <div className="min-w-0"><p className="font-semibold text-info-status">{job.status==='cancelled'?'재검토 중 · AI 대기 보류':aiStateText(job)}</p>
     {(job.status==="failed"||job.status==="queued"&&(job.retryCount>0||job.nextRetryAt))&&<p className="mt-1 break-words text-sm leading-6 text-info-body">{aiFailureText(job)}</p>}
     {job.status==="queued"&&job.nextRetryAt&&<p className="mt-1 text-sm leading-6 text-info-muted">다시 시도할 수 있는 시각: {time(job.nextRetryAt)} · 실행 시각은 보장되지 않습니다.</p>}
     {job.status==="claimed"&&job.leaseState!=="active"&&<p className="mt-1 text-sm leading-6 text-info-muted">기록된 처리 시간이 지났거나 확인이 필요합니다. 새로고침은 작업을 복구하지 않습니다.</p>}
    </div>
-  </li>)}</ul>}
+  </li>)}</ul></section>)}
   {snapshot&&<div className="mt-5 flex flex-wrap gap-3"><button className={secondaryButton} disabled={loading||detailBlocked||offset===0} onClick={()=>void load(Math.max(0,offset-25))}>이전 목록</button><button className={secondaryButton} disabled={loading||detailBlocked||!snapshot.hasMore} onClick={()=>void load(offset+25)}>다음 목록</button></div>}
   {selected&&active&&<AiQueueReview key={selected} jobId={selected} onClose={()=>{setSelected(null);document.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')?.focus();}} onBusy={detailBusy} onChanged={()=>void load(offset)} onReview={onReview}/>}
  </section>;
