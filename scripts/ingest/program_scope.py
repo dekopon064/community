@@ -19,7 +19,7 @@ PROGRAM_PROFILE = "program_capital_v1_local"
 CAPITAL = re.compile(r"서울(?:특별시)?|인천(?:광역시)?|경기도|경기\s+광주")
 NONCAPITAL = re.compile(r"부산|대구|대전|울산|세종|강원|충북|충남|충청|전북|전남|전라|경북|경남|경상|제주|광주광역시|나주|화순")
 SEOUL_DISTRICTS = frozenset("종로구 중구 용산구 성동구 광진구 동대문구 중랑구 성북구 강북구 도봉구 노원구 은평구 서대문구 마포구 양천구 강서구 구로구 금천구 영등포구 동작구 관악구 서초구 강남구 송파구 강동구".split())
-LOCATION_LABELS = ("집결장소", "만나는장소", "만나는 장소", "운영장소", "개최지", "교육장소", "장소")
+LOCATION_LABELS = ("진행장소", "진행 장소", "체험장소", "체험 장소", "운영장소", "운영 장소", "개최지", "교육장소", "교육 장소", "장소")
 TARGET_LABELS = ("참가대상", "모집대상", "신청대상", "참여대상", "대상")
 
 
@@ -27,13 +27,14 @@ def _label_values(text: str, labels: tuple[str, ...]) -> tuple[str, ...]:
     lines = [line.strip().strip("| ") for line in text.splitlines() if line.strip().strip("| ")]
     values: list[str] = []
     for i, line in enumerate(lines):
+        line = re.sub(r"^[□■○ㅇ❐•●▪▶▷※*·\s-]*(?:\d{1,2}[.)]\s*|[①-⑳]\s*)?", "", line)
         for label in labels:
-            match = re.match(r"^[\[□■○ㅇ❐\s-]*" + re.escape(label) + r"[\]\s]*[:：]?\s*(.*)$", line)
+            match = re.match(r"^\[?" + re.escape(label) + r"(?=[\]\s:：|]|$)[\]\s]*[:：|]?\s*(.*)$", line)
             if match:
                 value = match[1].strip("| ")
                 if not value and i + 1 < len(lines):
                     value = lines[i + 1]
-                if value:
+                if value and not re.search(r"미정|불명확|확인\s*필요|추후\s*안내", value) and '|' not in value:
                     values.append(value)
                 break
     return tuple(dict.fromkeys(values))
@@ -96,7 +97,7 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
     # Purpose, not a stray employment word in participant conditions.
     if re.search(r"취업\s*(?:지원|훈련|교육|준비|목적)|채용\s*(?:공고|모집|설명회)|인턴십|직업훈련", title) or re.search(r"(?:목적|내용)\s*[:：]\s*(?:취업|채용|직업훈련)", body):
         kind = "employment"
-    elif re.search(r"기관\s*(?:운영지원|내부)|사업주\s*(?:운영지원|지원|전용)|시설\s*조성사업", context):
+    elif re.search(r"기관\s*(?:운영지원|내부\s*(?:직원|직무|업무|운영|전용|교육|사업|프로그램))|사업주\s*(?:운영지원|지원|전용)|시설\s*조성사업", context):
         kind = "institutional_business"
     elif re.search(r"정책|지원금|대출|금융\s*지원|보조금", title):
         kind = "policy_finance"
@@ -218,7 +219,7 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
                 conflicts.append("date_weekday_conflict")
         except ValueError:
             conflicts.append("invalid_body_date")
-    if re.search(r"(?:접수|예약)\s*마감|접수\s*종료", body) and payload.get("source_status") == "open":
+    if re.search(r"(?:접수|예약)\s*마감|접수\s*종료", body) and payload.get("source_status") in {"open", "announced"}:
         # A generic early-closing warning is not a current closed status.
         if re.search(r"(?:현재|상태)\s*[:：]?\s*(?:접수|예약)\s*(?:마감|종료)|(?:예약|접수)\s*(?:마감|종료)\s*(?:되었습니다|됐습니다|입니다|완료|됨)|^(?:예약|접수)\s*(?:마감|종료)[.!\s]*$", body, re.M):
             conflicts.append("source_status_conflict")
@@ -303,11 +304,15 @@ def assess_program_facts(facts: ProgramFacts, dates: dict[str, Any], *, now: dat
                  if operation_end["precision"] == "day" else now > datetime.fromisoformat(operation_end["value"]))
         if ended:
             unavailable.append("program_ended")
+    # An informational source status is the site's pre-reception state. Dates
+    # remain independent facts and never promote this state to accepting.
+    if facts.source_status == "announced":
+        unavailable.append("application_not_started")
     start = dates.get("RCPTBGNDT", {})
     if start.get("value"):
         future = (now.astimezone(KST).date().isoformat() < start["value"]
                   if start["precision"] == "day" else now < datetime.fromisoformat(start["value"]))
-        if future:
+        if future and "application_not_started" not in unavailable:
             unavailable.append("application_not_started")
     if unavailable and not reasons:
         evaluation = EvaluationResult("observe_only", (), "passed", "not_applicable", PROGRAM_PROFILE, PROGRAM_SCHEMA)

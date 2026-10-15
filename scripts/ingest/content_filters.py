@@ -239,6 +239,8 @@ def confirmed_filter_values(f: dict) -> dict:
     if end:
         status = f.get("source_status")
         state = status if type(status) is str and status in {"not_started", "open", "closed"} else "unknown"
+        if status == "announced":
+            state = "not_started"
         if status in ("application_closed", "reservation_closed") or type(status) is list and "신청마감" in status:
             state = "closed"
         elif type(status) is list and "신청중" in status:
@@ -277,7 +279,7 @@ def _primary(text: str) -> str:
 def _topic(text: str, category: str) -> str | None:
     t = _primary(text)
     t = re.sub(r"취업\s*목적(?:이)?\s*(?:없는|없음|아닌)", "", t)
-    if re.search(r"불명확|확인 필요|미정|(?:교육|체험|교류|취업)\s*(?:아님|아닌|제외)", t):
+    if re.search(r"불명확|확인 필요|미정|(?:교육|체험|교류|취업)\s*(?:은|는|이|가)?\s*(?:아님|아닌|제외|하지\s*않|없음)", t):
         return None
     if category == "program":
         if re.search(r"취업\s*(?:목적|지원\s*(?:목적|프로그램)|준비\s*(?:교육|행사|활동|콘서트)|역량\s*(?:교육|강화))|직무\s*(?:교육|훈련|설명회|역량)|채용\s*설명회|(?:취업|구직)(?:을|를)?\s*위한", t):
@@ -297,6 +299,21 @@ def _topic(text: str, category: str) -> str | None:
     if len(matches) == 1:
         return matches[0]
     return "other" if re.fullmatch(r"\s*(?:대표 분야|분야)\s*[:：]\s*기타\s*", t) else None
+
+
+def _topic_excerpt(text: str, category: str, value: str | None) -> str | None:
+    """Quote an exact bounded source span only after the full topic is settled.
+
+    Do not remove negations/competing topics to make an excerpt pass. Markup
+    elsewhere in retained plain text does not invalidate an unrelated sentence.
+    """
+    if value is None:
+        return None
+    for span in re.finditer(r"[^<>\n.!?]+[.!?]?", text):
+        quote = span[0].strip()
+        if 0 < len(quote) <= 1000 and _topic(quote, category) == value:
+            return quote
+    return None
 
 
 def _audience(text: str, *, role: str) -> str | None:
@@ -480,8 +497,11 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
     if type(topic_text) is not str:
         topic_text = body
     if category != "youth_space":
-        put("topic", _topic(topic_text, category), "purpose" if facts.get("purpose") else body_key,
-            topic_text[:1000] if len(topic_text) <= 1000 else None, "facts" if facts.get("purpose") else "payload")
+        topic = _topic(topic_text, category)
+        quote = _topic_excerpt(topic_text, category, topic)
+        if quote is not None:
+            put("topic", topic, "purpose" if facts.get("purpose") else body_key,
+                quote, "facts" if facts.get("purpose") else "payload")
     if category == "program":
         mode = facts.get("delivery_mode")
         if mode in {"online", "offline", "hybrid", "mixed"}:
@@ -529,7 +549,19 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
             put("location", _location(venue), "venue", prefix="facts")
         elif type(activity) in {list, tuple} and activity and all(type(v) is str for v in activity):
             # Existing Seoul place extraction, not provider institution/address.
-            put("location", _location("\n".join(activity)), "activity_evidence", prefix="facts")
+            location = _location("\n".join(activity))
+            if location is not None:
+                put("location", location, "activity_evidence", prefix="facts")
+            elif (facts.get("activity_region") == "capital" and facts.get("delivery_mode") in {"offline", "hybrid"}
+                  and not re.search(r"거주|기관\s*주소|집결|만나는\s*장소|미정|불명확", "\n".join(activity))):
+                # Use a provider district only with a matching explicit activity
+                # place and the already derived capital fact, never its name alone.
+                raw = payload.get("provider_fields", {})
+                area, place = raw.get("AREANM"), raw.get("PLACENM")
+                if (area in DISTRICTS['11'] and type(place) is str and len(place.strip()) >= 3
+                        and all(place in v or v in place for v in activity)):
+                    put("location", {"scope": "specific", "venues": [{"province": "11", "district": area,
+                        "facility": place, "address": ""}]}, "provider_fields", area)
         elif venues:
             value = _location(";".join(venues))
             # One evidence entry can quote a contiguous block containing all venues.

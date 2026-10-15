@@ -229,5 +229,13 @@ try{
   eq(states[0].history,loaded.history);eq(states[0].factsVersion,loaded.factsVersion+1);eq(states[0].aiStatus,'cancelled');
   eq(states[0].result.reasons,['ai_recheck_requested']);eq(states[1],states[0].facts);ok(!nodes(render()).some(n=>n?.type==='form'));
  }
+ const announcedHeld={...held,facts:{...held.facts,source_status:'announced'},observedFacts:{...held.observedFacts,source_status:'announced'}};
+ seedHeld(announcedHeld);globalThis.fetch=routed;
+ eq(nodes(saved()).find(n=>n?.props?.label==='현재 접수 상태').props.value,'접수 전');
+ changeRow('확인한 프로그램 설명','description','합성 안내 중 항목의 설명을 보완합니다. 접수중으로 바꾸지 않습니다.');
+ saveForm().props.onSubmit({preventDefault(){}});await tick();await tick();
+ eq(saveRequests.length,1);eq(Object.keys(saveRequests[0].patch),['description']);
+ eq(states[0].facts.source_status,'announced');eq(states[0].observedFacts.source_status,'announced');
+ eq(states[0].aiStatus,'cancelled');eq(states[0].result.reasons,['ai_recheck_requested']);
  console.log(JSON.stringify({syntheticOnly:true,checks,result:'passed',externalUrls:16,externalConnections:0}));
 }finally{globalThis.fetch=originalFetch;globalThis.requestAnimationFrame=originalRAF;globalThis.document=originalDocument;}

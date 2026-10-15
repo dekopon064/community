@@ -31,7 +31,7 @@ SOURCE_FIELDS = (
     "USETGTINFO", "PLACENM", "AREANM", "PAYATNM", "SVCSTATNM",
     *DATE_FIELDS, "V_MIN", "V_MAX", "IMGURL", "X", "Y",
 )
-STATUSES = {"접수중": "open", "예약마감": "reservation_closed", "접수종료": "application_closed"}
+STATUSES = {"안내중": "announced", "접수중": "open", "예약마감": "reservation_closed", "접수종료": "application_closed"}
 
 
 class SeoulContractError(RuntimeError):

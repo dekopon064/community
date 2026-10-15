@@ -158,9 +158,11 @@ def reception_status(facts: dict, now: datetime | None = None) -> str:
     if facts['source_status'] in {'reservation_closed', 'application_closed'}:
         return {'reservation_closed': '예약 마감', 'application_closed': '접수 종료'}[facts['source_status']]
     if now < boundary('RCPTBGNDT'):
-        return '신청 시작 전'
+        return '접수 전' if facts['source_status'] == 'announced' else '신청 시작 전'
     if ended('RCPTENDDT'):
         return '접수 마감'
+    if facts['source_status'] == 'announced':
+        return '접수 전'
     return '접수 중'
 
 
