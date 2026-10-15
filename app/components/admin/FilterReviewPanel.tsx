@@ -33,8 +33,13 @@ export function filterReviewFields(info:FilterInfo):FilterKey[] {
     ||(k==='application'&&info.missing.length>0&&info.data.category==='program'
       &&info.data.application.status==='known'&&info.data.application.value.start===null));
 }
+export function filterFieldsToSave(info:FilterInfo,data:ContentFilters,fields:FilterKey[]) {
+  // Unchanged unknowns are not an operator decision. Preserve explicit clears
+  // (known -> unknown) and existing known-value reconfirmation requests.
+  return fields.filter(k=>JSON.stringify(info.data[k])!==JSON.stringify(data[k])||data[k].status!=='unknown');
+}
 export function filterSaveBody(info:FilterInfo,version:string,data:ContentFilters,fields:FilterKey[]) {
-  return filterCommand({revision:info.revision,version,filterVersion:info.filterVersion,data:parseContentFilters(data),fields});
+  return filterCommand({revision:info.revision,version,filterVersion:info.filterVersion,data:parseContentFilters(data),fields:filterFieldsToSave(info,data,fields)});
 }
 export async function saveFilterRequest(id:string,body:ReturnType<typeof filterSaveBody>,request:typeof fetch=fetch) {
   const response=await request(`/api/admin/review-filters/${id}`,{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -125,7 +130,7 @@ export default function FilterReviewPanel({id,version,info,disabled,onBlocked,on
       <FilterInputs key={resetKey} onPending={setPendingRepeat} data={draft} fields={fields.filter(k=>k!==editing)} onChange={setDraft} disabled={disabled||busy||editing!==null} missing={info.missing} saved={info.data} confirmed={confirmedFilterFields(info)}/>
       <SavedFilterValues key={`saved-${resetKey}`} saved={info.data} data={draft} onChange={setDraft} disabled={disabled||busy} missing={info.missing} confirmed={confirmedFilterFields(info)} version={version} onEditing={setEditing}/>
       {error&&<p role="alert" className="mt-4 leading-7 text-info-status">{error}</p>}
-      <div className="mt-5 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={disabled||busy||editing!==null||!fields.length}>{busy?'저장 중…':'이 값으로 확인·저장'}</button>{dirty&&<button type="button" className={secondaryButton} disabled={busy||editing!==null} onClick={()=>{setDraft(structuredClone(info.data));setPendingRepeat(false);setResetKey(k=>k+1);setError('');}}>입력 취소</button>}</div>
+      <div className="mt-5 flex flex-wrap gap-3"><button type="submit" className={primaryButton} disabled={disabled||busy||editing!==null||!filterFieldsToSave(info,draft,fields).length}>{busy?'저장 중…':'이 값으로 확인·저장'}</button>{dirty&&<button type="button" className={secondaryButton} disabled={busy||editing!==null} onClick={()=>{setDraft(structuredClone(info.data));setPendingRepeat(false);setResetKey(k=>k+1);setError('');}}>입력 취소</button>}</div>
     </form>
   </section>;
 }

@@ -13,7 +13,7 @@ from typing import Any
 from ingest.connectors.seoul_reservation import KST
 from ingest.evaluate_gates import EvaluationResult
 from ingest.models import JobPlan, ObservationRecord
-from ingest.seoul_evidence import activity_locations, activity_text, label_values, matching_place, nature_topic, period_days, uncertain_activity
+from ingest.seoul_evidence import activity_locations, activity_text, activity_topic, physical_activity, venue_filter, label_values, matching_place, period_proof, uncertain_activity
 
 PROGRAM_SCHEMA = "program-scope-v1-local"
 PROGRAM_PROFILE = "program_capital_v1_local"
@@ -89,7 +89,7 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
         kind = "institutional_business"
     elif re.search(r"정책|지원금|대출|금융\s*지원|보조금", title):
         kind = "policy_finance"
-    elif not uncertain_activity(activity_text(body)) and (re.search(r"체험|공예|교류|주민\s*활동|산책|탐방|숲해설|전시|해설|생활\s*교육|취미|인문|곤충|문화", activity_text(body)) or nature_topic(body)):
+    elif not uncertain_activity(activity_text(body)) and (re.search(r"체험|공예|교류|주민\s*활동|산책|탐방|숲해설|전시|해설|생활\s*교육|취미|인문|곤충|문화", activity_text(body)) or activity_topic(body)):
         kind = "program"
     else:
         kind = "unknown"
@@ -111,7 +111,7 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
     online = any(not re.match(r"\s*(?:은|는|이|가)?\s*(?:불가|불가능|없음|아님|진행하지)", context[match.end():])
                  for match in re.finditer(online_pattern, context, re.I))
     hybrid = bool(re.search(r"온\s*[/·+]?\s*오프라인|온라인.*오프라인|오프라인.*온라인|혼합\s*(?:교육|수업|진행)", context))
-    mode = "hybrid" if hybrid else "online" if online else "offline" if locations else "unknown"
+    mode = "hybrid" if hybrid else "online" if online else "offline" if locations or physical_activity(body) else "unknown"
     activity = "not_applicable" if mode == "online" else "unknown"
     if mode in {"offline", "hybrid"}:
         joined = "\n".join(locations)
@@ -127,6 +127,10 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
             place = str(raw.get("PLACENM") or "")
             if matching_place(place, locations) and raw.get("AREANM") in SEOUL_DISTRICTS:
                 activity = "capital"
+        if activity == 'unknown':
+            proven_venues = venue_filter(body, raw, payload.get('tables', ()))
+            if proven_venues and proven_venues['scope'] == 'specific':
+                activity = 'capital'
 
     residence_lines = tuple(line for line in (target, *targets) if re.search(r"거주|주민|시민|지역\s*제한|전국", line))
     residence = "not_stated"
@@ -187,14 +191,17 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
                           (("운영기간", "진행기간"), ("SVCOPNBGNDT", "SVCOPNENDDT"))):
         for statement in _label_values(body, labels):
             period_evidence.append(statement)
-            parsed, issue = period_days(statement)
+            parsed, clocks, issue = period_proof(statement,'RCPT' if fields[0].startswith('RCPT') else 'SVCOPN')
             if issue:
                 (missing if issue == 'body_period_needs_confirmation' else conflicts).append(issue)
                 continue
-            for parsed_day, field_name in zip(parsed, fields):
-                api_value = payload.get("dates", {}).get(field_name, {}).get("value")
+            for parsed_day, field_name, clock in zip(parsed, fields, clocks):
+                endpoint = payload.get('dates',{}).get(field_name,{})
+                api_value = endpoint.get('value')
                 if api_value and parsed_day != api_value[:10]:
                     conflicts.append("body_api_period_conflict")
+                if clock and (endpoint.get('precision')!='second' or not api_value or datetime.fromisoformat(api_value).astimezone(KST).strftime('%H:%M:%S')!=clock):
+                    conflicts.append('body_api_period_conflict')
     for match in re.finditer(r"(20\d{2})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})\s*일?\s*\(([월화수목금토일])(?:요일)?\)", body):
         try:
             date = datetime(*map(int, match.group(1, 2, 3)))
