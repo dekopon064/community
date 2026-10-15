@@ -1,0 +1,118 @@
+{
+  "provenance": {
+    "kind": "user_csv_snapshot",
+    "source_file": "서울시 문화행사 공공서비스예약 정보.csv",
+    "not_current_api_response": true,
+    "synthetic_other_fields": true
+  },
+  "links": [
+    {
+      "csv_row": 15,
+      "svc_id": "XML-gangseo6082-6",
+      "title": "문화관광해설 강서뚜벅이여행(마곡문화의거리코스)",
+      "svc_url": "https://www.kctg.or.kr/tour/touristSiteView.do?page_no=&amp;tourist_cd=TOURIST_ID00011576"
+    },
+    {
+      "csv_row": 870,
+      "svc_id": "XML-gangseo6082-3",
+      "title": "문화관광해설 강서뚜벅이여행(개화산둘레길코스)",
+      "svc_url": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011134"
+    },
+    {
+      "csv_row": 892,
+      "svc_id": "XML-3345",
+      "title": "[종사자] 돌봄기관 종사자 창의역량 강화 하반기 프로그램(아로마테라피)",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=2000&q_placeCode=100&q_progrmSn=3345"
+    },
+    {
+      "csv_row": 893,
+      "svc_id": "XML-gangseo6082-1",
+      "title": "문화관광해설 강서뚜벅이여행(허준박물관코스)",
+      "svc_url": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011135"
+    },
+    {
+      "csv_row": 894,
+      "svc_id": "XML-gangseo6082-2",
+      "title": "문화관광해설 강서뚜벅이여행(겸재정선미술관코스)",
+      "svc_url": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011136"
+    },
+    {
+      "csv_row": 898,
+      "svc_id": "XML-3385",
+      "title": "향기로운 수다, 핸드드립으로 채우는 양육 충전소(2차) ( 정원 16명 / 대기자 5명 )",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=400&q_progrmSn=3385"
+    },
+    {
+      "csv_row": 899,
+      "svc_id": "XML-3384",
+      "title": "향기로운 수다, 핸드드립으로 채우는 양육 충전소(1차) ( 정원 16명 / 대기자 5명 )",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=400&q_progrmSn=3384"
+    },
+    {
+      "csv_row": 900,
+      "svc_id": "XML-SEEDFIX-2022",
+      "title": "소방안전교육",
+      "svc_url": "https://firesafety.eseoul.go.kr/multi/main.do"
+    },
+    {
+      "csv_row": 902,
+      "svc_id": "XML-animal6804",
+      "title": "(토)전시연계교육<동의보감 뷰티시크릿>",
+      "svc_url": "https://culture.gangseo.seoul.kr/gsfc/education/view.do?eduSn=178&amp;menuNo=800042"
+    },
+    {
+      "csv_row": 903,
+      "svc_id": "XML-3429",
+      "title": "[양육자] <ON가족 행복 키움소> 초등아동 양육자 교육(그림책 원예 힐링 테라피)",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=800&q_progrmSn=3429"
+    },
+    {
+      "csv_row": 922,
+      "svc_id": "XML-3407",
+      "title": "[양육자] 아빠의 쉼표요리 10/22(목) 19:00",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=100&q_progrmSn=3407"
+    },
+    {
+      "csv_row": 927,
+      "svc_id": "XML-3399",
+      "title": "[양육자] 5기 그림책+샌드아트(강서구립우장산숲속도서관 연계사업 동화책 제공) <정원 10명/대기 5명>",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3399"
+    },
+    {
+      "csv_row": 928,
+      "svc_id": "XML-3398",
+      "title": "[양육자] 4기 그림책+샌드아트(강서구립우장산숲속도서관 연계사업 동화책 제공) <정원 10명/대기 5명>",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3398"
+    },
+    {
+      "csv_row": 929,
+      "svc_id": "XML-3397",
+      "title": "[양육자] 3기 그림책+샌드아트(강서구립우장산숲속도서관 연계사업 동화책 제공) <정원 10명/대기 5명>",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3397"
+    },
+    {
+      "csv_row": 930,
+      "svc_id": "XML-3396",
+      "title": "[양육자] 2기 그림책+샌드아트(강서구립우장산숲속도서관 연계사업 동화책 제공) <정원 10명/대기 5명>",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3396"
+    },
+    {
+      "csv_row": 939,
+      "svc_id": "XML-3364",
+      "title": "[대시민/양육자] 오늘 뭐해먹지? : 10월 28일 4기 (정원 12명 / 대기 12명)",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3364"
+    },
+    {
+      "csv_row": 940,
+      "svc_id": "XML-3363",
+      "title": "[대시민/양육자] 오늘 뭐해먹지? : 10월 21일 3기 (정원 12명 / 대기 12명)",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3363"
+    },
+    {
+      "csv_row": 941,
+      "svc_id": "XML-3362",
+      "title": "[대시민/양육자] 오늘 뭐해먹지? : 10월 14일 2기 (정원 12명 / 대기 12명)",
+      "svc_url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3362"
+    }
+  ]
+}
