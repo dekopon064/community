@@ -13,6 +13,7 @@ from typing import Any
 from ingest.connectors.seoul_reservation import KST
 from ingest.evaluate_gates import EvaluationResult
 from ingest.models import JobPlan, ObservationRecord
+from ingest.seoul_evidence import activity_locations, activity_text, label_values, matching_place, nature_topic, period_days, uncertain_activity
 
 PROGRAM_SCHEMA = "program-scope-v1-local"
 PROGRAM_PROFILE = "program_capital_v1_local"
@@ -24,20 +25,7 @@ TARGET_LABELS = ("참가대상", "모집대상", "신청대상", "참여대상",
 
 
 def _label_values(text: str, labels: tuple[str, ...]) -> tuple[str, ...]:
-    lines = [line.strip().strip("| ") for line in text.splitlines() if line.strip().strip("| ")]
-    values: list[str] = []
-    for i, line in enumerate(lines):
-        line = re.sub(r"^[□■○ㅇ❐•●▪▶▷※*·\s-]*(?:\d{1,2}[.)]\s*|[①-⑳]\s*)?", "", line)
-        for label in labels:
-            match = re.match(r"^\[?" + re.escape(label) + r"(?=[\]\s:：|]|$)[\]\s]*[:：|]?\s*(.*)$", line)
-            if match:
-                value = match[1].strip("| ")
-                if not value and i + 1 < len(lines):
-                    value = lines[i + 1]
-                if value and not re.search(r"미정|불명확|확인\s*필요|추후\s*안내", value) and '|' not in value:
-                    values.append(value)
-                break
-    return tuple(dict.fromkeys(values))
+    return label_values(text, labels)
 
 
 @dataclass(frozen=True)
@@ -101,7 +89,7 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
         kind = "institutional_business"
     elif re.search(r"정책|지원금|대출|금융\s*지원|보조금", title):
         kind = "policy_finance"
-    elif re.search(r"체험|공예|교류|주민\s*활동|산책|탐방|숲해설|전시|해설|생활\s*교육|취미|인문|곤충|문화", body):
+    elif not uncertain_activity(activity_text(body)) and (re.search(r"체험|공예|교류|주민\s*활동|산책|탐방|숲해설|전시|해설|생활\s*교육|취미|인문|곤충|문화", activity_text(body)) or nature_topic(body)):
         kind = "program"
     else:
         kind = "unknown"
@@ -118,7 +106,7 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
     if institution and explicit_personal:
         conflicts.append("application_actor_conflict")
 
-    locations = _label_values(body, LOCATION_LABELS)
+    locations = activity_locations(body, payload.get('tables', ()))
     online_pattern = r"온라인\s*(?:교육|프로그램|수업|참여)|비대면\s*(?:교육|수업|참여)|원격\s*(?:화상)?\s*(?:교육|수업)|ZOOM|줌\s*(?:수업|화상)"
     online = any(not re.match(r"\s*(?:은|는|이|가)?\s*(?:불가|불가능|없음|아님|진행하지)", context[match.end():])
                  for match in re.finditer(online_pattern, context, re.I))
@@ -137,7 +125,7 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
         else:
             # Only relate provider area to an explicit matching activity place.
             place = str(raw.get("PLACENM") or "")
-            if place and any(place in loc or loc in place for loc in locations) and raw.get("AREANM") in SEOUL_DISTRICTS:
+            if matching_place(place, locations) and raw.get("AREANM") in SEOUL_DISTRICTS:
                 activity = "capital"
 
     residence_lines = tuple(line for line in (target, *targets) if re.search(r"거주|주민|시민|지역\s*제한|전국", line))
@@ -199,14 +187,9 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
                           (("운영기간", "진행기간"), ("SVCOPNBGNDT", "SVCOPNENDDT"))):
         for statement in _label_values(body, labels):
             period_evidence.append(statement)
-            explicit = re.findall(r"(20\d{2})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})\s*일?", statement)
-            if len(explicit) != 2:
-                missing.append("body_period_needs_confirmation")
-                continue
-            try:
-                parsed = [datetime(*map(int, parts)).date().isoformat() for parts in explicit]
-            except ValueError:
-                conflicts.append("invalid_body_date")
+            parsed, issue = period_days(statement)
+            if issue:
+                (missing if issue == 'body_period_needs_confirmation' else conflicts).append(issue)
                 continue
             for parsed_day, field_name in zip(parsed, fields):
                 api_value = payload.get("dates", {}).get(field_name, {}).get("value")

@@ -497,8 +497,24 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
     if type(topic_text) is not str:
         topic_text = body
     if category != "youth_space":
+        if source == 'seoul_reservation' and not facts.get('purpose'):
+            from ingest.seoul_evidence import activity_text
+            topic_text = activity_text(body)
         topic = _topic(topic_text, category)
         quote = _topic_excerpt(topic_text, category, topic)
+        if source == 'seoul_reservation' and category == 'program' and not facts.get('purpose'):
+            from ingest.seoul_evidence import nature_topic, uncertain_activity
+            if uncertain_activity(topic_text):
+                topic, quote = None, None
+            elif nature_topic(topic_text):
+                # A competing field remains ambiguous; do not let a short
+                # nature quote hide community/language/employment evidence.
+                if topic not in (None, 'culture_experience') or re.search(r'(?:주민|지역|이웃)\s*(?:교류|만남|활동)|교류\s*(?:활동|모임)', topic_text):
+                    topic, quote = None, None
+                else:
+                    topic = 'culture_experience'
+                    quote = next((line.strip() for line in topic_text.splitlines()
+                                  if 0 < len(line.strip()) <= 1000 and nature_topic(line)), None)
         if quote is not None:
             put("topic", topic, "purpose" if facts.get("purpose") else body_key,
                 quote, "facts" if facts.get("purpose") else "payload")
@@ -542,7 +558,13 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
     if d["delivery"] == field("online") or d["spaceKind"] == field("news"):
         d["location"] = field(status="not_applicable")
     else:
-        venues = _lines(body, "개최 장소|개최지|교육 장소|운영 장소|이용 장소|장소")
+        # Seoul facts already passed its role/table/negation reader. A generic
+        # body fallback must not re-introduce a venue that reader rejected.
+        if source == 'seoul_reservation':
+            from ingest.seoul_evidence import activity_locations
+            venues = activity_locations(body, payload.get('tables', ()))
+        else:
+            venues = _lines(body, "개최 장소|개최지|교육 장소|운영 장소|이용 장소|장소")
         venue = facts.get("venue") if source == "myseoul_program" else None
         activity = facts.get("activity_evidence") if source == "seoul_reservation" else None
         if venue:
@@ -558,8 +580,8 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
                 # place and the already derived capital fact, never its name alone.
                 raw = payload.get("provider_fields", {})
                 area, place = raw.get("AREANM"), raw.get("PLACENM")
-                if (area in DISTRICTS['11'] and type(place) is str and len(place.strip()) >= 3
-                        and all(place in v or v in place for v in activity)):
+                from ingest.seoul_evidence import matching_place
+                if (area in DISTRICTS['11'] and type(place) is str and matching_place(place, activity)):
                     put("location", {"scope": "specific", "venues": [{"province": "11", "district": area,
                         "facility": place, "address": ""}]}, "provider_fields", area)
         elif venues:
