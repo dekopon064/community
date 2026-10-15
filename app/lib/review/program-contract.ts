@@ -1,4 +1,5 @@
 import { ReviewFailure } from "./contracts";
+import { isSeoulProgramUrl } from "./seoul-program-url";
 
 export const programFields = ["schema_version", "content_kind", "application_actor", "delivery_mode", "activity_region", "activity_evidence", "residence_scope", "residence_evidence", "target_raw", "conditions", "application_methods", "fee_kind", "fee_amounts", "source_status", "conflicts", "missing", "editorial_pending", "period_evidence", "periods", "official_url", "description"] as const;
 export const patchFields = ["content_kind", "application_actor", "delivery_mode", "activity_region", "activity_evidence", "residence_scope", "residence_evidence", "target_raw", "conditions", "application_methods", "fee_kind", "fee_amounts", "source_status", "period_evidence", "periods", "official_url", "description"] as const;
@@ -65,10 +66,7 @@ function value(field: string, input: unknown) {
   }
   const t = text(input);
   if (enums[field] && !enums[field].includes(t)) throw new ReviewFailure("invalid_input");
-  if (field === "official_url" && t !== "") {
-    let u: URL; try { u = new URL(t); } catch { throw new ReviewFailure("invalid_input"); }
-    if (!["http:", "https:"].includes(u.protocol) || u.hostname !== "yeyak.seoul.go.kr" || u.username || u.password || u.port || u.hash || u.pathname !== "/web/reservation/selectReservView.do" || !/^[A-Za-z0-9_-]+$/.test(u.searchParams.get("rsv_svc_id") ?? "") || [...u.searchParams.keys()].length !== 1) throw new ReviewFailure("invalid_input");
-  }
+  if (field === "official_url" && t !== "" && !isSeoulProgramUrl(t)) throw new ReviewFailure("invalid_input");
   return t;
 }
 export function programFacts(input: unknown): ProgramFacts {

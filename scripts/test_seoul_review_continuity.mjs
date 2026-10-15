@@ -204,5 +204,30 @@ try{
  reset();ok(nodes(render()).some(n=>n?.type==='form'));
  seedHeld({...held,restoredReviewPending:true,editableFields:[]});eq(button(render(),'사실 저장·재평가').props.disabled,false);
  ok(!text(render()).includes('확인한 사실 입력'));
- console.log(JSON.stringify({syntheticOnly:true,checks,result:'passed',externalConnections:0}));
+ // Replay the preserved 16 external URL values through the actual panel's
+ // saved-row editor, ordinary GET/POST handlers and fake authorized RPC.
+ // These are synthetic held items, not the operational source facts or state.
+ const external=JSON.parse(fs.readFileSync(path.join(root,'scripts/fixtures/seoul_admin_external_links.json'),'utf8'));
+ eq(external.links.length,16);
+ for(const link of external.links){
+  const externalHeld={...held,source:{...held.source,url:link.url},facts:{...held.facts,official_url:link.url},observedFacts:{...held.observedFacts,official_url:link.url}};
+  seedHeld(externalHeld);globalThis.fetch=routed;
+  const response=await programRequest(new Request(`https://example.test/api/admin/program-review/${id}`),id,deps);
+  eq(response.status,200);const loaded=programItem((await response.json()).item,id);states[0]=loaded;states[1]=structuredClone(loaded.facts);
+  const reference=nodes(render()).find(n=>n?.type?.name==='ClassificationPanel').props.reference;
+  const links=nodes(reference).filter(n=>n?.type==='a'&&n.props.href===link.url);ok(links.length>=1);
+  const originalSource=structuredClone(loaded.source),originalObserved=structuredClone(loaded.observedFacts);
+  button(saved(),'확인한 프로그램 설명 수정').props.onClick();eq(states[3],true);
+  let editor=nodes(saved()).find(n=>n?.type?.name==='FactFields');ok(editor);
+  editor.props.onChange({...editor.props.facts,description:'외부 링크 합성 설명. 취소할 초안'});
+  button(saved(),'취소').props.onClick();eq(states[1].description,loaded.facts.description);eq(saveRequests.length,0);
+  changeRow('확인한 프로그램 설명','description','외부 링크 합성 설명 보완. 고유 참가·예약 조건 보존.');
+  eq(button(render(),'사실 저장·재평가').props.disabled,false);
+  saveForm().props.onSubmit({preventDefault(){}});await tick();await tick();
+  eq(saveRequests.length,1);eq(Object.keys(saveRequests[0].patch),['description']);
+  eq(states[0].facts.official_url,link.url);eq(states[0].source,originalSource);eq(states[0].observedFacts,originalObserved);
+  eq(states[0].history,loaded.history);eq(states[0].factsVersion,loaded.factsVersion+1);eq(states[0].aiStatus,'cancelled');
+  eq(states[0].result.reasons,['ai_recheck_requested']);eq(states[1],states[0].facts);ok(!nodes(render()).some(n=>n?.type==='form'));
+ }
+ console.log(JSON.stringify({syntheticOnly:true,checks,result:'passed',externalUrls:16,externalConnections:0}));
 }finally{globalThis.fetch=originalFetch;globalThis.requestAnimationFrame=originalRAF;globalThis.document=originalDocument;}

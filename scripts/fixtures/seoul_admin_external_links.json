@@ -1,0 +1,91 @@
+{
+  "provenance": {
+    "kind": "preserved_actual_url_projection",
+    "main": "eec3968daa2298eb22a2b2fe5540052c56c2c854",
+    "collected_kst": "2026-10-15T09:52:48+09:00",
+    "scope": "16 public source URL values only; all Auth, RPC items, facts and editing data in tests are synthetic",
+    "no_new_reads": true
+  },
+  "links": [
+    {
+      "svc_id": "XML-3363",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3363",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3363"
+    },
+    {
+      "svc_id": "XML-3364",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3364",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3364"
+    },
+    {
+      "svc_id": "XML-3384",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=400&q_progrmSn=3384",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=400&q_progrmSn=3384"
+    },
+    {
+      "svc_id": "XML-3385",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=400&q_progrmSn=3385",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=400&q_progrmSn=3385"
+    },
+    {
+      "svc_id": "XML-3396",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3396",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3396"
+    },
+    {
+      "svc_id": "XML-3397",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3397",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3397"
+    },
+    {
+      "svc_id": "XML-3398",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3398",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3398"
+    },
+    {
+      "svc_id": "XML-3399",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3399",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=600&q_progrmSn=3399"
+    },
+    {
+      "svc_id": "XML-3407",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=100&q_progrmSn=3407",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=100&q_progrmSn=3407"
+    },
+    {
+      "svc_id": "XML-3429",
+      "url": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=800&q_progrmSn=3429",
+      "original": "https://umppa.seoul.go.kr/icare/user/chilProgrm/orgideaExprnCtzn/BD_selectOrgideaExprnCtzn.do?q_progrmCl=1000&q_placeCode=800&q_progrmSn=3429"
+    },
+    {
+      "svc_id": "XML-animal6804",
+      "url": "https://culture.gangseo.seoul.kr/gsfc/education/view.do?eduSn=178&menuNo=800042",
+      "original": "https://culture.gangseo.seoul.kr/gsfc/education/view.do?eduSn=178&amp;menuNo=800042"
+    },
+    {
+      "svc_id": "XML-gangseo6082-1",
+      "url": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011135",
+      "original": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011135"
+    },
+    {
+      "svc_id": "XML-gangseo6082-2",
+      "url": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011136",
+      "original": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011136"
+    },
+    {
+      "svc_id": "XML-gangseo6082-3",
+      "url": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011134",
+      "original": "https://kctg.or.kr/tour/touristSiteView.do?tourist_cd=TOURIST_ID00011134"
+    },
+    {
+      "svc_id": "XML-gangseo6082-6",
+      "url": "https://www.kctg.or.kr/tour/touristSiteView.do?page_no=&tourist_cd=TOURIST_ID00011576",
+      "original": "https://www.kctg.or.kr/tour/touristSiteView.do?page_no=&amp;tourist_cd=TOURIST_ID00011576"
+    },
+    {
+      "svc_id": "XML-SEEDFIX-2022",
+      "url": "https://firesafety.eseoul.go.kr/multi/main.do",
+      "original": "https://firesafety.eseoul.go.kr/multi/main.do"
+    }
+  ]
+}
