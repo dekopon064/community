@@ -503,18 +503,11 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
         topic = _topic(topic_text, category)
         quote = _topic_excerpt(topic_text, category, topic)
         if source == 'seoul_reservation' and category == 'program' and not facts.get('purpose'):
-            from ingest.seoul_evidence import nature_topic, uncertain_activity
-            if uncertain_activity(topic_text):
-                topic, quote = None, None
-            elif nature_topic(topic_text):
-                # A competing field remains ambiguous; do not let a short
-                # nature quote hide community/language/employment evidence.
-                if topic not in (None, 'culture_experience') or re.search(r'(?:주민|지역|이웃)\s*(?:교류|만남|활동)|교류\s*(?:활동|모임)', topic_text):
-                    topic, quote = None, None
-                else:
-                    topic = 'culture_experience'
-                    quote = next((line.strip() for line in topic_text.splitlines()
-                                  if 0 < len(line.strip()) <= 1000 and nature_topic(line)), None)
+            from ingest.seoul_evidence import activity_topic
+            topic = activity_topic(body,topic)
+            quote = next((line.strip() for line in topic_text.splitlines()
+                          if 0 < len(line.strip()) <= 1000 and not re.search(r'[<>]',line)
+                          and activity_topic(line,_topic(line,category))==topic),None) if topic else None
         if quote is not None:
             put("topic", topic, "purpose" if facts.get("purpose") else body_key,
                 quote, "facts" if facts.get("purpose") else "payload")
@@ -561,29 +554,22 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
         # Seoul facts already passed its role/table/negation reader. A generic
         # body fallback must not re-introduce a venue that reader rejected.
         if source == 'seoul_reservation':
-            from ingest.seoul_evidence import activity_locations
+            from ingest.seoul_evidence import activity_locations, venue_filter
             venues = activity_locations(body, payload.get('tables', ()))
         else:
             venues = _lines(body, "개최 장소|개최지|교육 장소|운영 장소|이용 장소|장소")
         venue = facts.get("venue") if source == "myseoul_program" else None
-        activity = facts.get("activity_evidence") if source == "seoul_reservation" else None
-        if venue:
+        if source == 'seoul_reservation':
+            # Re-prove roles in the current description. An old activity quote
+            # can be a meeting-point extraction from an earlier parser.
+            location = venue_filter(body,payload.get('provider_fields',{}),payload.get('tables',()))
+            if location and venues:
+                positions = [body.find(v) for v in venues]
+                block = body[min(positions):max(p+len(v) for p,v in zip(positions,venues))] if min(positions)>=0 else ''
+                if block and all(v in block for v in venues):
+                    if len(block)<=1000:put('location',location,excerpt=block)
+        elif venue:
             put("location", _location(venue), "venue", prefix="facts")
-        elif type(activity) in {list, tuple} and activity and all(type(v) is str for v in activity):
-            # Existing Seoul place extraction, not provider institution/address.
-            location = _location("\n".join(activity))
-            if location is not None:
-                put("location", location, "activity_evidence", prefix="facts")
-            elif (facts.get("activity_region") == "capital" and facts.get("delivery_mode") in {"offline", "hybrid"}
-                  and not re.search(r"거주|기관\s*주소|집결|만나는\s*장소|미정|불명확", "\n".join(activity))):
-                # Use a provider district only with a matching explicit activity
-                # place and the already derived capital fact, never its name alone.
-                raw = payload.get("provider_fields", {})
-                area, place = raw.get("AREANM"), raw.get("PLACENM")
-                from ingest.seoul_evidence import matching_place
-                if (area in DISTRICTS['11'] and type(place) is str and matching_place(place, activity)):
-                    put("location", {"scope": "specific", "venues": [{"province": "11", "district": area,
-                        "facility": place, "address": ""}]}, "provider_fields", area)
         elif venues:
             value = _location(";".join(venues))
             # One evidence entry can quote a contiguous block containing all venues.

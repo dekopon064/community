@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from ingest.content_filters import extract_filter_facts, missing_filters
 from ingest.program_scope import extract_program_facts
-from ingest.seoul_evidence import _RANGE, _clean, period_days
+from ingest.seoul_evidence import _clean, period_proof
 
 
 def same_period_supported(facts: dict) -> bool:
@@ -25,16 +25,10 @@ def same_period_supported(facts: dict) -> bool:
         if not label:
             continue
         statement = label[2].strip()
-        days, issue = period_days(statement)
-        match = _RANGE.match(statement)
-        if issue or not match:
-            return False
-        suffix = statement[match.end():].strip()
-        clock = re.fullmatch(r'([0-9]{1,2}):([0-5][0-9])', suffix) if suffix else None
-        if suffix and (not clock or int(clock[1]) > 23):
-            return False
         role = 'SVCOPN' if label[1] in ('운영기간', '진행기간') else 'RCPT'
-        for key, day in zip(('BGNDT', 'ENDDT'), days):
+        days, clocks, issue = period_proof(statement,role)
+        if issue:return False
+        for key, day, clock in zip(('BGNDT', 'ENDDT'), days, clocks):
             ep = facts['periods'][role + key]
             if ep['precision'] == 'day':
                 actual = ep['value']
@@ -43,11 +37,10 @@ def same_period_supported(facts: dict) -> bool:
                 actual = datetime.fromisoformat(ep['value']).astimezone(KST).date().isoformat()
             if actual != day:
                 return False
-        if clock:
-            ep = facts['periods'][role + 'ENDDT']
-            from ingest.content_filters import KST
-            if ep['precision'] != 'second' or datetime.fromisoformat(ep['value']).astimezone(KST).strftime('%H:%M:%S') != f'{int(clock[1]):02d}:{clock[2]}:00':
-                return False
+            if clock:
+                from ingest.content_filters import KST
+                if ep['precision'] != 'second' or datetime.fromisoformat(ep['value']).astimezone(KST).strftime('%H:%M:%S') != clock:
+                    return False
         seen.append(statement)
     return bool(seen and facts['period_evidence'] and all(x in seen for x in facts['period_evidence']))
 
@@ -94,20 +87,22 @@ def propose_connections(detail: dict, *, provider_fields=None, tables=(), operat
             result['resolve'].append(reason)
     # Extract with current known facts first. New proposals supply unknowns only.
     merged = {**facts, **result['facts_patch']}
-    if facts['activity_region'] == 'unknown' and not facts['activity_evidence']:
-        merged['activity_evidence'] = parsed['activity_evidence']
+    # Current description is the authority for venue roles. Never mutate the
+    # saved evidence, or let an older meeting-point quote re-enter extraction.
+    merged['activity_evidence'] = parsed['activity_evidence']
     extracted = extract_filter_facts('seoul_reservation', payload, merged)
     for key in ('topic', 'delivery', 'location'):
         old, candidate = data[key], extracted['data'][key]
         if old['status'] != 'unknown' or candidate['status'] != 'known':
             continue
-        if info['origins'].get(key) == 'operator':
-            result['held'].append('operator:' + key)
-            continue
         if key == 'delivery' and merged['delivery_mode'] not in {
                 'unknown', {'onsite': 'offline', 'online': 'online', 'mixed': 'hybrid'}[candidate['value']]}:
             continue
         if key == 'location' and merged['activity_region'] not in ('unknown', 'capital'):
+            continue
+        if info['origins'].get(key) == 'operator':
+            result['held'].append('operator:' + key)
+            result.setdefault('operator_review',{})[key] = {'value':candidate,'evidence':extracted['evidence'][key]}
             continue
         result['filters_patch'][key] = candidate
         result['evidence'][key] = extracted['evidence'][key]

@@ -6,10 +6,10 @@ from datetime import date
 
 VENUE_LABELS = ('진행장소', '체험장소', '운영장소', '개최장소', '개최지', '교육장소', '장소')
 ACTIVITY_LABELS = ('목적', '주요활동', '활동내용', '주요내용', '교육내용', '프로그램내용', '내용')
-_BULLET = re.compile(r'^[\s□■○ㅇ❐•●▪▶▷※*·\-✅☑✔✓◆◇🔸🔹\ufe0f]+')
+_BULLET = re.compile(r'^[\s□■○ㅇ❍〇◎❐•⦁●▪▶▷►▹※*·\-✅☑✔✓◆◇🔸🔹📍♠♣\ufe0f]+')
 _COLUMN = re.compile(r'^(?:제목\s*[/·]\s*소요시간|활동\s*내용|시간|요일|장\s*소|내\s*용)$')
 _UNCLEAR = re.compile(r'미정|불명확|확인\s*필요|추후\s*안내')
-_VENUE_UNCERTAIN = re.compile(r'아님|아닌|미사용|변경|사용하지\s*않|진행하지\s*않')
+_VENUE_UNCERTAIN = re.compile(r'아님|아닌|미사용|변경\s*(?:전|후|예정|중)|사용하지\s*않|진행하지\s*않')
 _VENUE = re.compile(r'공원|교육실|학습센터|체험관|배움관|미술관|박물관|도서관|공방|전시실|교육장|숲길|치유의\s*숲|\d+\s*(?:층|번지)|(?:로|길)\s*\d+')
 _BOILERPLATE = re.compile(r'개인정보[^\n]*(?:동의|이용\s*안내)|사진\s*사용|촬영\s*동의|공통\s*이용안내|필수\s*준수사항|^\s*(?:\d+[.)]\s*)?주의사항|^\s*[\[<*○■\s]*(?:시설\s*안내|일반\s*관람\s*안내)')
 _FACILITY = re.compile(r'^\s*[\[<*○■\s]*(?:시설\s*안내|일반\s*관람\s*안내)')
@@ -64,6 +64,13 @@ def label_values(text: str, labels) -> tuple[str, ...]:
 
 def activity_locations(text: str, tables=()) -> tuple[str, ...]:
     values = list(label_values(text, VENUE_LABELS))
+    # An explicit venue performing an activity is also a venue role. A
+    # provider name by itself, a meeting point or a contact address is not.
+    for line in text.splitlines():
+        m = re.match(r'^([가-힣A-Za-z0-9()·\s-]{1,80}?(?:체험장|공원|박물관|전시관|교육장|공방|센터|식물원))에서(?:는)?\s+(.+)$', _clean(line))
+        if (m and re.search(r'(?:목공\s*체험|전시\s*해설|체험을\s*운영|교육을\s*진행)', m[2])
+                and not re.search(r'집결|기관\s*주소|진행하지|운영하지|아님|아닌|미정', line)):
+            values.append(m[1].strip())
     nested = {n for table in tables or () if isinstance(table, list) for row in table if isinstance(row, list)
               for cell in row if isinstance(cell, dict) for n in cell.get('nested_tables', ())}
     for table_index, table in enumerate(tables or ()):
@@ -88,7 +95,8 @@ def activity_locations(text: str, tables=()) -> tuple[str, ...]:
 
 def matching_place(place: str, locations) -> bool:
     """Only explicit facility identity, never fuzzy aliases/provider area alone."""
-    normalize = lambda s: re.sub(r'\s+', '', s)
+    def normalize(s):
+        return re.sub(r'[\s()×]+', '', _clean(s))
     p = normalize(place)
     if len(p) < 3 or p in {'센터', '교육장', '교육실', '학습센터', '관리사무소', '체험관'}:
         return False
@@ -97,13 +105,20 @@ def matching_place(place: str, locations) -> bool:
 
 def activity_text(text: str) -> str:
     """Main activity sections; do not promote a facility/privacy common guide."""
-    lines = text.splitlines()
+    lines = [part for line in text.splitlines() for part in
+             re.split(r'\s*[/|]\s*(?=(?:내용|활동내용)\s*[:：])',line)]
     cutoff = next((i for i, line in enumerate(lines) if _BOILERPLATE.search(line) and not _FACILITY.search(line)), len(lines))
     lines = lines[:cutoff]
     sections = []
     active = False
-    for line in lines:
+    for index, line in enumerate(lines):
         matched = label_match(line, ACTIVITY_LABELS)
+        # A flattened table's empty "내용" column header must not discard the
+        # introductory program description or attach a different column's cells.
+        neighbors = [s for s in lines[max(0,index-4):index+5] if s.strip() and s != line]
+        if matched and not matched[1] and any(_COLUMN.fullmatch(_clean(s)) for s in neighbors):
+            active = False
+            continue
         if matched:
             active = True
             sections.append(matched[1])
@@ -112,10 +127,76 @@ def activity_text(text: str) -> str:
             active = False
         elif active:
             sections.append(line)
-    if sections:
+    if any(s.strip() for s in sections):
         return '\n'.join(sections).strip()
     facility_start = next((i for i, line in enumerate(lines) if _FACILITY.search(line)), len(lines))
     return '\n'.join(line for line in lines[:facility_start] if not label_match(line, _CONTEXT_LABELS)).strip()
+
+
+def physical_activity(text: str) -> bool:
+    """Physical activity evidence, independent of whether its district is known."""
+    main = activity_text(text)
+    return any(re.search(r'도보\s*(?:관광|탐방|여행|답사)|트레킹|노르딕워킹|현장\s*(?:대면\s*수업|견학|투어)|(?:공원|숲길|도성|정원|수목원)[^\n.]{0,40}(?:걷|산책|탐방|돌아보|방문)', line)
+               and not re.search(r'진행하지|아님|불가|검색|다른\s*프로그램|취소|준비|미취학|주의사항', line)
+               for line in main.splitlines())
+
+
+def venue_filter(text: str, provider_fields=None, tables=()):
+    """All explicit venues must be provable; never reuse an unbound old quote."""
+    from ingest.content_filters import DISTRICTS, _location
+    venues = activity_locations(text, tables)
+    raw = provider_fields or {}
+    resolved = []
+    nationwide = False
+    for venue in venues:
+        if re.search(r'[<>\x00-\x1f]|부산|대구|대전|제주|강원|충청|전라|경상', venue):
+            return None
+        explicit = _location(venue)
+        if explicit and explicit['scope'] == 'nationwide':
+            nationwide = True
+            continue
+        if explicit and all(v['district'] for v in explicit['venues']):
+            resolved.extend(explicit['venues']); continue
+        # A district appearing in the actual venue is different from an
+        # institution district supplied only by the provider.
+        pairs = [(province,district) for province, choices in DISTRICTS.items() for district in choices
+                 if re.search(r'(?<![가-힣])'+re.escape(district)+r'(?![가-힣])', venue)]
+        if len(pairs) == 1 and raw.get('AREANM') == pairs[0][1]:
+            province,district = pairs[0]
+            resolved.append(dict(province=province,district=district,facility='',address=venue)); continue
+        place, area = raw.get('PLACENM'), raw.get('AREANM')
+        pairs = [(province,area) for province, choices in DISTRICTS.items() if area in choices]
+        if isinstance(place,str) and matching_place(place,(venue,)) and len(pairs)==1:
+            province,district = pairs[0]
+            resolved.append(dict(province=province,district=district,facility=place,address='')); continue
+        return None
+    if nationwide:
+        return {'scope':'nationwide','venues':[]} if not resolved else None
+    unique = []
+    for venue in resolved:
+        if venue not in unique: unique.append(venue)
+    return {'scope':'specific','venues':unique} if unique else None
+
+
+def activity_topic(text: str, base: str | None = None) -> str | None:
+    """Seoul-only semantic families, after activity/boilerplate role selection."""
+    main = activity_text(text)
+    if uncertain_activity(main) or re.search(r'주거\s*정책|지원금|시설\s*(?:이용|소개|안내)|일반\s*관람\s*안내', main):
+        return None
+    found = {base} if base else set()
+    # Recount generic competing purposes even when the base classifier returned
+    # no single choice. An additional vocabulary match cannot erase ambiguity.
+    if re.search(r'(?:문화|공예|미술|음악|창작|취미|요리)\s*(?:체험|활동|교육|수업|강좌)|(?:그림|공예품)\s*만들기',main):
+        found.add('culture_experience')
+    if nature_topic(text): found.add('culture_experience')
+    patterns = {
+        'culture_experience': r'목공\s*체험|전통\s*공예\s*체험|공예\s*(?:활동|워크숍|체험|수업)|(?:자연물|만다라|향기\s*주머니|압화\s*액자|단풍\s*액자|새\s*밥그릇|나무\s*반지|나무\s*시계|벽선반|벽걸이\s*책꽂이|수납꽂이|우드\s*미니\s*스피커|미니\s*우드\s*스피커|책갈피|아로마\s*롤온|계란꾸러미|냄비받침|디폼블럭|자개\s*소품|양말목)[^\n]{0,24}(?:만들|제작)|가드닝을\s*통해|꽃꽂이\s*하기|화분\s*심기|정원\s*실습|허브비누만들기|가옥\s*해설사와\s*함께하는[^\n]{0,40}도슨트|전시\s*해설\s*(?:프로그램|운영|예약)|전시해설\s*프로그램|박물관[^\n]{0,20}전시해설|주얼리를\s*전공한[^\n]{0,30}클래스를\s*진행',
+        'daily_safety': r'심폐소생술[^\n]{0,30}(?:교육|실습)|(?:구조|응급처치)[^\n]{0,30}(?:교육|실습)|소방안전\s*교육',
+        'language_learning': r'(?:챗GPT|클로드)[^\n]{0,50}실습|코딩\s*없이\s*업무\s*자동화[^\n]{0,20}과정',
+        'community_exchange': r'(?:주민|지역|이웃)\s*(?:교류|만남|활동)|교류\s*(?:활동|모임)',
+    }
+    found.update(key for key,pattern in patterns.items() if re.search(pattern,main))
+    return next(iter(found)) if len(found)==1 else None
 
 
 NATURE_ACTIVITY = re.compile(
@@ -125,7 +206,14 @@ NATURE_ACTIVITY = re.compile(
 
 
 def uncertain_activity(text: str) -> bool:
-    return bool(re.search(r'불명확|확인\s*필요|미정|(?:놀이|교육|체험|치유|교류|관람)\s*(?:은|는|이|가|을|를)?\s*(?:진행|실시|운영|제공)?\s*(?:아님|아닌|제외|하지\s*않|없음|불가|중단)', text))
+    for line in text.splitlines():
+        # Conditional cancellation is not a denial of the advertised activity.
+        # Remove only that conditional predicate, never other denials on its
+        # line. A cancellation condition cannot hide an unrelated uncertainty.
+        line = re.sub(r'(?:(?:신청|예약|참여)\s*인원[^\n.;]{0,35}(?:미달|이하|미만)|기상\s*악화)[^\n.;]{0,35}?(?:교육|체험|활동)?\s*(?:진행|운영)?\s*(?:불가|중단|취소)', '', line)
+        if re.search(r'불명확|확인\s*필요|미정|(?:놀이|교육|체험|치유|교류|관람)\s*(?:은|는|이|가|을|를)?\s*(?:진행|실시|운영|제공)?\s*(?:아님|아닌|제외|하지\s*않|없음|불가|중단)',line):
+            return True
+    return False
 
 
 def nature_topic(text: str) -> bool:
@@ -162,3 +250,25 @@ def period_days(statement: str) -> tuple[tuple[str, str] | None, str | None]:
     if b < a:
         return None, 'period_order_conflict'
     return (a.isoformat(), b.isoformat()), None
+
+
+def period_proof(statement: str, role: str):
+    """Dates plus explicitly stated clocks. No clock is inferred from midnight."""
+    one = re.fullmatch(r'(20\d{2})\.(\d{1,2})\.(\d{1,2})\.?',statement)
+    if one and role == 'SVCOPN':
+        try: day = date(*map(int,one.groups())).isoformat()
+        except ValueError: return None,None,'invalid_body_date'
+        return (day,day),(None,None),None
+    hours = re.fullmatch(r'(20\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일\s*(\d{1,2})시\s*~\s*(\d{1,2})월\s*(\d{1,2})일\s*(\d{1,2})시',statement)
+    if hours:
+        y,m,d,h,em,ed,eh = map(int,hours.groups())
+        if h>23 or eh>23: return None,None,'invalid_body_date'
+        days,issue = period_days(f'{y}.{m}.{d}~{y}.{em}.{ed}')
+        return days,(f'{h:02d}:00:00',f'{eh:02d}:00:00'),issue
+    days,issue = period_days(statement)
+    match = _RANGE.match(statement)
+    if issue or not match: return None,None,issue or 'body_period_needs_confirmation'
+    suffix = statement[match.end():].strip()
+    clock = re.fullmatch(r'([0-9]{1,2}):([0-5][0-9])',suffix) if suffix else None
+    if suffix and (not clock or int(clock[1])>23):return None,None,'body_period_needs_confirmation'
+    return days,(None,f'{int(clock[1]):02d}:{clock[2]}:00' if clock else None),None

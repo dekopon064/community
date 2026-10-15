@@ -159,14 +159,19 @@ class ExtractionTests(NoNetwork):
         self.assertIn("장안구", venues[0]["address"])
         self.assertEqual(self.extract("장소: 인천 제물포구 시설")["location"]["value"]["venues"][0]["province"], "28")
 
-    def test_seoul_reuses_retained_structured_activity_places(self):
+    def test_seoul_reproves_retained_activity_places_in_current_description(self):
         facts = {"activity_evidence": ("서울 영등포구 합성 시설", "경기도 수원시 영통구 합성 시설")}
         before = copy.deepcopy(facts)
         packet = extract_filter_facts("seoul_reservation", {"program_text": "공예 체험"}, facts)
+        self.assertEqual(packet['data']['location'], field())
+        # A retained quote alone has no venue role: older readers also retained
+        # meeting points. Reuse it only after current explicit venue proof.
+        text = '공예 체험\n장소: ' + '; '.join(facts['activity_evidence'])
+        packet = extract_filter_facts("seoul_reservation", {"program_text": text}, facts)
         self.assertEqual([v["district"] for v in packet["data"]["location"]["value"]["venues"]], ["영등포구", "수원시"])
         proof = packet["evidence"]["location"]
-        self.assertEqual(proof["sourceField"], "facts.activity_evidence")
-        self.assertEqual(proof["excerpt"], json.dumps(facts["activity_evidence"], ensure_ascii=False))
+        self.assertEqual(proof["sourceField"], "payload.program_text")
+        self.assertEqual(proof["excerpt"], '; '.join(facts['activity_evidence']))
         self.assertEqual(facts, before)
 
     def test_residence_institution_meeting_and_capital_not_venues(self):
