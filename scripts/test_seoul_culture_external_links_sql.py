@@ -274,4 +274,3 @@ if __name__ == '__main__':
          patch('ingest.supabase_store.create_ingest_client', side_effect=AssertionError('production DB forbidden')), \
          patch('ingest.ai_provider.create_provider_adapter', side_effect=AssertionError('AI forbidden')):
         main()
-
