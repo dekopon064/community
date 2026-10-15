@@ -78,7 +78,7 @@ def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_
             counts['existing_skipped'] += 1
             continue
         try:
-            record = normalize_seoul_item(row)
+            record = normalize_seoul_item(row, culture_external_links=True)
             if record.external_key in seen:
                 raise ValueError('duplicate_in_scan')
             seen.add(record.external_key)

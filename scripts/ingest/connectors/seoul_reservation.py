@@ -10,12 +10,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlsplit
 
 from ingest.connectors.base import BatchConnector
 from ingest.http_client import HttpClient
 from ingest.models import BatchMeta, BatchResult, Checkpoint, ObservationRecord
 from ingest.source_images import source_image_url
+from ingest.seoul_links import seoul_source_link
 
 SEOUL_SOURCE_ID = "seoul_reservation"
 SEOUL_API_KEY_ENV = "SEOUL_OPEN_DATA_API_KEY"
@@ -226,24 +226,19 @@ def _raw_revision(raw: dict[str, str]) -> str:
     return hashlib.sha256(json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
+def normalize_seoul_item(item: dict[str, Any], *, culture_external_links: bool = False) -> ObservationRecord:
     raw = _source_fields(item)
     if not raw["SVCNM"]:
         raise SeoulContractError("seoul_title_missing")
     if len(raw["DTLCONT"].encode("utf-8")) > 512_000:
         raise SeoulContractError("seoul_body_too_large")
-    source_url = raw["SVCURL"] or None
-    if source_url:
-        try:
-            url = urlsplit(source_url)
-            valid = (url.scheme in {"http", "https"} and url.netloc == "yeyak.seoul.go.kr"
-                     and url.path == "/web/reservation/selectReservView.do"
-                     and parse_qs(url.query).get("rsv_svc_id") == [raw["SVCID"]]
-                     and set(parse_qs(url.query)) == {"rsv_svc_id"} and not url.fragment)
-        except ValueError:
-            valid = False
-        if not valid:
-            raise SeoulContractError("seoul_link_invalid")
+    original_url = item.get('SVCURL')
+    original_url = '' if original_url is None else str(original_url)
+    try:
+        link = seoul_source_link(original_url, raw['SVCID'], culture_external=culture_external_links)
+    except ValueError:
+        raise SeoulContractError('seoul_link_invalid') from None
+    source_url = link['url']
     body = parse_body(raw["DTLCONT"])
     normalized = {
         "source_id": SEOUL_SOURCE_ID, "title": raw["SVCNM"], "source_url": source_url,
@@ -254,6 +249,8 @@ def normalize_seoul_item(item: dict[str, Any]) -> ObservationRecord:
         "timezone": "Asia/Seoul", "source_status": STATUSES.get(raw["SVCSTATNM"], "unknown"),
         "source_updated_at_available": False,
     }
+    if culture_external_links:
+        normalized['source_link'] = link
     # Raw content (including table/language structure) participates in the revision.
     # Observed-at, total_count, row/page number and parser version do not.
     digest = _raw_revision(raw)
@@ -392,6 +389,9 @@ class SeoulCultureConnector(SeoulReservationConnector):
                          api_key_provider=api_key_provider,
                          page_size=CULTURE_PAGE_SIZE, max_pages=CULTURE_MAX_PAGES)
         self.http_budget = CULTURE_MAX_PAGES
+
+    def to_observation(self, item: dict[str, Any], *, permission_status: str, enabled: bool) -> ObservationRecord:
+        return normalize_seoul_item(item, culture_external_links=True)
 
 
 def require_culture_reader(connector) -> None:
