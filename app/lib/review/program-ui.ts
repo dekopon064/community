@@ -13,7 +13,7 @@ export const programChoices: Record<string, Record<string, string>> = {
  delivery_mode:{unknown:"확인 필요",online:"온라인 진행",offline:"오프라인 진행",hybrid:"온·오프라인 혼합"},
  activity_region:{unknown:"확인 필요",capital:"서울·경기·인천",noncapital:"수도권 외",mixed:"수도권·비수도권 개최지 혼합",not_applicable:"순수 온라인 · 개최지 없음"},
  residence_scope:{unknown:"확인 필요",not_stated:"거주 조건 미표기",nationwide:"전국·지역 제한 없음",includes_capital:"수도권 포함 복수 지역",capital:"수도권 거주자",noncapital:"비수도권 거주자 전용"},
- fee_kind:{unknown:"확인 필요",free:"무료",paid:"유료"}, source_status:{unknown:"확인 필요",open:"접수 중",reservation_closed:"예약 마감",application_closed:"접수 종료"},
+ fee_kind:{unknown:"확인 필요",free:"무료",paid:"유료"}, source_status:{unknown:"확인 필요",announced:"접수 전",open:"접수 중",reservation_closed:"예약 마감",application_closed:"접수 종료"},
 };
 export const periodLabels: Record<string,string>={RCPTBGNDT:"신청 시작",RCPTENDDT:"신청 종료",SVCOPNBGNDT:"운영 시작",SVCOPNENDDT:"운영 종료"};
 export const reasonPatchFields: Record<string,string[]>={

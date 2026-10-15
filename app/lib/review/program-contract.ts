@@ -46,7 +46,7 @@ const enums: Record<string, string[]> = {
   schema_version: ["program-scope-v1-local"], content_kind: ["program", "unknown", "employment", "institutional_business", "policy_finance"],
   application_actor: ["individual", "individual_or_group", "institution", "nationality_excluded"], delivery_mode: ["online", "offline", "hybrid", "unknown"],
   activity_region: ["capital", "noncapital", "mixed", "not_applicable", "unknown"], residence_scope: ["nationwide", "includes_capital", "capital", "noncapital", "not_stated", "unknown"],
-  fee_kind: ["free", "paid", "unknown"], source_status: ["open", "reservation_closed", "application_closed", "unknown"],
+  fee_kind: ["free", "paid", "unknown"], source_status: ["announced", "open", "reservation_closed", "application_closed", "unknown"],
 };
 const arrayFields = new Set(["activity_evidence", "residence_evidence", "conditions", "application_methods", "fee_amounts", "conflicts", "missing", "editorial_pending", "period_evidence"]);
 function value(field: string, input: unknown) {

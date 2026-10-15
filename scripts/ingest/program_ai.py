@@ -83,7 +83,7 @@ def validate_context(c: Any, target: str, revision: str, worker: str) -> dict[st
         if f["missing"] or f["conflicts"] or f["editorial_pending"]:
             raise ValueError()
         # Known source states are structural input, not an open-only AI policy.
-        if f["source_status"] not in {"open", "reservation_closed", "application_closed"}:
+        if f["source_status"] not in {"announced", "open", "reservation_closed", "application_closed"}:
             raise ValueError()
         if not isinstance(f["description"], str) or len(f["description"].strip()) < 20:
             raise ValueError()
