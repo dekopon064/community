@@ -94,6 +94,33 @@ def close_provider_adapter(adapter):
         close()
 
 
+def create_location_research_adapter(provider, *, choices, instructions, limit,
+                                    client=None, manager=None, fetch_page=None):
+    """Explicit research-only use of the SAME protected SIWC session manager.
+
+    Missing/expired consent never opens a new browser from a pipe worker. Normal
+    worker login remains separate. No API-key environment variables are read.
+    """
+    if provider != PROVIDER_CHATGPT_PLAN:
+        raise ProviderError('location_research_requires_chatgpt_plan')
+    from ingest.chatgpt_plan_auth import authenticate_worker
+    from ingest.chatgpt_plan_sessions import PlanSessionManager
+    from ingest.location_plan_research import PlanLocationInvestigator
+    common = manager if manager is not None else PlanSessionManager()
+
+    class ReuseOnly:
+        def acquire(self):
+            return common.acquire(allow_login=False)
+
+    session = authenticate_worker(manager=ReuseOnly())
+    try:
+        return PlanLocationInvestigator(session=session, choices=choices,
+            instructions=instructions, limit=limit, client=client, fetch_page=fetch_page)
+    except Exception:
+        session.clear()
+        raise
+
+
 def provider_validation_limits():
     """Non-executing CLI display; no credential access or login."""
     if os.environ.get(AI_PROVIDER_ENV, '').strip().lower() == PROVIDER_CHATGPT_PLAN:
