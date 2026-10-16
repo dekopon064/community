@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date
 
-VENUE_LABELS = ('진행장소', '체험장소', '운영장소', '개최장소', '개최지', '교육장소', '장소')
-ACTIVITY_LABELS = ('목적', '주요활동', '활동내용', '주요내용', '교육내용', '프로그램내용', '내용')
+VENUE_LABELS = ('진행장소', '체험장소', '운영장소', '개최장소', '개최지', '교육장소', '활동장소', '수업장소', '장소', '위치')
+ACTIVITY_LABELS = ('프로그램목적', '프로그램소개', '세부프로그램내용', '프로그램주요내용',
+                   '프로그램내용', '체험소개', '운영내용', '목적', '주요활동', '활동내용', '주요내용', '교육내용', '내용')
 _BULLET = re.compile(r'^[\s□■○ㅇ❍〇◎❐•⦁●▪▶▷►▹※*·\-✅☑✔✓◆◇🔸🔹📍♠♣\ufe0f]+')
-_COLUMN = re.compile(r'^(?:제목\s*[/·]\s*소요시간|활동\s*내용|시간|요일|장\s*소|내\s*용)$')
+_COLUMN = re.compile(r'^(?:제목\s*[/·]\s*소요시간|활동\s*내용|시간|요일|장\s*소|내\s*용|장소\s*(?:및|[/·])\s*시간)\]?$')
 _UNCLEAR = re.compile(r'미정|불명확|확인\s*필요|추후\s*안내')
 _VENUE_UNCERTAIN = re.compile(r'아님|아닌|미사용|변경\s*(?:전|후|예정|중)|사용하지\s*않|진행하지\s*않')
-_VENUE = re.compile(r'공원|교육실|학습센터|체험관|배움관|미술관|박물관|도서관|공방|전시실|교육장|숲길|치유의\s*숲|\d+\s*(?:층|번지)|(?:로|길)\s*\d+')
+_VENUE = re.compile(r'공원|교육실|센터|체험관|배움관|미술관|박물관|도서관|공방|전시실|교육장|강의실|식물원|숲길|치유의\s*숲|체험\s*부스|현장\s*부스|\d+\s*(?:층|번지)|(?:로|길)\s*\d+')
 _BOILERPLATE = re.compile(r'개인정보[^\n]*(?:동의|이용\s*안내)|사진\s*사용|촬영\s*동의|공통\s*이용안내|필수\s*준수사항|^\s*(?:\d+[.)]\s*)?주의사항|^\s*[\[<*○■\s]*(?:시설\s*안내|일반\s*관람\s*안내)')
 _FACILITY = re.compile(r'^\s*[\[<*○■\s]*(?:시설\s*안내|일반\s*관람\s*안내)')
 _CONTEXT_LABELS = VENUE_LABELS + ('대상', '참여대상', '참가대상', '일정', '기간', '신청방법', '문의', '준비물',
@@ -18,12 +20,19 @@ _CONTEXT_LABELS = VENUE_LABELS + ('대상', '참여대상', '참가대상', '일
 
 
 def _clean(line: str) -> str:
-    line = _BULLET.sub('', line.strip())
+    line = line.strip()
+    # Decorative symbols vary by publisher; their Unicode role is structural.
+    # Keep brackets, letters, digits and every character inside the value.
+    while line and (line[0].isspace() or unicodedata.category(line[0]) in {'So', 'Sm', 'Sk', 'Cf', 'Mn'}):
+        line = line[1:]
+    line = _BULLET.sub('', line)
     return re.sub(r'^(?:\d{1,2}[.)]\s*|[①-⑳]\s*)', '', line)
 
 
 def label_match(line: str, labels) -> tuple[str, str] | None:
     line = _clean(line)
+    if _COLUMN.fullmatch(line.strip('[] ')) and not any(line.strip('[] ') == x for x in labels):
+        return None
     for label in labels:
         pattern = r'\s*'.join(map(re.escape, label.replace(' ', '')))
         m = re.match(r'^\[?' + pattern + r'(?=[\]\s:：|]|$)[\]\s]*[:：|]?\s*(.*)$', line)
@@ -32,10 +41,26 @@ def label_match(line: str, labels) -> tuple[str, str] | None:
     return None
 
 
+def _venue_lines(text: str) -> list[str]:
+    """Keep line positions, but exclude facility/directions sections as venues."""
+    lines = []
+    guide = False
+    for line in text.splitlines():
+        heading = _clean(line).strip('[<>【】] ')
+        if _FACILITY.search(heading) or re.match(r'^(?:주차(?:\s*및\s*위치)?|오시는\s*길|위치)\s*안내', heading):
+            guide = True
+        else:
+            section = label_match(line, ACTIVITY_LABELS)
+            if section and section[0] not in {'내용', '목적', '운영내용'}:
+                guide = False
+        lines.append('' if guide else line)
+    return lines
+
+
 def label_values(text: str, labels) -> tuple[str, ...]:
-    lines = text.splitlines()
     values = []
     venue_role = any(label.replace(' ', '') in VENUE_LABELS for label in labels)
+    lines = _venue_lines(text) if venue_role else text.splitlines()
     for i, raw in enumerate(lines):
         # A table with multiple columns must be read by cell position below.
         cells = [s.strip() for s in raw.strip().strip('|').split('|')]
@@ -46,8 +71,10 @@ def label_values(text: str, labels) -> tuple[str, ...]:
         if not matched:
             continue
         value = matched[1]
+        if venue_role and matched[0] == '위치' and not activity_text(text):
+            continue
         if not value and i + 1 < len(lines):
-            following = lines[i + 1].strip()
+            following = _clean(lines[i + 1]).lstrip(':： ')
             # Do not associate a flattened table's next row with its last header.
             header_neighbors = any(_COLUMN.fullmatch(_clean(s)) for s in lines[max(0, i-2):i])
             if header_neighbors or label_match(following, VENUE_LABELS + ACTIVITY_LABELS):
@@ -56,8 +83,11 @@ def label_values(text: str, labels) -> tuple[str, ...]:
                 continue
             value = following
         if value and not _UNCLEAR.search(value) and '|' not in value:
-            if venue_role and (re.search(r'오시는\s*길|출구|하차|집결|정류장|기관\s*주소', value) or _VENUE_UNCERTAIN.search(value)):
-                continue
+            if venue_role:
+                if re.search(r'오시는\s*길|하차|집결|정류장|기관\s*주소', value) or _VENUE_UNCERTAIN.search(value):
+                    continue
+                if '출구' in value and not re.search(r'(?:야외|현장|체험)\s*(?:현장\s*|체험\s*)?부스', value):
+                    continue
             values.append(value)
     return tuple(dict.fromkeys(values))
 
@@ -66,7 +96,7 @@ def activity_locations(text: str, tables=()) -> tuple[str, ...]:
     values = list(label_values(text, VENUE_LABELS))
     # An explicit venue performing an activity is also a venue role. A
     # provider name by itself, a meeting point or a contact address is not.
-    for line in text.splitlines():
+    for line in _venue_lines(text):
         m = re.match(r'^([가-힣A-Za-z0-9()·\s-]{1,80}?(?:체험장|공원|박물관|전시관|교육장|공방|센터|식물원))에서(?:는)?\s+(.+)$', _clean(line))
         if (m and re.search(r'(?:목공\s*체험|전시\s*해설|체험을\s*운영|교육을\s*진행)', m[2])
                 and not re.search(r'집결|기관\s*주소|진행하지|운영하지|아님|아닌|미정', line)):
@@ -107,11 +137,15 @@ def activity_text(text: str) -> str:
     """Main activity sections; do not promote a facility/privacy common guide."""
     lines = [part for line in text.splitlines() for part in
              re.split(r'\s*[/|]\s*(?=(?:내용|활동내용)\s*[:：])',line)]
-    cutoff = next((i for i, line in enumerate(lines) if _BOILERPLATE.search(line) and not _FACILITY.search(line)), len(lines))
-    lines = lines[:cutoff]
     sections = []
     active = False
+    saw_activity = False
+    blocked = False
     for index, line in enumerate(lines):
+        if _BOILERPLATE.search(line):
+            blocked = True
+            active = False
+            continue
         matched = label_match(line, ACTIVITY_LABELS)
         # A flattened table's empty "내용" column header must not discard the
         # introductory program description or attach a different column's cells.
@@ -120,24 +154,31 @@ def activity_text(text: str) -> str:
             active = False
             continue
         if matched:
+            # A clearly labelled program section can follow a common guide.
+            # Generic facility "내용/목적" cannot reopen it.
+            if blocked and matched[0] in {'내용', '목적', '운영내용'}:
+                continue
+            blocked = False
             active = True
+            saw_activity = True
             sections.append(matched[1])
         elif active and (label_match(line, _CONTEXT_LABELS)
                          or re.match(r'^\s*\[', line)):
             active = False
         elif active:
             sections.append(line)
-    if any(s.strip() for s in sections):
-        return '\n'.join(sections).strip()
-    facility_start = next((i for i, line in enumerate(lines) if _FACILITY.search(line)), len(lines))
-    return '\n'.join(line for line in lines[:facility_start] if not label_match(line, _CONTEXT_LABELS)).strip()
+        elif not blocked and not saw_activity and not label_match(line, _CONTEXT_LABELS):
+            # Introductory activity evidence remains part of this program,
+            # even when a later curriculum section is short or flattened.
+            sections.append(line)
+    return '\n'.join(sections).strip()
 
 
 def physical_activity(text: str) -> bool:
     """Physical activity evidence, independent of whether its district is known."""
     main = activity_text(text)
-    return any(re.search(r'도보\s*(?:관광|탐방|여행|답사)|트레킹|노르딕워킹|현장\s*(?:대면\s*수업|견학|투어)|(?:공원|숲길|도성|정원|수목원)[^\n.]{0,40}(?:걷|산책|탐방|돌아보|방문)', line)
-               and not re.search(r'진행하지|아님|불가|검색|다른\s*프로그램|취소|준비|미취학|주의사항', line)
+    return any(re.search(r'도보\s*(?:관광|탐방|여행|답사)|트레킹|노르딕워킹|현장\s*(?:대면\s*수업|견학|투어)|(?:공원|숲길|도성|정원|수목원)[^\n.]{0,40}(?:걷|걸|거닐|산책|탐방|돌아보|방문)', line)
+               and not re.search(r'진행하지|아님|불가|검색|다른\s*프로그램|취소|준비|미취학|주의사항|온라인|비대면|영상', line)
                for line in main.splitlines())
 
 
@@ -164,6 +205,16 @@ def venue_filter(text: str, provider_fields=None, tables=()):
         if len(pairs) == 1 and raw.get('AREANM') == pairs[0][1]:
             province,district = pairs[0]
             resolved.append(dict(province=province,district=district,facility='',address=venue)); continue
+        # A district directly qualifying a named actual venue is explicit
+        # evidence (e.g. "영등포구보건소"), unlike the provider area alone.
+        # Short directional districts do not identify a city; the selectable
+        # inventory is not a national (or historical) uniqueness registry.
+        attached = [(province,district) for province, choices in DISTRICTS.items() for district in choices
+                    if len(district) >= 3 and raw.get('AREANM') == district
+                    and re.match(re.escape(district) + r'(?:청|보건소|교육장|문화센터|체험장)(?:\b|[가-힣0-9\s])', _clean(venue))]
+        if len(attached) == 1:
+            province,district = attached[0]
+            resolved.append(dict(province=province,district=district,facility='',address=venue)); continue
         place, area = raw.get('PLACENM'), raw.get('AREANM')
         pairs = [(province,area) for province, choices in DISTRICTS.items() if area in choices]
         if isinstance(place,str) and matching_place(place,(venue,)) and len(pairs)==1:
@@ -189,6 +240,10 @@ def activity_topic(text: str, base: str | None = None) -> str | None:
     if re.search(r'(?:문화|공예|미술|음악|창작|취미|요리)\s*(?:체험|활동|교육|수업|강좌)|(?:그림|공예품)\s*만들기',main):
         found.add('culture_experience')
     if nature_topic(text): found.add('culture_experience')
+    # An explicit arts lesson describes an activity, not just a course name.
+    # No provider title or facility inventory is used as the positive proof.
+    if re.search(r'(?:음악|성악|가곡|무용|댄스|악기|그림|드로잉|사진|공예)[^\n.]{0,45}(?:배우|배워|실습|창작|직접\s*(?:만들|제작))', main):
+        found.add('culture_experience')
     patterns = {
         'culture_experience': r'목공\s*체험|전통\s*공예\s*체험|공예\s*(?:활동|워크숍|체험|수업)|(?:자연물|만다라|향기\s*주머니|압화\s*액자|단풍\s*액자|새\s*밥그릇|나무\s*반지|나무\s*시계|벽선반|벽걸이\s*책꽂이|수납꽂이|우드\s*미니\s*스피커|미니\s*우드\s*스피커|책갈피|아로마\s*롤온|계란꾸러미|냄비받침|디폼블럭|자개\s*소품|양말목)[^\n]{0,24}(?:만들|제작)|가드닝을\s*통해|꽃꽂이\s*하기|화분\s*심기|정원\s*실습|허브비누만들기|가옥\s*해설사와\s*함께하는[^\n]{0,40}도슨트|전시\s*해설\s*(?:프로그램|운영|예약)|전시해설\s*프로그램|박물관[^\n]{0,20}전시해설|주얼리를\s*전공한[^\n]{0,30}클래스를\s*진행',
         'daily_safety': r'심폐소생술[^\n]{0,30}(?:교육|실습)|(?:구조|응급처치)[^\n]{0,30}(?:교육|실습)|소방안전\s*교육',
@@ -200,7 +255,8 @@ def activity_topic(text: str, base: str | None = None) -> str | None:
 
 
 NATURE_ACTIVITY = re.compile(
-    r'생태\s*(?:놀이|교육|관찰|탐방|활동)|숲\s*(?:치유|명상|해설|체험|탐방)|'
+    r'생태\s*(?:놀이|교육|관찰|탐방|활동|해설)|숲\s*(?:치유|명상|해설|체험|탐방)|'
+    r'산림\s*(?:치유|교육|체험)|(?:역사\s*문화|문화\s*관광|문화유산)\s*(?:도보\s*)?(?:해설|탐방|답사)|'
     r'(?:열매|곤충|나비|풀씨|풀벌레|자연|숲)(?:를|와|의|에)?[^\n.]{0,20}(?:찾|관찰|알아|이야기|성장|여행|탐구|놀이|운동회|음악회)|'
     r'(?:키링|액자|공예품)\s*만들기|(?:전시|나비정원)\s*(?:해설|관람)')
 
@@ -211,7 +267,7 @@ def uncertain_activity(text: str) -> bool:
         # Remove only that conditional predicate, never other denials on its
         # line. A cancellation condition cannot hide an unrelated uncertainty.
         line = re.sub(r'(?:(?:신청|예약|참여)\s*인원[^\n.;]{0,35}(?:미달|이하|미만)|기상\s*악화)[^\n.;]{0,35}?(?:교육|체험|활동)?\s*(?:진행|운영)?\s*(?:불가|중단|취소)', '', line)
-        if re.search(r'불명확|확인\s*필요|미정|(?:놀이|교육|체험|치유|교류|관람)\s*(?:은|는|이|가|을|를)?\s*(?:진행|실시|운영|제공)?\s*(?:아님|아닌|제외|하지\s*않|없음|불가|중단)',line):
+        if re.search(r'불명확|확인\s*필요|미정|(?:놀이|교육|체험|치유|교류|관람|해설|탐방|실습|창작|제작)\s*(?:은|는|이|가|을|를)?\s*(?:진행|실시|운영|제공)?\s*(?:아님|아닌|제외|하지\s*않|없음|불가|중단)|배우지\s*않',line):
             return True
     return False
 

@@ -131,7 +131,8 @@ def main():
         ok(connected['filterInfo']['data'][key]==original['filterInfo']['data'][key],'unrelated filter preserved '+key)
     # Full/partial role-shape proposals through the existing real server RPCs.
     from test_seoul_review_evidence import examples
-    for name,shape,provider in examples():
+    from test_seoul_role_sections import examples as role_examples
+    for name,shape,provider in examples() + role_examples():
         def apply(f):
             f.update(copy.deepcopy(shape['facts']))
         current=insert('shape_'+name,apply);old=copy.deepcopy(current)
@@ -144,7 +145,7 @@ def main():
         ok(current['source']==old['source'] and current['observedFacts']==old['observedFacts'],name+' source observations unchanged')
         for k in ('description','conditions','periods','activity_evidence','target_raw','official_url'):
             ok(current['facts'][k]==old['facts'][k],name+' preserved '+k)
-        if name in ('narrative','label'):
+        if name in ('narrative','label','symbol','activity_place','position','intro','after_guide'):
             ok(not current['filterInfo']['missing'],name+' all required filters complete')
             ok(current['aiStatus']=='queued',name+' server confirms AI readiness without executing AI')
         else:
