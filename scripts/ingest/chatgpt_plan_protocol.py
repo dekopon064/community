@@ -164,8 +164,10 @@ def stream_failure_diagnostic(exc, *, phase, event_count, completed_seen):
         httpStatus=status if type(status) is int and 100 <= status <= 599 else None)
 
 
-def read_completed_stream(client, request, *, observe=None, on_completed=None):
+def read_completed_stream(client, request, *, observe=None, on_completed=None, extractor=None, equivalent=None):
     """Only terminal JSON after completion; never join/accept partial deltas."""
+    extract = extractor or extract_payload
+    same = equivalent or (lambda left, right: left == right)
     completed, items = None, {}
     phase, event_count = 'create', 0
     try:
@@ -224,10 +226,10 @@ def read_completed_stream(client, request, *, observe=None, on_completed=None):
     if on_completed:
         on_completed(completed, terminal)
     if any(get_field(item, 'type') != 'reasoning' for item in final):
-        payload = extract_payload(completed)
-        if terminal and extract_payload({'status':get_field(completed, 'status'), 'output':terminal}) != payload:
+        payload = extract(completed)
+        if terminal and not same(extract({'status':get_field(completed, 'status'), 'output':terminal}), payload):
             raise ProbeError('conflicting_terminal_output')
     else:
         # Plan responses may carry all assistant content in output_item.done.
-        payload = extract_payload({'status':get_field(completed, 'status'), 'output':terminal})
+        payload = extract({'status':get_field(completed, 'status'), 'output':terminal})
     return payload, completed

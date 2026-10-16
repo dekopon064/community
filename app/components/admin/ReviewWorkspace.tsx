@@ -10,6 +10,7 @@ import { CandidateContentNotices } from "./CandidateContentNotices";
 import CandidateImageEditor, { candidateImageError } from "./CandidateImageEditor";
 import { canEditCandidateImage } from "@/app/lib/review/candidate-images";
 import ProgramReviewPanel from "./ProgramReviewPanel";
+import LocationResearchPanel from "./LocationResearchPanel";
 import MySeoulReviewPanel from "./MySeoulReviewPanel";
 import { myseoulGuidance } from "@/app/lib/review/myseoul-contract";
 import AiQueuePanel from "./AiQueuePanel";
@@ -47,6 +48,7 @@ export default function ReviewWorkspace() {
   const [programId, setProgramId] = useState<string | null>(null);
   const [myseoulId, setMyseoulId] = useState<string | null>(null);
   const [programBlocked, setProgramBlocked] = useState(false);
+  const [locationBusy, setLocationBusy] = useState(false);
   const [aiBlocked,setAiBlocked]=useState(false);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [imageSelection, setImageSelection] = useState<CandidateImageSelection | null>(null);
@@ -55,7 +57,7 @@ export default function ReviewWorkspace() {
   const [filterBlocked, setFilterBlocked] = useState(false);
   const [operationBusy, setBusy] = useState(false);
   const [classificationBlocked,setClassificationBlocked]=useState(false),[classificationActive,setClassificationActive]=useState(false);
-  const busy = operationBusy || filterBlocked || classificationBlocked || aiBlocked;
+  const busy = operationBusy || filterBlocked || classificationBlocked || aiBlocked || locationBusy;
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
@@ -192,6 +194,7 @@ export default function ReviewWorkspace() {
       </div>
     </div>}
     {notice && <p ref={resultMessage} tabIndex={-1} role="status" className="my-5 scroll-mt-36 border-y border-info-rule py-4 leading-7 text-info-body">{notice}</p>}
+    {kind==='facts'&&!loading&&<LocationResearchPanel items={list} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||dirty||Boolean(confirmation)} onBusy={setLocationBusy} onSaved={()=>{setProgramId(null);setMyseoulId(null);setItem(null);setReload(n=>n+1);}}/>}
     {!loading && <div className="grid gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <aside aria-label="검토 목록" className="min-w-0">
         <h2 className="mb-3 text-lg font-bold">{kind === "facts" ? "사실 확인 항목" : publishedMode ? "게시된 글" : "결과 후보"}</h2>
