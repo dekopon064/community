@@ -1,4 +1,4 @@
-import { locationSnapshot, locationIds, locationReport, locationResearchSchema } from './location-research';
+import { locationSnapshot, locationIds, locationReport, locationResearchSchema, LocationValidationFailure } from './location-research';
 import type { LocationSnapshot, LocationReport, LocationProposal } from './location-research';
 
 export type ResearchAnswer = Pick<LocationProposal,'status'|'evidence'>;
@@ -7,6 +7,7 @@ export type LocationInvestigator = {
   // No implicit provider/fallback. Authentication and tool readiness precede calls.
   ready:()=>Promise<void>;
   investigate:(item:Readonly<LocationSnapshot>)=>Promise<ResearchAnswer>;
+  readonly diagnostic?:unknown;
 };
 export class LocationResearchStopped extends Error {
   constructor(readonly partial:LocationReport,readonly code='research_response_unknown'){super(code);}
@@ -15,7 +16,9 @@ const knownResearchErrors=new Set(['research_call_budget','research_auth_require
   'research_response_unknown','official_read_unavailable','subscription_sharing_unsupported_capability',
   'subscription_sharing_route_not_supported','subscription_sharing_usage_limit_exceeded','subscription_sharing_usage_unavailable',
   'subscription_sharing_user_not_eligible','chatgpt_plan_reauthentication_required','chatgpt_plan_permission_missing',
-  'plan_refresh_result_unknown','plan_http_400','plan_http_401','plan_http_403','plan_http_404','plan_http_429']);
+  'plan_refresh_result_unknown','plan_http_400','plan_http_401','plan_http_403','plan_http_404','plan_http_429',
+  'research_record_error','research_runtime_invalid','subscription_sharing_invalid_user','chatpass_v2_scope_not_authorized',
+  'chatpass_v2_invalid_authorization_context','subscription_sharing_user_unavailable','rate_limit_exceeded','insufficient_quota','invalid_api_key','permission_denied']);
 function failureCode(error:unknown){
   return error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'&&knownResearchErrors.has(error.code)?error.code:'research_response_unknown';
 }
@@ -35,26 +38,55 @@ export function researchInput(input:unknown,maxCalls:number):LocationSnapshot[] 
   if(!Number.isSafeInteger(maxCalls)||maxCalls<items.length||maxCalls>25)throw Error('research_call_budget');
   return items;
 }
+// Whole-run input is frozen before authentication. Public proposals and saves
+// remain bounded to 25; a run only sequences those existing bounded batches.
+export function researchRunInput(input:unknown,maxCalls:number):LocationSnapshot[][] {
+  if(!input||typeof input!=='object'||Array.isArray(input))throw Error('invalid_research_input');
+  const raw=input as Record<string,unknown>;
+  const packets=raw.schema==='location-research-set-v1'&&Object.keys(raw).sort().join()==='batches,schema'&&Array.isArray(raw.batches)?raw.batches:[raw];
+  const items:LocationSnapshot[]=[];
+  for(const packet of packets){
+    if(!packet||typeof packet!=='object'||Array.isArray(packet))throw Error('invalid_research_input');
+    const p=packet as Record<string,unknown>;
+    if(!['items,schema','items,schema,skipped'].includes(Object.keys(p).sort().join())||('skipped' in p&&!Array.isArray(p.skipped))||p.schema!==locationResearchSchema||!Array.isArray(p.items))throw Error('invalid_research_input');
+    items.push(...p.items.map(locationSnapshot));
+  }
+  if(!items.length||!Number.isSafeInteger(maxCalls)||maxCalls<items.length||maxCalls>10000||new Set(items.map(x=>x.id)).size!==items.length)throw Error('research_call_budget');
+  const batches:LocationSnapshot[][]=[];
+  for(let i=0;i<items.length;i+=25)batches.push(items.slice(i,i+25));
+  return batches;
+}
 export async function researchLocations(input:unknown, investigator:LocationInvestigator,
-  options:{batchId:string;createdAt:string;mode:LocationReport['mode'];maxCalls:number}):Promise<LocationReport> {
+  options:{batchId:string;createdAt:string;mode:LocationReport['mode'];maxCalls:number;record?:(event:Record<string,unknown>)=>Promise<void>}):Promise<LocationReport> {
   const items=researchInput(input,options.maxCalls);
   const report:LocationReport={schema:locationResearchSchema,batchId:options.batchId,createdAt:options.createdAt,mode:options.mode,items:[]};
   // Validate envelope before invoking external dependencies.
   locationReport({...report,items:[{snapshot:items[0],status:'no_evidence',evidence:null}]});
-  try{await investigator.ready();}catch(error){throw new LocationResearchStopped(structuredClone(report),failureCode(error));}
+  async function record(event:Record<string,unknown>){
+    try{await options.record?.(event);}catch{throw new LocationResearchStopped(structuredClone(report),'research_record_error');}
+  }
+  try{await investigator.ready();}catch(error){
+    const code=failureCode(error);await record({type:'batch_failed',code,diagnostic:investigator.diagnostic??null});
+    throw new LocationResearchStopped(structuredClone(report),code);
+  }
   for(const item of items){
+    // Durable start/outcome acknowledgement precedes every following request.
+    await record({type:'item_started',snapshot:item});
+    let row:LocationProposal,code='verified';
     try {
       const answer=await investigator.investigate(Object.freeze({...item}));
-      // Invalid content is an item failure; transport/auth/unknown throws stop
-      // the whole run and preserve only acknowledged preceding results.
       try {
         if(!answer||Object.keys(answer).sort().join()!=='evidence,status')throw Error('invalid_research_answer');
         const checked=locationReport({...report,items:[{snapshot:item,...answer}]});
-        report.items.push(checked.items[0]);
-      } catch {report.items.push({snapshot:item,status:'error',evidence:null});}
+        row=checked.items[0];code=row.status==='suggested'?'verified':row.status;
+      } catch(error) {row={snapshot:item,status:'error',evidence:null};code=error instanceof LocationValidationFailure?error.reason:'proposal_schema_invalid';}
     } catch(error) {
-      throw new LocationResearchStopped(structuredClone(report),failureCode(error));
+      const code=failureCode(error);
+      await record({type:'item_failed',id:item.id,code,diagnostic:investigator.diagnostic??null});
+      throw new LocationResearchStopped(structuredClone(report),code);
     }
+    await record({type:'item_result',id:item.id,status:row.status,code,diagnostic:investigator.diagnostic??null});
+    report.items.push(row);
   }
   return locationReport(report);
 }

@@ -165,12 +165,15 @@ class LocationResearchTests(unittest.TestCase):
             with self.assertRaises(ResearchFailure):a.investigate(ITEM)
             self.assertEqual(len(client.calls),1)
 
-    def test_response_unknown_and_late_completion_stop_batch(self):
-        a,client=self.adapter(client=FakeClient([[{'type':'response.output_text.delta','delta':'partial'}]]))
-        with self.assertRaises(ResearchFailure) as caught:a.investigate(ITEM)
-        self.assertEqual(caught.exception.code,'research_response_unknown')
-        with self.assertRaises(ResearchFailure):a.investigate(ITEM)
-        self.assertEqual(len(client.calls),1)
+    def test_response_unknown_is_recorded_and_next_item_runs_without_replay(self):
+        a,client=self.adapter(client=FakeClient([[{'type':'response.output_text.delta','delta':'partial'}],events(completed())]))
+        self.assertEqual(a.investigate(ITEM)['status'],'error')
+        self.assertEqual(a.last_diagnostic['code'],'stream_missing_completed')
+        self.assertEqual(a.last_diagnostic['responseState'],'unknown')
+        self.assertEqual(a.last_diagnostic['eventCount'],1)
+        self.assertEqual(a.investigate({**ITEM,'id':'next'})['status'],'suggested')
+        self.assertEqual(len(client.calls),2)
+        self.assertEqual(len(a.usage),1) # Unknown use stays unknown, never zero.
 
     def test_terminal_only_payload_supported_without_weakening_normal_parser(self):
         value=completed();stream=events(value);stream[-1]['response']['output']=[]
@@ -199,7 +202,8 @@ class LocationResearchTests(unittest.TestCase):
     def test_conflicting_terminal_payload_does_not_generate_a_proposal(self):
         value=completed();stream=events(value);stream[-1]['response']['output'][2]['content'][0]['text']=json.dumps({'status':'no_evidence','evidence':None})
         a,_=self.adapter(client=FakeClient([stream]))
-        with self.assertRaises(ResearchFailure):a.investigate(ITEM)
+        self.assertEqual(a.investigate(ITEM)['status'],'error')
+        self.assertEqual(a.last_diagnostic['code'],'conflicting_terminal_output')
         self.assertEqual(self.reads,[])
 
     def test_optional_sources_only_in_terminal_event_do_not_change_answer_equality(self):
@@ -248,15 +252,16 @@ class LocationResearchTests(unittest.TestCase):
         with self.assertRaises(ResearchFailure):self.adapter(client=bad)
         self.assertEqual(bad.calls,[])
 
-    def test_official_redirect_missing_page_keeps_unresolved_and_outage_stops(self):
+    def test_official_redirect_missing_page_and_isolated_outage_are_recorded(self):
         def missing(url):raise OfficialReadError('official_page_unverified')
         a,_=self.adapter(fetcher=missing)
         self.assertEqual(a.investigate(ITEM)['status'],'no_evidence')
         def unavailable(url):raise OfficialReadError('official_read_unavailable')
         a,client=self.adapter(fetcher=unavailable)
-        with self.assertRaises(ResearchFailure):a.investigate(ITEM)
-        with self.assertRaises(ResearchFailure):a.investigate(ITEM)
-        self.assertEqual(len(client.calls),1)
+        self.assertEqual(a.investigate(ITEM)['status'],'error')
+        self.assertEqual(a.last_diagnostic['code'],'official_read_unavailable')
+        self.assertEqual(a.investigate({**ITEM,'id':'next'})['status'],'error')
+        self.assertEqual(len(client.calls),2)
 
     def test_pipe_path_uses_common_auth_and_emits_only_safe_proposals(self):
         def factory(provider,**kwargs):
@@ -273,6 +278,87 @@ class LocationResearchTests(unittest.TestCase):
         self.assertEqual(values[1]['stats']['requests'],1)
         for secret in ('synthetic-refresh','access_token','id_token','Authorization'):
             self.assertNotIn(secret,out.getvalue())
+
+
+    def test_diagnostic_keeps_actual_text_sources_quote_checks_and_failure_stage(self):
+        a,_=self.adapter(fetcher=lambda url:'다른 위치 문구')
+        self.assertEqual(a.investigate(ITEM)['status'],'error')
+        d=a.last_diagnostic
+        self.assertEqual((d['stage'],d['code']),('official_page','research_quote_not_in_page'))
+        self.assertEqual(d['official']['pageText'],'다른 위치 문구')
+        self.assertFalse(d['official']['checks']['quoteInPage'])
+        self.assertIn(URL,d['sources'])
+        self.assertEqual(json.loads(d['response']['output'][2]['content'][0]['text'])['evidence'],EVIDENCE)
+
+    def test_distinct_item_diagnostics_survive_next_response(self):
+        variants=[(None,'research_json_invalid'),({'status':'suggested','evidence':{**EVIDENCE,'place':'다른 장소'}},'research_place_not_in_description')]
+        for answer,expected in variants:
+            value=completed(answer)
+            if answer is None:value['output'][2]['content'][0]['text']='{broken actual response'
+            a,_=self.adapter([value,completed()])
+            self.assertEqual(a.investigate(ITEM)['status'],'error')
+            old=copy.deepcopy(a.last_diagnostic)
+            self.assertEqual(old['code'],expected)
+            self.assertEqual(a.investigate({**ITEM,'id':'next'})['status'],'suggested')
+            self.assertEqual(old['code'],expected)
+
+    def test_missing_search_source_has_specific_reason_without_official_read(self):
+        value=completed();value['output'][1]['action']['sources']=[];value['output'][2]['content'][0]['annotations']=[]
+        a,_=self.adapter([value])
+        self.assertEqual(a.investigate(ITEM)['status'],'error')
+        self.assertEqual(a.last_diagnostic['code'],'research_url_not_in_search_sources')
+        self.assertEqual(self.reads,[])
+
+    def test_timeout_and_5xx_are_one_attempt_then_a_different_item(self):
+        for exception in (TimeoutError('private timeout details'),type('Unavailable',(Exception,),{'status_code':503})('private server response')):
+            client=FakeClient([[],events(completed())]);original=client.create
+            def create(**request):
+                if not client.calls:client.calls.append(request);raise exception
+                return original(**request)
+            client.responses.create=create
+            a,_=self.adapter(client=client)
+            self.assertEqual(a.investigate(ITEM)['status'],'error')
+            self.assertIn(a.last_diagnostic['code'],('plan_timeout','plan_transport_unknown','plan_http_503'))
+            self.assertNotIn('private',json.dumps(a.last_diagnostic))
+            self.assertEqual(a.investigate({**ITEM,'id':'next'})['status'],'suggested')
+            self.assertEqual(len(client.calls),2)
+
+    def test_partial_output_is_kept_redacted_without_accepting_a_proposal(self):
+        a,_=self.adapter(client=FakeClient([[{'type':'response.output_text.delta','delta':'partial Bearer synthetic-secret'}]]))
+        self.assertEqual(a.investigate(ITEM)['status'],'error')
+        self.assertEqual(a.last_diagnostic['partialText'],'partial Bearer [REDACTED]')
+
+    def test_diagnostics_exclude_auth_metadata_and_reasoning_content(self):
+        value=completed();value['headers']={'Authorization':'synthetic-header-secret'}
+        value['output'][0]['encrypted_content']='synthetic-hidden-reasoning'
+        value['output'][2]['content'][0]['text']='{"api_key":"synthetic-response-secret"}'
+        a,_=self.adapter([value]);a.investigate(ITEM)
+        logged=json.dumps(a.last_diagnostic)
+        for secret in ('synthetic-header-secret','synthetic-hidden-reasoning','synthetic-response-secret'):
+            self.assertNotIn(secret,logged)
+        self.assertIn('[REDACTED]',logged)
+
+    def test_diagnostic_capacity_failure_is_fatal(self):
+        value=completed();value['output'][2]['content'][0]['text']='x'*600001
+        a,client=self.adapter([value])
+        with self.assertRaises(ResearchFailure) as caught:a.investigate(ITEM)
+        self.assertEqual(caught.exception.code,'research_record_error')
+        with self.assertRaises(ResearchFailure):a.investigate(ITEM)
+        self.assertEqual(len(client.calls),1)
+
+    def test_auth_and_quota_codes_inside_sse_are_fatal_not_item_errors(self):
+        from ingest.location_plan_research import PROVIDER_STOPS
+        for code in PROVIDER_STOPS:
+            for kind in ('error','response.failed'):
+                event={'type':kind,'error':{'code':code,'message':'private provider text'}}
+                if kind=='response.failed':event={'type':kind,'response':{'error':event['error']}}
+                a,client=self.adapter(client=FakeClient([[event],events(completed())]))
+                with self.assertRaises(ResearchFailure) as caught:a.investigate(ITEM)
+                self.assertEqual(caught.exception.code,code)
+                self.assertEqual(a.last_diagnostic['providerCode'],code)
+                self.assertNotIn('private',json.dumps(a.last_diagnostic))
+                with self.assertRaises(ResearchFailure):a.investigate(ITEM)
+                self.assertEqual(len(client.calls),1)
 
 
 class OfficialReadTests(unittest.TestCase):

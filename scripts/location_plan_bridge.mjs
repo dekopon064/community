@@ -6,7 +6,9 @@ const safeCodes=new Set(['research_call_budget','research_auth_required','resear
  'research_response_unknown','official_read_unavailable','subscription_sharing_unsupported_capability',
  'subscription_sharing_route_not_supported','subscription_sharing_usage_limit_exceeded','subscription_sharing_usage_unavailable',
  'subscription_sharing_user_not_eligible','chatgpt_plan_reauthentication_required','chatgpt_plan_permission_missing',
- 'plan_refresh_result_unknown','plan_http_400','plan_http_401','plan_http_403','plan_http_404','plan_http_429']);
+ 'plan_refresh_result_unknown','plan_http_400','plan_http_401','plan_http_403','plan_http_404','plan_http_429',
+ 'research_record_error','research_runtime_invalid','subscription_sharing_invalid_user','chatpass_v2_scope_not_authorized',
+ 'chatpass_v2_invalid_authorization_context','subscription_sharing_user_unavailable','rate_limit_exceeded','insufficient_quota','invalid_api_key','permission_denied']);
 export class ResearchRuntimeError extends Error {
  constructor(code){super('location_research_stopped');this.code=safeCodes.has(code)?code:'research_response_unknown';}
 }
@@ -20,7 +22,7 @@ function safeStats(raw){
 }
 export function createPlanInvestigator({python,choices,instructions,limit,
  spawnProcess=spawn,workerPath=fileURLToPath(new URL('./location_research_worker.py',import.meta.url))}){
- let child=null,pending=null,buffer='',ready=false,closed=false,stats=null,sentRequests=0;
+ let child=null,pending=null,buffer='',ready=false,closed=false,stats=null,sentRequests=0,diagnostic=null;
  function stop(){if(pending){clearTimeout(pending.timer);pending.reject(new ResearchRuntimeError('research_response_unknown'));pending=null;}closed=true;}
  function start(){
   if(child||closed)throw new ResearchRuntimeError();
@@ -28,12 +30,12 @@ export function createPlanInvestigator({python,choices,instructions,limit,
   child.stdout.setEncoding('utf8');child.stderr.resume();
   child.on('error',stop);child.on('exit',stop);child.stdin.on('error',stop);
   child.stdout.on('data',chunk=>{
-   buffer+=chunk;if(buffer.length>256000){stop();child.kill();return;}
+   buffer+=chunk;if(buffer.length>4*1024*1024){stop();child.kill();return;}
    let at;while((at=buffer.indexOf('\n'))>=0){
     const line=buffer.slice(0,at);buffer=buffer.slice(at+1);
     if(!pending){stop();child.kill();return;}
     const current=pending;pending=null;clearTimeout(current.timer);
-    try{const data=JSON.parse(line);if(data?.stats)stats=safeStats(data.stats);if(data?.ok===true)current.resolve(data);else current.reject(new ResearchRuntimeError(data?.code));}
+    try{const data=JSON.parse(line);diagnostic=data?.diagnostic??null;if(data?.stats){stats=safeStats(data.stats);if(!stats){current.reject(new ResearchRuntimeError('research_usage_unknown'));stop();return;}}if(data?.ok===true)current.resolve(data);else current.reject(new ResearchRuntimeError(data?.code));}
     catch{current.reject(new ResearchRuntimeError());stop();child.kill();return;}
    }
   });
@@ -48,10 +50,11 @@ export function createPlanInvestigator({python,choices,instructions,limit,
  }
  return {
   mode:'research',
+  get diagnostic(){return diagnostic;},
   get stats(){return stats&&stats.requests>=sentRequests?stats:{requests:null,confirmedRequests:stats?.requests??0,
    requestAttempts:sentRequests,officialReads:null,usage:stats?.usage??[],usageUnknownCount:sentRequests-(stats?.usage.length??0)};},
   async ready(){if(ready)return;start();await request({action:'ready',limit,choices,instructions});ready=true;},
-  async investigate(item){if(!ready)throw new ResearchRuntimeError();sentRequests++;const out=await request({action:'investigate',item});return out.answer;},
+  async investigate(item){if(!ready)throw new ResearchRuntimeError();diagnostic=null;sentRequests++;const out=await request({action:'investigate',item});return out.answer;},
   async close(){
    if(!child)return;
    try{if(!closed&&!pending)await Promise.race([request({action:'close'}),new Promise(resolve=>setTimeout(resolve,1000))]);}
