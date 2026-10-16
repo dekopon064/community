@@ -5,6 +5,10 @@ import {execFileSync} from 'node:child_process';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+http.request=https.request=net.connect=net.createConnection=()=>{throw Error('network forbidden');};
 const require=createRequire(import.meta.url),ts=require('typescript'),React=require('react');
 const root=fileURLToPath(new URL('../',import.meta.url));
 let states=[],refs=[],cursor=0,refCursor=0;
@@ -14,12 +18,13 @@ function load(name){const filename=path.join(root,name);if(cache.has(filename))r
  const code=ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText;
  new Function('require','exports',code)(s=>{if(s==='react')return fakeReact;if(s==='next/link')return {default:()=>null};
   if(s.startsWith('@/')||s.startsWith('.')){const file=s.startsWith('@/')?path.join(root,s.slice(2)):path.resolve(path.dirname(filename),s);for(const suffix of ['.ts','.tsx',''])if(fs.existsSync(file+suffix))return load(path.relative(root,file+suffix));}return require(s);},exports);return exports;}
-const raw=JSON.parse(execFileSync(process.env.MACHIMOA_TEST_PYTHON,['-X','utf8','scripts/test_seoul_review_evidence.py','--export'],{cwd:root,encoding:'utf8'}))[0][1];
+let raw=JSON.parse(execFileSync(process.env.MACHIMOA_TEST_PYTHON,['-X','utf8','scripts/test_seoul_review_evidence.py','--export'],{cwd:root,encoding:'utf8'}))[0][1];
 const {filterInfo,ContentFilterStore}=load('app/lib/review/content-filter-store.ts');
 const {contentFilterRequest}=load('app/lib/review/content-filter-handler.ts');
 const {AdminAccessError}=load('app/lib/auth/admin-policy.ts');
 const {default:Panel,filterFieldsToSave,filterSaveBody}=load('app/components/admin/FilterReviewPanel.tsx');
-const info=filterInfo(raw.filterInfo,raw.revision),id=raw.id,actor='00000000-0000-4000-8000-000000000001';
+let info=filterInfo(raw.filterInfo,raw.revision),id=raw.id;
+const actor='00000000-0000-4000-8000-000000000001';
 const unknown={status:'unknown',value:null},known=value=>({status:'known',value});
 let checks=0,calls=[],requests=[],rpcError=null,saved=0,row,authError=null;
 const eq=(a,b)=>{assert.deepEqual(a,b);checks++;},ok=v=>{assert.ok(v);checks++;};
@@ -30,7 +35,7 @@ const store=new ContentFilterStore({async rpc(name,args){calls.push({name,args})
  row={...row,version:'f'.repeat(64),filterVersion:info.filterVersion+1,data:{...row.data,...args.p_patch},missing:row.missing.filter(k=>!Object.hasOwn(args.p_patch,k)),origins:{...row.origins,...Object.fromEntries(Object.keys(args.p_patch).map(k=>[k,'operator']))}};
  return {data:row,error:null};}});
 const deps={authorize:async()=>{if(authError)throw new AdminAccessError(authError);return {userId:actor};},store:()=>store};
-const url=`https://example.test/api/admin/review-filters/${id}`;
+let url=`https://example.test/api/admin/review-filters/${id}`;
 globalThis.fetch=async(p,options)=>{eq(p,`/api/admin/review-filters/${id}`);eq(options.cache,'no-store');requests.push(JSON.parse(options.body));
  const response=await contentFilterRequest(new Request(url,{...options,headers:{...options.headers,origin:'https://example.test'}}),id,deps);
  ok(response.headers.get('cache-control').includes('no-store'));return response;};
@@ -58,4 +63,44 @@ eq(filterFieldsToSave({...info,data:changed},changed,['topic','location']),['top
 for(const origin of ['https://evil.test',null]){const headers={'content-type':'application/json'};if(origin)headers.origin=origin;
  const response=await contentFilterRequest(new Request(url,{method:'POST',headers,body:JSON.stringify(command)}),id,deps);eq(response.status,403);eq(calls.length,0);}
 const response=await contentFilterRequest(new Request(url,{method:'POST',headers:{origin:'https://example.test','content-type':'application/json'},body:JSON.stringify({...command,version:'c'.repeat(64)})}),id,deps);eq(response.status,409);eq(calls.length,1);
+// Structural extraction examples pass through the same real panel/handler/store.
+// The RPC is synthetic: this proves request wiring, not production SQL approval.
+const roles=JSON.parse(execFileSync(process.env.MACHIMOA_TEST_PYTHON,['-X','utf8','scripts/test_seoul_role_sections.py','--export'],{cwd:root,encoding:'utf8'}));
+const {ProgramReviewStore,programItem}=load('app/lib/review/program-store.ts');
+const {programRequest}=load('app/lib/review/program-handlers.ts');
+const {buildProgramSave}=load('app/lib/review/program-ui.ts');
+for(const fixture of roles){
+ raw=fixture.detail;info=filterInfo(raw.filterInfo,raw.revision);id=raw.id;
+ url=`https://example.test/api/admin/review-filters/${id}`;
+ reset();render();choose(fixture.proposal.filters_patch);eq(button().props.disabled,false);
+ await submit();eq(requests.length,1);eq(calls.length,1);eq(saved,1);
+ eq(calls[0].args.p_patch,fixture.proposal.filters_patch);
+ eq(calls[0].args.p_revision,raw.revision);eq(calls[0].args.p_version,raw.version);
+ eq(calls[0].args.p_filter_version,info.filterVersion);
+ eq(row.data.audience,info.data.audience);eq(row.data.application,info.data.application);
+ if(fixture.name==='booth')eq(row.data.location,unknown);
+ const before=structuredClone(raw),factCalls=[];
+ let factRow=structuredClone(raw);
+ const factStore=new ProgramReviewStore({async rpc(name,args){
+  factCalls.push({name,args:structuredClone(args)});eq(name,'admin_program_save');eq(args.p_actor,actor);
+  if(args.p_revision!==factRow.revision||args.p_version!==factRow.version)return {data:null,error:{code:'PT409'}};
+  if(Object.keys(args.p_patch).some(k=>!factRow.editableFields.includes(k)))return {data:null,error:{code:'PT422'}};
+  factRow={...factRow,facts:{...factRow.facts,...args.p_patch},factsVersion:factRow.factsVersion+1,version:'f'.repeat(64),history:[...factRow.history,{action:'save_facts',actor,at:'2026-01-02T00:00:00Z',note:'',fields:Object.keys(args.p_patch)}]};
+  return {data:factRow,error:null};
+ }});
+ const factDeps={authorize:async()=>({userId:actor}),store:()=>factStore};
+ const loaded=programItem(raw,id);
+ const command=buildProgramSave(loaded,{...loaded.facts,...fixture.proposal.facts_patch},'',fixture.proposal.resolve);
+ eq(command.patch,fixture.proposal.facts_patch);eq(command.revision,raw.revision);eq(command.version,raw.version);
+ const post=()=>new Request(`https://example.test/api/admin/program-review/${id}`,{method:'POST',headers:{origin:'https://example.test','content-type':'application/json'},body:JSON.stringify(command)});
+ const result=await programRequest(post(),id,factDeps);eq(result.status,200);eq(factCalls.length,1);
+ eq(factRow.source,before.source);eq(factRow.observedFacts,before.observedFacts);eq(factRow.filterInfo,before.filterInfo);
+ eq(factRow.facts.description,before.facts.description);eq(factRow.facts.periods,before.facts.periods);
+ eq(factRow.facts.conditions,before.facts.conditions);eq(factRow.facts.conflicts,before.facts.conflicts);
+ eq(factRow.aiStatus,'blocked');eq(factRow.history.slice(0,-1),before.history);
+ eq((await programRequest(post(),id,factDeps)).status,409);eq(factRow.factsVersion,before.factsVersion+1);
+ const n=factCalls.length;
+ const denied=await programRequest(post(),id,{...factDeps,authorize:async()=>{throw new AdminAccessError('forbidden');}});
+ eq(denied.status,403);eq(factCalls.length,n);
+}
 console.log(JSON.stringify({checks,result:'passed',actualPanel:true,fakeAuthRpc:true,network:0,operatingWrites:0,ai:0,approval:0,publication:0}));
