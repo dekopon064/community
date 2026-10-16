@@ -43,6 +43,21 @@ def events(value):
         {'type':'response.completed','response':copy.deepcopy(value)}]
 
 
+def tool_response(count=5):
+    """Synthetic shape of the observed search/open/search/open/find sequence."""
+    value=completed()
+    calls=[]
+    for i in range(count):
+        action={'type':('search','open_page','search','open_page','find_in_page')[i%5],
+                'sources':[{'type':'url','url':URL}]}
+        if action['type']=='search':action['query']='합성 공식 장소'
+        else:action['url']=URL
+        if action['type']=='find_in_page':action['pattern']='합성물빛공원'
+        calls.append({'type':'web_search_call','id':'ws_synthetic_'+str(i),'status':'completed','action':action})
+    value['output'][1:2]=calls
+    return value
+
+
 class LocationResearchTests(unittest.TestCase):
     def setUp(self):
         self.owner=sessions_fixture.SessionTests('test_valid_repeated_and_restarted_process_reuse_without_login_refresh')
@@ -225,14 +240,72 @@ class LocationResearchTests(unittest.TestCase):
             self.assertEqual(len(client.calls),1)
 
     def test_hosted_search_count_is_checked_after_completion_not_claimed_as_server_cap(self):
-        response=completed()
-        response['output'][1:1]=[dict(copy.deepcopy(response['output'][1]),id='ws_extra_'+str(i)) for i in range(3)]
-        a,client=self.adapter([response])
-        with self.assertRaises(ResearchFailure) as caught:a.investigate(ITEM)
-        self.assertEqual(caught.exception.code,'research_output_or_tool_bound')
+        a,client=self.adapter([tool_response(),completed()])
+        self.assertEqual(a.investigate(ITEM),{'status':'error','evidence':None})
+        old=copy.deepcopy(a.last_diagnostic)
+        self.assertEqual(old['code'],'research_search_tool_bound')
+        self.assertEqual(old['bounds'],{'toolCalls':5,'maxToolCalls':3,'outputTokens':20,'maxOutputTokens':SUMMARY_MAX_TOKENS})
+        self.assertTrue(old['completedSeen'])
+        self.assertEqual(len(old['terminal']['output']),7)
         self.assertEqual(len(client.calls),1)
         self.assertNotIn('max_tool_calls',client.calls[0])
         self.assertEqual(self.reads,[])
+        self.assertFalse(a.blocked)
+        self.assertEqual(a.investigate({**ITEM,'id':'next'})['status'],'suggested')
+        self.assertEqual(len(client.calls),2)
+        self.assertEqual(len(a.usage),2)
+        self.assertEqual(old['code'],'research_search_tool_bound')
+
+    def test_search_bound_at_three_and_terminal_only_overflow(self):
+        for count in (3,4,5):
+            for terminal_only in (False,True):
+                with self.subTest(count=count,terminal_only=terminal_only):
+                    stream=events(tool_response(count))
+                    if terminal_only:stream[-1]['response']['output']=[]
+                    a,client=self.adapter(client=FakeClient([stream,events(completed())]))
+                    self.assertEqual(a.investigate(ITEM)['status'],'suggested' if count==3 else 'error')
+                    self.assertEqual(a.last_diagnostic['bounds']['toolCalls'],count)
+                    self.assertEqual(a.investigate({**ITEM,'id':'next'})['status'],'suggested')
+                    self.assertEqual(len(client.calls),2)
+
+    def test_search_overflow_with_invalid_json_is_recorded_then_next_item(self):
+        value=tool_response();value['output'][-1]['content'][0]['text']='{invalid synthetic JSON'
+        a,client=self.adapter([value,completed()])
+        self.assertEqual(a.investigate(ITEM)['status'],'error')
+        self.assertEqual(a.last_diagnostic['code'],'research_search_tool_bound')
+        self.assertEqual(a.last_diagnostic['bounds']['toolCalls'],5)
+        self.assertEqual(self.reads,[])
+        self.assertEqual(a.investigate({**ITEM,'id':'next'})['status'],'suggested')
+        self.assertEqual(len(client.calls),2)
+
+    def test_conflicting_completion_with_search_overflow_never_accepts_a_candidate(self):
+        stream=events(tool_response())
+        stream[-1]['response']['output'][-1]['content'][0]['text']=json.dumps({'status':'no_evidence','evidence':None})
+        a,client=self.adapter(client=FakeClient([stream,events(completed())]))
+        self.assertEqual(a.investigate(ITEM),{'status':'error','evidence':None})
+        self.assertEqual(a.last_diagnostic['code'],'research_search_tool_bound')
+        self.assertEqual(a.last_diagnostic['responseState'],'completed')
+        self.assertEqual(self.reads,[])
+        self.assertEqual(a.investigate({**ITEM,'id':'next'})['status'],'suggested')
+        self.assertEqual(len(client.calls),2)
+
+    def test_search_overflow_does_not_hide_usage_output_or_auth_failure(self):
+        for fault in ('usage','output','auth','quota'):
+            with self.subTest(fault=fault):
+                value=tool_response()
+                if fault=='usage':value['usage']=None
+                if fault=='output':
+                    value['usage']['output_tokens']=SUMMARY_MAX_TOKENS+1
+                    value['usage']['total_tokens']=90+SUMMARY_MAX_TOKENS+1
+                stream=events(value)
+                codes={'usage':'research_usage_unknown','output':'research_output_or_tool_bound',
+                       'auth':'permission_denied','quota':'rate_limit_exceeded'}
+                if fault in ('auth','quota'):stream.insert(-1,{'type':'error','code':codes[fault]})
+                a,client=self.adapter(client=FakeClient([stream,events(completed())]))
+                with self.assertRaises(ResearchFailure) as caught:a.investigate(ITEM)
+                self.assertEqual(caught.exception.code,codes[fault])
+                with self.assertRaises(ResearchFailure):a.investigate({**ITEM,'id':'next'})
+                self.assertEqual(len(client.calls),1)
 
     def test_wrong_completion_model_and_credentials_never_retried(self):
         value=completed();value['model']='wrong-model'
