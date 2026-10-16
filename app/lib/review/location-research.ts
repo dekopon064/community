@@ -6,6 +6,10 @@ import { ReviewFailure } from './contracts';
 // the server re-reads both review and filter preconditions before every save.
 export const locationResearchSchema = 'location-research-v1' as const;
 export const locationBatchLimit = 25;
+// Optional local diagnostic; public save API still uses invalid_input only.
+export class LocationValidationFailure extends ReviewFailure {
+  constructor(readonly reason:string){super('invalid_input');}
+}
 export type LocationSnapshot = {
   id: string; source: string; title: string; description: string;
   revision: string; version: string; factsToken: string; factsVersion: number; filterVersion: number;
@@ -69,11 +73,16 @@ export function locationReport(v: unknown): LocationReport {
       const meetings=meetingPlaces(snapshot.description);
       const hasMeetingMention=/(?:만나는\s*(?:장소|곳)|모이는\s*(?:장소|곳)|집결\s*(?:장소|지))/.test(snapshot.description);
       const sourceLines=snapshot.description.split('\n').filter(line=>compact(line).includes(compact(place)));
-      if (!Object.hasOwn(districtChoices,province) || !districtChoices[province].includes(district) || !compact(snapshot.description).includes(compact(place)) ||
-          !compact(excerpt).includes(compact(place)) || !excerpt.includes(district) || !excerpt.includes(provinceLabels[province]) ||
-          (hasMeetingMention&&!meetings.length) ||
-          (meetings.length>0&&(new Set(meetings.map(compact)).size!==1||!compact(meetings[0]).includes(compact(place)))) ||
-          (!meetings.length&&sourceLines.length>0&&sourceLines.every(line=>/(?:기관\s*주소|문의처|주차장\s*(?:주소|위치)|오시는\s*길)\s*[:：]/.test(line)))) throw new ReviewFailure('invalid_input');
+      const checks:[boolean,string][]=[
+        [Object.hasOwn(districtChoices,province)&&Boolean(districtChoices[province]?.includes(district)),'proposal_region_invalid'],
+        [compact(snapshot.description).includes(compact(place)),'proposal_place_not_in_description'],
+        [compact(excerpt).includes(compact(place)),'proposal_place_not_in_quote'],
+        [excerpt.includes(district),'proposal_district_not_in_quote'],
+        [excerpt.includes(provinceLabels[province]),'proposal_province_not_in_quote'],
+        [!(hasMeetingMention&&!meetings.length),'proposal_meeting_not_explicit'],
+        [!(meetings.length>0&&(new Set(meetings.map(compact)).size!==1||!compact(meetings[0]).includes(compact(place)))),'proposal_meeting_mismatch'],
+        [!(!meetings.length&&sourceLines.length>0&&sourceLines.every(line=>/(?:기관\s*주소|문의처|주차장\s*(?:주소|위치)|오시는\s*길)\s*[:：]/.test(line))),'proposal_nonvenue_address']];
+      for(const [ok,reason] of checks)if(!ok)throw new LocationValidationFailure(reason);
       evidence={place,url:officialLocationUrl(e.url),excerpt,province,district};
     } else if (row.evidence !== null) throw new ReviewFailure('invalid_input');
     return {snapshot,status:row.status as LocationProposal['status'],evidence};

@@ -4,7 +4,7 @@ import json
 import sys
 
 from ingest.ai_provider import require_ai_provider, create_location_research_adapter
-from ingest.location_plan_research import ResearchFailure
+from ingest.location_plan_research import ResearchFailure, PROVIDER_STOPS
 from ingest.chatgpt_plan_protocol import ProbeError
 
 
@@ -58,7 +58,7 @@ def serve(source, sink, *, factory=None):
                             not 1<=len(item['description'])<=60000):
                         raise ValueError()
                     answer = adapter.investigate(item)
-                    reply({'ok':True,'answer':answer,'stats':stats()})
+                    reply({'ok':True,'answer':answer,'diagnostic':getattr(adapter,'last_diagnostic',None),'stats':stats()})
                 else:
                     raise ValueError()
             except (ResearchFailure,ProbeError) as error:
@@ -69,8 +69,10 @@ def serve(source, sink, *, factory=None):
                     'subscription_sharing_usage_limit_exceeded','subscription_sharing_usage_unavailable',
                     'subscription_sharing_user_not_eligible','chatgpt_plan_reauthentication_required',
                     'chatgpt_plan_permission_missing','plan_refresh_result_unknown',
-                    'plan_http_400','plan_http_401','plan_http_403','plan_http_404','plan_http_429'}
-                reply({'ok':False,'code':error.code if error.code in allowed else 'research_runtime_stopped',
+                    'plan_http_400','plan_http_401','plan_http_403','plan_http_404','plan_http_429',
+                    'research_record_error','research_runtime_invalid'}
+                reply({'ok':False,'code':error.code if error.code in allowed|PROVIDER_STOPS else 'research_runtime_stopped',
+                       'diagnostic':getattr(adapter,'last_diagnostic',None),
                        **({'stats':stats()} if adapter is not None else {})})
                 break
             except Exception:
