@@ -56,6 +56,72 @@ for(const batch of run.batches){const report=core.locationReport(read(batch.path
 eq(run.batches.flatMap(x=>read(x.path).items).map(x=>x.snapshot),items);
 // Every next request follows a persisted outcome; next batch follows its report.
 for(let i=1;i<resultRecords.length;i++){const index=records.indexOf(resultRecords[i-1]);ok(records.slice(index+1).some(x=>x.type==='item_started'&&x.snapshot.id===resultRecords[i].id));}
+
+// Actual observed shape: five search/open/find calls, including a completed
+// response with empty output and five terminal tool events. No real response
+// text, titles, identifiers or credentials are used in this synthetic replay.
+const boundInput=path.join(temp,'search-bound-input.json');
+const boundItems=items.map(x=>({...x,description:seed.description}));
+fs.writeFileSync(boundInput,JSON.stringify({...packet,items:boundItems}));
+function boundFactory(counter,{fault=null}={}){
+ const factory=realFakeFactory('search-bound',counter),faultName=JSON.stringify(fault??'none');
+ return options=>{
+  const bridge=factory(options),offset=(counter.batches-1)*25;
+  const file=path.join(temp,`search-bound-${offset}.py`);
+  let source=fs.readFileSync(file,'utf8').replace('        value=f.completed()\n',
+   '        value=f.tool_response() if n in (0,24,25,51) else f.completed()\n');
+  source=source.replace('        values.append(f.events(value))',
+   `        if n==25 and ${faultName}=='usage':value['usage']=None\n`+
+   `        if n==25 and ${faultName} in ('auth','quota'):\n`+
+   `            values.append(f.events(value)[:-1]+[{'type':'error','code':'permission_denied' if ${faultName}=='auth' else 'rate_limit_exceeded'}]);continue\n`+
+   '        stream=f.events(value)\n        if n==25:stream[-1][\'response\'][\'output\']=[]\n        values.append(stream)');
+  fs.writeFileSync(file,source);return bridge;
+ };
+}
+const boundOutput=path.join(temp,'search-bound.json'),boundCount={batches:0};
+await quiet(()=>main(args(boundOutput,53,boundInput),{makePlanInvestigator:boundFactory(boundCount)}));
+const boundRun=read(boundOutput),boundLog=audit(boundOutput),boundResults=boundLog.filter(x=>x.type==='item_result');
+eq(boundRun.stopped,false);eq(boundCount.batches,3);eq(boundRun.batches.map(x=>x.items),[25,25,3]);
+eq(boundRun.batches.reduce((n,b)=>n+b.stats.requests,0),53);
+eq(boundRun.batches.reduce((n,b)=>n+b.stats.usageUnknownCount,0),0);
+eq(boundRun.batches.reduce((n,b)=>n+b.stats.officialReads,0),49);
+eq(boundLog.filter(x=>x.type==='item_started').map(x=>x.snapshot.id),boundItems.map(x=>x.id));
+eq(boundResults.filter(x=>x.status==='error').length,4);
+for(const index of [0,24,25,51]){
+ const result=boundResults[index];eq(result.status,'error');eq(result.diagnostic.code,'research_search_tool_bound');
+ eq(result.diagnostic.bounds,{toolCalls:5,maxToolCalls:3,outputTokens:20,maxOutputTokens:2048});
+ eq(result.diagnostic.completedSeen,true);eq(result.diagnostic.usage.output_tokens,20);eq(result.diagnostic.official,null);
+ if(index===25)eq(result.diagnostic.response.output,[]);
+ const next=boundLog.find(x=>x.type==='item_started'&&x.snapshot.id===boundItems[index+1].id);
+ ok(result.sequence<next.sequence);
+}
+for(const receipt of boundRun.batches)core.locationReport(read(receipt.path));
+eq(boundRun.batches.flatMap(b=>read(b.path).items).map(x=>x.snapshot),boundItems);
+for(const fault of ['auth','usage','quota']){
+ const out=path.join(temp,'bound-'+fault+'.json'),count={batches:0};
+ await assert.rejects(quiet(()=>main(args(out,53,boundInput),{makePlanInvestigator:boundFactory(count,{fault})})));checks++;
+ const stopped=read(out),log=audit(out);
+ eq(stopped.stopped,true);eq(count.batches,2);eq(log.filter(x=>x.type==='item_started').length,26);
+ eq(stopped.code,fault==='auth'?'permission_denied':fault==='quota'?'rate_limit_exceeded':'research_usage_unknown');
+ eq(log.at(-1).type,'run_stopped');
+}
+// Failure to persist a tool-overflow outcome still prevents the NEXT request.
+const boundRecord=path.join(temp,'bound-record.json'),boundRecordCount={batches:0};
+let rejectedRecordWrites=0;
+await assert.rejects(quiet(()=>main(args(boundRecord,53,boundInput),{
+ makePlanInvestigator:boundFactory(boundRecordCount),
+ async openFile(file,...rest){const handle=await fsp.open(file,...rest);if(!file.endsWith('.audit.jsonl'))return handle;
+  return {close:()=>handle.close(),sync:()=>handle.sync(),writeFile:async line=>{
+   const event=JSON.parse(line);
+   if(event.type==='item_result'&&event.diagnostic?.code==='research_search_tool_bound'){rejectedRecordWrites++;throw Error('synthetic record failure');}
+   return handle.writeFile(line);
+  }};
+ }
+})));checks++;
+eq(rejectedRecordWrites,1);eq(boundRecordCount.batches,1);eq(read(boundRecord).code,'research_record_error');
+eq(audit(boundRecord).filter(x=>x.type==='item_started').length,1);
+eq(read(read(boundRecord).batches[0].path).stats.requests,1);
+
 for(const scenario of ['auth','usage','quota']){
  const out=path.join(temp,scenario+'.json'),count={batches:0};
  const factory=realFakeFactory(scenario,count);

@@ -155,9 +155,15 @@ class PlanLocationInvestigator:
         # server-side cap fields. Invalid JSON must not bypass these checks.
         tool_count=max(sum(get_field(x,'type')=='web_search_call' for x in output)
                        for output in (get_field(completed,'output',[]) or [],terminal or []))
-        if outgoing>SUMMARY_MAX_TOKENS or tool_count>3:
+        self.last_diagnostic['bounds']={'toolCalls':tool_count,'maxToolCalls':3,
+            'outputTokens':outgoing,'maxOutputTokens':SUMMARY_MAX_TOKENS}
+        if outgoing>SUMMARY_MAX_TOKENS:
             self.blocked=True
             raise ResearchFailure('research_output_or_tool_bound')
+        # A completed item's excess search/open/find calls invalidate only that
+        # result. Usage/output/recording failures above remain fatal, and the
+        # next item gets one fresh request without replaying this one.
+        return tool_count<=3
 
     def investigate(self, item):
         self.last_diagnostic={'stage':'auth','code':'research_started','response':None,
@@ -203,7 +209,8 @@ class PlanLocationInvestigator:
                 equivalent=lambda a,b:a['answer']==b['answer'] and a['searches']==b['searches'])
         except InvalidResearch as error:
             self._capture(observed)
-            self._record_completion(observed.get('response'),observed.get('terminal'))
+            if not self._record_completion(observed.get('response'),observed.get('terminal')):
+                return self._result('research_search_tool_bound')
             return self._result(error.code)
         except ProbeError as error:
             self._capture(observed)
@@ -211,15 +218,16 @@ class PlanLocationInvestigator:
                 self.blocked=True
                 self.last_diagnostic['code']=observed['providerStop']
                 raise ResearchFailure(observed['providerStop']) from None
+            within_tool_bound=True
             if observed.get('response') is not None:
-                self._record_completion(observed['response'],observed.get('terminal'))
+                within_tool_bound=self._record_completion(observed['response'],observed.get('terminal'))
             isolated={'plan_timeout','plan_transport_unknown','stream_missing_completed','stream_not_completed',
                 'conflicting_terminal_output','invalid_completed_output','invalid_terminal_output_item','duplicate_completed_event'}
             if error.code in isolated or re.fullmatch(r'plan_http_5\d\d',error.code):
                 # The stream context has closed; discard the uncertain attempt,
                 # record it, then allow ONE new request for a different item.
                 self.last_diagnostic['responseState']='unknown' if observed.get('response') is None else 'completed'
-                return self._result(error.code)
+                return self._result(error.code if within_tool_bound else 'research_search_tool_bound')
             self.blocked = True
             supported = {'subscription_sharing_unsupported_capability','subscription_sharing_route_not_supported',
                 'subscription_sharing_usage_limit_exceeded','subscription_sharing_usage_unavailable',
@@ -233,7 +241,8 @@ class PlanLocationInvestigator:
             self.last_diagnostic['code']='research_runtime_invalid'
             raise ResearchFailure('research_runtime_invalid') from None
         self._capture(observed)
-        self._record_completion(completed,observed.get('terminal'))
+        if not self._record_completion(completed,observed.get('terminal')):
+            return self._result('research_search_tool_bound')
         if observed.get('terminal'):
             terminal_packet=extract_research({'status':'completed','output':observed['terminal']})
             packet['sources']=sorted(set(packet['sources'])|set(terminal_packet['sources']))
