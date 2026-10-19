@@ -141,6 +141,16 @@ eq(stoppedReport.partial.items.length,1);eq(stoppedReport.stats.requests,2);eq(s
 eq(calls.length,1); // The research launcher never invokes the review save RPC.
 assert.throws(()=>core.locationReport(stoppedReport));checks++;
 
+// Title-supplied venue and parent-facility quotation still use the very same
+// authorized save path; no source/fact/history rewriting or new RPC is needed.
+reset();rows.get(ids[0]).source.title='[합성물빛공원] 지역 체험';rows.get(ids[0]).facts.description='프로그램 신청과 안전 안내';
+const linkedBefore=structuredClone(rows.get(ids[0]));
+const parentEvidence={...evidence,place:'합성물빛공원',excerpt:'합성물빛공원\n서울특별시 강동구 합성길'};
+const linkedReport=await worker.researchLocations(await prepare(),{ready:async()=>{},investigate:async()=>({status:'suggested',evidence:parentEvidence})},{batchId,createdAt:valid.createdAt,mode:'synthetic',maxCalls:3});
+eq(calls.length,0);eq((await (await apply(linkedReport,[ids[0]])).json()).results[0].status,'saved');eq(calls.length,1);
+eq(rows.get(ids[0]).facts,linkedBefore.facts);eq(rows.get(ids[0]).observedFacts,linkedBefore.observedFacts);eq(rows.get(ids[0]).source,linkedBefore.source);eq(rows.get(ids[0]).history.slice(0,-1),linkedBefore.history);
+eq(filterRows.get(ids[1]).data.location.status,'unknown');
+
 // Actual React panel import -> select -> one handler -> fake authenticated RPC.
 const nodes=t=>[t,...React.Children.toArray(t?.props?.children).flatMap(c=>typeof c==='object'?nodes(c):[])];
 const labelText=t=>[typeof t==='string'?t:'',...React.Children.toArray(t?.props?.children).flatMap(labelText)].join('');

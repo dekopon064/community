@@ -1,6 +1,8 @@
 import { districtChoices, provinceLabels, parseContentFilters } from '../contentFilters';
 import type { ContentFilters } from '../contentFilters';
 import { ReviewFailure } from './contracts';
+import { sourceLink, quoteLink, sourceRegionConflict } from './location-evidence';
+export { meetingPlaces } from './location-evidence';
 
 // Research never grants write authority. Imported proposals are operator input;
 // the server re-reads both review and filter preconditions before every save.
@@ -54,11 +56,6 @@ export function officialLocationUrl(v: unknown): string {
       /(?:token|secret|api[_-]?key|authorization|password|code)=/i.test(u.search) || raw.includes('\\')) throw new ReviewFailure('invalid_input');
   return raw;
 }
-const compact = (s: string) => s.normalize('NFKC').replace(/[\s·ㆍ,()[\]「」『』]/g,'');
-export function meetingPlaces(description:string):string[] {
-  return [...description.matchAll(/(?:^|\n)[^\p{L}\p{N}\n]*(?:만나는\s*(?:장소|곳)|모이는\s*(?:장소|곳)|집결\s*(?:장소|지))\s*(?:\*{1,2}|__)?\s*[:：]\s*(?:\*{1,2}|__)?([^\n]+)/gu)]
-    .map(m=>m[1].trim()).filter(Boolean);
-}
 export function locationReport(v: unknown): LocationReport {
   const o = object(v); exact(o,['schema','batchId','createdAt','mode','items']);
   if (o.schema !== locationResearchSchema || !['research','synthetic'].includes(String(o.mode)) || !locationId(o.batchId) || typeof o.createdAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(o.createdAt) || !Number.isFinite(Date.parse(o.createdAt)) || !Array.isArray(o.items)) throw new ReviewFailure('invalid_input');
@@ -70,18 +67,15 @@ export function locationReport(v: unknown): LocationReport {
     if (row.status === 'suggested') {
       const e=object(row.evidence);exact(e,['place','url','excerpt','province','district']);
       const province=e.province as keyof typeof provinceLabels, district=text(e.district,40), place=text(e.place,200), excerpt=text(e.excerpt,1500);
-      const meetings=meetingPlaces(snapshot.description);
-      const hasMeetingMention=/(?:만나는\s*(?:장소|곳)|모이는\s*(?:장소|곳)|집결\s*(?:장소|지))/.test(snapshot.description);
-      const sourceLines=snapshot.description.split('\n').filter(line=>compact(line).includes(compact(place)));
+      const [sourceLinked,sourceRole]=sourceLink(snapshot.title,snapshot.description,place);
       const checks:[boolean,string][]=[
         [Object.hasOwn(districtChoices,province)&&Boolean(districtChoices[province]?.includes(district)),'proposal_region_invalid'],
-        [compact(snapshot.description).includes(compact(place)),'proposal_place_not_in_description'],
-        [compact(excerpt).includes(compact(place)),'proposal_place_not_in_quote'],
+        [sourceLinked,sourceRole==='meeting_multiple'?'proposal_meeting_mismatch':sourceRole==='meeting_not_explicit'?'proposal_meeting_not_explicit':'proposal_place_not_in_description'],
+        [!sourceRegionConflict(snapshot.description,place,provinceLabels[province],district),'proposal_source_region_conflict'],
+        [quoteLink(place,excerpt,provinceLabels[province],district),'proposal_place_not_in_quote'],
         [excerpt.includes(district),'proposal_district_not_in_quote'],
         [excerpt.includes(provinceLabels[province]),'proposal_province_not_in_quote'],
-        [!(hasMeetingMention&&!meetings.length),'proposal_meeting_not_explicit'],
-        [!(meetings.length>0&&(new Set(meetings.map(compact)).size!==1||!compact(meetings[0]).includes(compact(place)))),'proposal_meeting_mismatch'],
-        [!(!meetings.length&&sourceLines.length>0&&sourceLines.every(line=>/(?:기관\s*주소|문의처|주차장\s*(?:주소|위치)|오시는\s*길)\s*[:：]/.test(line))),'proposal_nonvenue_address']];
+      ];
       for(const [ok,reason] of checks)if(!ok)throw new LocationValidationFailure(reason);
       evidence={place,url:officialLocationUrl(e.url),excerpt,province,district};
     } else if (row.evidence !== null) throw new ReviewFailure('invalid_input');

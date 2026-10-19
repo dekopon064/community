@@ -51,7 +51,9 @@ eq(resultRecords[1].diagnostic.code,'research_json_invalid');
 ok(resultRecords[1].diagnostic.response.output[2].content[0].text.includes('actual fake malformed response'));
 eq(resultRecords[2].diagnostic.responseState,'unknown');eq(resultRecords[2].diagnostic.partialText,'incomplete fake response');
 eq(resultRecords[3].diagnostic.code,'research_quote_not_in_page');eq(resultRecords[3].diagnostic.official.checks.quoteInPage,false);
-eq(resultRecords[5].code,'proposal_meeting_not_explicit');eq(resultRecords[25].status,'suggested');
+// The same invalid meeting is now rejected before independent page reading in
+// Python; its precise source-role diagnostic survives the normal batch record.
+eq(resultRecords[5].status,'error');eq(resultRecords[5].diagnostic.code,'research_place_not_in_description');eq(resultRecords[5].diagnostic.linkage.sourceRole,'meeting_not_explicit');eq(resultRecords[25].status,'suggested');
 for(const batch of run.batches){const report=core.locationReport(read(batch.path));eq(report.mode,'synthetic');ok(report.items.length<=25);}
 eq(run.batches.flatMap(x=>read(x.path).items).map(x=>x.snapshot),items);
 // Every next request follows a persisted outcome; next batch follows its report.
