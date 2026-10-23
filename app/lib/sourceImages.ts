@@ -1,4 +1,5 @@
-// No proxy or server fetch: only validated URL metadata reaches the browser.
+// Browser URL metadata validation only. Server-side analysis also requires the
+// DNS/IP/size/time protections in home-colors/download; this is not an SSRF guard.
 const URL_PATTERN = /^https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::443)?(?:[/?][^\s\\#<>"']*)?$/i;
 
 export function sourceImageUrl(value: unknown): string | null {

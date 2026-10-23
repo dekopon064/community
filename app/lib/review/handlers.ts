@@ -2,10 +2,12 @@ import { AdminAccessError } from "../auth/admin-policy";
 import { privateResponse } from "../auth/http";
 import { isSameOriginPost } from "../auth/urls";
 import { ReviewFailure } from "./contracts";
-import type { ReviewKind, ReviewStore } from "./contracts";
+import type { CandidateItem, ReviewKind, ReviewStore } from "./contracts";
+import type { HomeColorOutcome } from '../home-colors/publication';
 import { validateCommand } from "./validation";
 
-type Dependencies = { authorize: () => Promise<{ userId: string }>; store: () => ReviewStore };
+type Dependencies = { authorize: () => Promise<{ userId: string }>; store: () => ReviewStore;
+  onPublished?: (item: CandidateItem, actor: string) => Promise<HomeColorOutcome> };
 export function failure(error: unknown) {
   if (error instanceof AdminAccessError) {
     const status = error.status === "signed_out" ? 401 : error.status === "forbidden" ? 403 : 503;
@@ -65,6 +67,12 @@ export async function reviewDetail(request: Request, rawKind: string, id: string
     const command = validateCommand(kind, body);
     const store = deps.store();
     const item = await store.execute(kind, id, command, userId);
-    return privateResponse(Response.json({ mode: store.mode, item }));
+    let homeColor: HomeColorOutcome | undefined;
+    if (command.action === 'publish' && item.kind === 'candidates' && item.status === 'published' && store.mode === 'database' && deps.onPublished) {
+      try { homeColor = await deps.onPublished(item, userId); } catch { homeColor = 'unavailable'; }
+    }
+    // Publication is already confirmed. A color failure must not turn it into
+    // a false publication error or cause the client to repeat the publish write.
+    return privateResponse(Response.json({ mode: store.mode, item, ...(homeColor ? { homeColor } : {}) }));
   } catch (error) { return failure(error); }
 }
