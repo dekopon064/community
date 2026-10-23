@@ -59,10 +59,25 @@ const names = ["MACHIMOA_REVIEW_MODE", "NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SER
 const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
 Object.assign(process.env, { MACHIMOA_REVIEW_MODE: "database", NEXT_PUBLIC_SUPABASE_URL: url, SUPABASE_SERVICE_ROLE_KEY: key });
 const fetchOriginal = globalThis.fetch; const fetchOptions = [];
-globalThis.fetch = (input, options) => { fetchOptions.push(options); return fetchOriginal(input, options); };
+let loopbackAccessDenied = false;
+globalThis.fetch = async (input, options) => {
+  const target = new URL(input instanceof Request ? input.url : input);
+  assert.equal(target.origin, url, "Only this test's loopback RPC server is allowed");
+  assert.match(target.pathname, /^\/rest\/v1\/rpc\/admin_review_/, "Only fake admin review RPC requests are allowed");
+  const guarded = { ...options, redirect: "error" };
+  fetchOptions.push(guarded);
+  try { return await fetchOriginal(input, guarded); }
+  catch (error) { loopbackAccessDenied ||= error.cause?.code === "EACCES"; throw error; }
+};
 try {
+  await assert.rejects(fetch("https://external.invalid/rest/v1/rpc/admin_review_list"), /loopback RPC server/);
+  await assert.rejects(fetch(`${url}/auth/v1/user`), /Only fake admin review RPC/);
+  assert.equal(fetchOptions.length, 0, "Rejected requests never reach the network");
   const store = getReviewStore(); assert.equal(store.mode, "database");
-  const list = await store.list("candidates", 25); assert.equal(list.length, 1); assert.equal("raw_payload" in list[0], false);
+  const list = await store.list("candidates", 25).catch((error) => {
+    if (loopbackAccessDenied) throw new Error("Local fake RPC connection blocked by the execution sandbox (EACCES); database assertions have not run. Re-run with loopback network access.");
+    throw error;
+  }); assert.equal(list.length, 1); assert.equal("raw_payload" in list[0], false);
   assert.deepEqual(requests.at(-1).args, { p_kind: "candidates", p_offset: 25, p_limit: 25 });
   const item = await store.get("candidates", id); assert.equal("raw_payload" in item, false); assert.deepEqual(item.content, candidate.content);
   const factItem = await store.get("facts", factId); assert.deepEqual(factItem.editableFields, facts.editableFields); assert.equal(factItem.excludeAllowed, false);
@@ -81,7 +96,7 @@ try {
   await store.execute("facts", factId, { revision: facts.revision, version: facts.version, action: "exclude", note: "local reason" }, actor);
   assert.equal(requests.at(-1).args.p_note, "local reason");
   for (const request of requests) { assert.equal(request.headers.authorization, `Bearer ${key}`); assert.equal(request.headers.apikey, key); assert.equal(request.headers.cookie, undefined); }
-  assert.ok(fetchOptions.every((options) => options.cache === "no-store" && options.signal));
+  assert.ok(fetchOptions.every((options) => options.cache === "no-store" && options.signal && options.redirect === "error"));
   for (const [message, code] of [["review_conflict", "conflict"], ["review_already_processed", "already_processed"], ["review_not_found", "not_found"], ["review_invalid_input", "invalid_input"], ["review_publish_failed", "publish_failed"], ["DO_NOT_ECHO_SECRET", "unavailable"]]) {
     failure = { code: "PT409", message, details: "DO_NOT_ECHO_SECRET" };
     await assert.rejects(store.get("candidates", id), (e) => e.code === code && !JSON.stringify(e).includes("DO_NOT_ECHO_SECRET"));
