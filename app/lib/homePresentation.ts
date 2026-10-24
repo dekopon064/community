@@ -7,7 +7,7 @@ import type { HomeTone } from './homeCardPalette';
 export type { HomeTone } from './homeCardPalette';
 export type HomeItem = {
   id: string; slug: string; title: string; summary: string; categoryLabel: string;
-  imageUrl: string | null; period: string | null; tone?: HomeTone;
+  imageUrl: string | null; period: string | null; tone?: HomeTone; toneManual?: boolean;
 };
 export type HomeSections = { deadline: HomeItem[]; experiences: HomeItem[]; learning: HomeItem[]; events: HomeItem[] };
 

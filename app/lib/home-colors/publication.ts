@@ -3,7 +3,7 @@ import type { RpcClient } from '../review/database-store';
 import { analyzeHomeImage } from './analysis';
 import { downloadHomeImage } from './download';
 
-export type HomeColorOutcome = 'completed' | 'failed' | 'no_image' | 'unchanged' | 'unavailable';
+export type HomeColorOutcome = 'completed' | 'completed_default' | 'failed' | 'no_image' | 'unchanged' | 'unavailable';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function preparePublishedHomeColor(client: RpcClient, item: CandidateItem, actor: string,
@@ -27,6 +27,7 @@ export async function preparePublishedHomeColor(client: RpcClient, item: Candida
     const out = await client.rpc('admin_home_color_finish', { p_id: item.publishedId, p_token: claim.token, p_actor: actor, p_tone: tone, p_state: state, p_reason: reason });
     if (out.error || !out.data || typeof out.data !== 'object') return 'unavailable';
     const result = out.data as Record<string, unknown>;
-    return result.state === 'completed' ? 'completed' : result.state === 'failed' ? 'failed' : 'unavailable';
+    if (result.state === 'completed' && state === 'completed' && result.tone === tone) return tone === 'default' ? 'completed_default' : 'completed';
+    return result.state === 'failed' && result.tone === 'default' ? 'failed' : 'unavailable';
   } catch { return 'unavailable'; } // Completion may have committed: never repeat it.
 }

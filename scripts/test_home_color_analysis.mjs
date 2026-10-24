@@ -79,6 +79,33 @@ await check('redirect, wrong type, excessive declared/streamed size fail without
   const h=fakeHttp(options);await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url));assert.equal(h.calls.length,1);
  }
 });
+await check('octet-stream PNG passes by signature, including split signature and MIME parameters',async()=>{
+ for(const chunks of [[bytes],[bytes.subarray(0,3),bytes.subarray(3,7),bytes.subarray(7)]]){
+  const h=fakeHttp({type:'application/octet-stream; charset=binary',chunks,declared:String(bytes.length)});
+  const loaded=await imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url);
+  assert.deepEqual(Buffer.from(loaded),bytes);assert.equal((await analyzeHomeImage(loaded)).tone,'orange');assert.equal(h.calls.length,1);
+ }
+});
+await check('octet-stream never admits HTML, SVG, JPEG, empty or truncated signatures',async()=>{
+ for(const input of [Buffer.from('<html>no file</html>'),Buffer.from('<svg/>'),await sharp(bytes).jpeg().toBuffer(),Buffer.alloc(0),bytes.subarray(0,7)]){
+  const h=fakeHttp({type:'application/octet-stream',chunks:[input]});
+  await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url),/image_format/);assert.equal(h.calls.length,1);
+ }
+});
+await check('new PNG path retains MIME allowlist, HTTP status and both size limits',async()=>{
+ for(const options of [{type:'text/html',chunks:[bytes]},{type:'application/x-octet-stream',chunks:[bytes]},{type:null},
+  {type:'application/octet-stream',status:302},{type:'application/octet-stream',status:403},
+  {type:'application/octet-stream',declared:String(imageByteLimit+1)},
+  {type:'application/octet-stream',declared:'-1'},{type:'application/octet-stream',declared:'2.0'},
+  {type:'application/octet-stream',chunks:[bytes,Buffer.alloc(imageByteLimit)]}]){
+  const h=fakeHttp(options);await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url));assert.equal(h.calls.length,1);
+ }
+});
+await check('PNG signature alone cannot bypass the actual raster decoder',async()=>{
+ const h=fakeHttp({type:'application/octet-stream',chunks:[Buffer.concat([bytes.subarray(0,8),Buffer.from('<svg/>')])]});
+ const input=await imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url);
+ await assert.rejects(()=>analyzeHomeImage(input));
+});
 await check('stalled DNS stops at the fixed deadline without sending HTTP',async()=>{
  const h=fakeHttp();await assert.rejects(()=>imageDownloader(()=>new Promise(()=>{}),h.connect)(url));assert.equal(h.calls.length,0);
 });
@@ -112,6 +139,16 @@ await check('first publish analyzes once; reentry and changed image never reanal
 });
 for(const source of ['seoul_reservation','myseoul_program','synthetic_future'])await check(source+' uses shared publication color path',async()=>{
  const {client,record}=fakeRpc();assert.equal(await preparePublishedHomeColor(client,{...published,source:{...published.source,name:source}},actor,async()=>bytes),'completed');assert.equal(record.tone,'orange');
+});
+await check('generic PNG download connects to one fenced completion through shared publication path',async()=>{
+ const {client,record}=fakeRpc(),h=fakeHttp({type:'application/octet-stream'});
+ assert.equal(await preparePublishedHomeColor(client,published,actor,imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)),'completed');
+ assert.equal(record.tone,'orange');assert.equal(record.calls.length,2);assert.equal(h.calls.length,1);
+});
+await check('successful neutral analysis is distinguished from failure without changing stored completed state',async()=>{
+ const {client,record}=fakeRpc();
+ assert.equal(await preparePublishedHomeColor(client,published,actor,async()=>png('#ffffff')),'completed_default');
+ assert.equal(record.state,'completed');assert.equal(record.tone,'default');assert.equal(record.reason,'ambiguous');
 });
 for(const state of ['no_image','processing','completed','failed'])await check(state+' never downloads or finishes again',async()=>{
  const {client,record}=fakeRpc({state});await preparePublishedHomeColor(client,published,actor,async()=>{throw Error('must not download')});assert.equal(record.calls.length,1);
@@ -147,6 +184,13 @@ await check('read failures/malformed tone use default; hidden or absent public r
  assert.deepEqual(await attachHomeCardColors([item],{rpc:async()=>({data:[],error:null})}),[]);
 });
 const origin='http://localhost:3100';
+await check('manual projection survives no image, drops stale flags, and exposes no admin metadata',async()=>{
+ const noImage={...item,imageUrl:null},client={rpc:async()=>({data:[{id:pub,tone:'red',manual:true,ready:true,actor:'PRIVATE'}],error:null})};
+ assert.deepEqual(await attachHomeCardColors([noImage],client),[{...noImage,tone:'red',toneManual:true}]);
+ const stale={...noImage,tone:'red',toneManual:true};
+ assert.deepEqual(await attachHomeCardColors([stale],{rpc:async()=>({data:null,error:{}})}),[{...noImage,tone:'default'}]);
+ assert.deepEqual(await attachHomeCardColors([stale],{rpc:async()=>({data:[{id:pub,tone:'blue',manual:false,ready:true}],error:null})}),[{...noImage,tone:'blue'}]);
+});
 function request(body,headers={}){return new Request(origin+'/api/admin/review/candidates/'+id,{method:'POST',headers:{origin,'content-type':'application/json',...headers},body:JSON.stringify(body)});}
 await check('actual handler: publish -> one color claim/analysis/finish, no facts/candidate edits',async()=>{
  const store=new LocalReviewStore(),before=await store.get('candidates',id),{client,record}=fakeRpc();let publications=0;

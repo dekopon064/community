@@ -35,6 +35,12 @@ const { homeCardPalette, homeCardColors } = await import('../app/lib/homeCardPal
 const { default: HomeExperience } = await import('../app/components/HomeExperience.tsx');
 const { default: HomeContentCard } = await import('../app/components/HomeContentCard.tsx');
 const { default: HomeFeaturedCarousel } = await import('../app/components/HomeFeaturedCarousel.tsx');
+// Explicit operator choices override the image-less fallback; automatic tones do not.
+for(const locale of ['ko','ja']) {
+  const manual={id:'manual',slug:'manual',title:'합성 手動',summary:'합성',categoryLabel:'프로그램',period:null,imageUrl:null,tone:'red',toneManual:true};
+  const html=renderToStaticMarkup(React.createElement(HomeContentCard,{item:manual,locale,featured:true}));
+  assert(html.includes('data-tone="red"'));assert(html.includes('#F6E4EC'));assert(!html.includes('PRIVATE'));
+}
 const row = id => ({ id, slug: id, title: '긴 제목 · 日本語のタイトル', summary: '현재 공개된 요약', userCategory: 'program',
   source_image_url: null, application_deadline_kind: 'none', application_deadline_on: null, event_start_on: null, event_end_on: null,
   content: 'private body must not cross', source_item_id: 'private source identity', contentFilters: { private: true } });

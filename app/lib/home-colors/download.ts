@@ -5,6 +5,7 @@ import { sourceImageUrl } from '../sourceImages';
 import { imageByteLimit } from './analysis';
 
 const blocked = new BlockList();
+const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 for (const [ip, prefix] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
   ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.88.99.0', 24], ['192.168.0.0', 16],
@@ -45,7 +46,11 @@ export function imageDownloader(resolve: ImageLookup, connect: ImageRequest) {
           signal: controller.signal, headers: { Host: url.hostname, Accept: 'image/jpeg,image/png,image/webp,image/gif,image/avif' } }, res => {
           const type = res.headers['content-type']?.split(';')[0].trim().toLowerCase();
           const declared = res.headers['content-length'];
-          if (res.statusCode !== 200 || !type || !['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'].includes(type)
+          // Some official download endpoints label real PNG files as binary.
+          // Admit only that MIME provisionally; verify PNG bytes below, then
+          // retain the analyzer's full raster decode/pixel limits.
+          const binaryPng = type === 'application/octet-stream';
+          if (res.statusCode !== 200 || !type || !binaryPng && !['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'].includes(type)
             || declared && (!/^\d+$/.test(declared) || Number(declared) > imageByteLimit)) {
             res.destroy(); reject(Error('image_response')); return;
           }
@@ -56,7 +61,12 @@ export function imageDownloader(resolve: ImageLookup, connect: ImageRequest) {
             if (length > imageByteLimit) { stopped = true; res.destroy(); reject(Error('image_size')); }
             else chunks.push(chunk);
           });
-          res.on('end', () => { if (!stopped) resolveBytes(Buffer.concat(chunks, length)); });
+          res.on('end', () => {
+            if (stopped) return;
+            const bytes = Buffer.concat(chunks, length);
+            if (binaryPng && !bytes.subarray(0, 8).equals(pngSignature)) reject(Error('image_format'));
+            else resolveBytes(bytes);
+          });
           res.on('error', () => reject(Error('image_download')));
           res.on('aborted', () => reject(Error('image_download')));
         });
