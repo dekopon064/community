@@ -8,6 +8,7 @@ import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurations } from "@/app/lib/curations";
 import { supabase } from '@/app/lib/supabase';
 import { attachHomeCardColors } from '@/app/lib/home-colors/public-read';
+import { readHomePins } from '@/app/lib/home-featured/public-read';
 
 // Keep publication visibility; compute all home selections at one request time.
 export const dynamic = "force-dynamic";
@@ -19,8 +20,9 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
 }
 
 async function HomeContents({ locale }: { locale: string }) {
-  const [rows, t, categories, filters] = await Promise.all([
+  const [rows, t, categories, filters, pins] = await Promise.all([
     fetchLocalizedCurations(locale), getTranslations("Home"), getTranslations("Categories"), getTranslations("PublicFilters"),
+    readHomePins(supabase),
   ]);
   const raw = t.raw("headlineParts");
   const parts = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
@@ -28,7 +30,7 @@ async function HomeContents({ locale }: { locale: string }) {
     ? locale === "ja" ? [parts.slice(0, 2).join(""), parts.slice(2).join("")] : [parts[0], parts.slice(1).join(" ")]
     : [t("headline")];
   const requestTime = new Date(), now = requestTime.getTime(), today = todayKst(requestTime);
-  const selection = selectHomeContent(rows, now);
+  const selection = selectHomeContent(rows, now, pins);
   const display = (values: typeof rows) => homeItems(values, locale, today, key => categories(key), now);
   // Colors are read only for the at-most-six representative cards. Lower sections
   // use the existing list cards and never trigger analysis or additional color reads.

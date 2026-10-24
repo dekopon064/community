@@ -80,7 +80,7 @@ for (const locale of ['ko','ja']) for (const count of [0,1,2,4]) check(`${locale
 check('the page retains one public fetch, structured selection and explicit section inputs', () => {
   const page = fs.readFileSync(path.join(root,'app/[locale]/page.tsx'),'utf8');
   assert.equal((page.match(/fetchLocalizedCurations\(locale\)/g)||[]).length,1);
-  assert(page.includes('force-dynamic')); assert(page.includes('selectHomeContent(rows, now)'));
+  assert(page.includes('force-dynamic')); assert(page.includes('selectHomeContent(rows, now, pins)'));
   assert(page.includes('sections={sections}')); assert(!page.includes('SKETCH_DATA'));
 });
 const approved = {
