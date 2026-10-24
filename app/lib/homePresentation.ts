@@ -61,6 +61,7 @@ export const homeCopy = {
   ko: {
     discover: '지금 살펴볼 정보', detail: '상세 내용 보기', previous: '이전 콘텐츠', next: '다음 콘텐츠',
     positions: '대표 콘텐츠 위치', expand: '펼쳐보기', close: '닫기', featured: '대표 콘텐츠', carousel: '캐러셀',
+    play: '재생', pause: '일시정지', playRotation: '대표 콘텐츠 자동 전환 재생', pauseRotation: '대표 콘텐츠 자동 전환 일시정지',
     emptyTitle: '지금은 소개할 정보가 없어요', emptyBody: '프로그램과 행사 목록을 살펴보세요.',
     programList: '프로그램 보기', eventList: '행사 보기', allPrograms: '프로그램 전체 목록 보기',
     deadline: '이번 주 신청 마감', deadlineEmpty: '신청 마감 정보는 프로그램 목록에서 확인해 주세요.',
@@ -76,6 +77,7 @@ export const homeCopy = {
   ja: {
     discover: 'いまチェックしたい情報', detail: '詳しく見る', previous: '前のコンテンツ', next: '次のコンテンツ',
     positions: '表示するコンテンツ', expand: 'すべて見る', close: '閉じる', featured: 'ピックアップ', carousel: 'カルーセル',
+    play: '再生', pause: '一時停止', playRotation: 'ピックアップの自動切替を再生', pauseRotation: 'ピックアップの自動切替を一時停止',
     emptyTitle: 'いま紹介できる情報はありません', emptyBody: 'プログラムやイベントの一覧をご覧ください。',
     programList: 'プログラムを見る', eventList: 'イベントを見る', allPrograms: 'プログラムの全一覧を見る',
     deadline: '今週、申込締切の情報', deadlineEmpty: '申込締切はプログラムの一覧でご確認ください。',
