@@ -12,7 +12,7 @@ export default function HomeContentCard({ item, locale, featured = false }: { it
   const [failed, setFailed] = useState<string | null>(null);
   const src = sourceImageUrl(item.imageUrl);
   const image = src && failed !== src ? src : null;
-  const colors = homeCardColors(item.tone, !!image);
+  const colors = homeCardColors(item.tone, !!image || item.toneManual === true);
   const words = homeWords(locale);
   const parts = item.title.match(/^(\([^)]*\)|（[^）]*）|\[[^\]]*\])([\s\S]+)$/);
   return <Link feedback="card" href={`/info/${item.slug}`} className={`${styles.contentCard} ${featured ? styles.featuredCard : styles.listCard}`}

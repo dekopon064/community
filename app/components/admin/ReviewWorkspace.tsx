@@ -4,7 +4,7 @@ import FilterReviewPanel, { CandidateFilterComparison } from './FilterReviewPane
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { CandidateImageSelection, CandidateContent, Facts, ReviewItem, ReviewKind, ListItem, ReviewCommand } from "@/app/lib/review/contracts";
-import { actionText, aiStatusText, categories, failureText, reasonText, sourceLink, statusText } from "@/app/lib/review/presentation";
+import { actionText, aiStatusText, categories, failureText, homeColorNotice, reasonText, sourceLink, statusText } from "@/app/lib/review/presentation";
 import { CandidateEditor, FactsEditor, fieldClass, primaryButton, secondaryButton } from "./ReviewEditors";
 import { CandidateContentNotices } from "./CandidateContentNotices";
 import CandidateImageEditor, { candidateImageError } from "./CandidateImageEditor";
@@ -23,6 +23,7 @@ import FactsGuidance from "./FactsGuidance";
 import { programReasonText } from "@/app/lib/review/program-contract";
 import { canEditPublishedBody, publishedBodyCommand } from "@/app/lib/review/published-body";
 import { reviewDetailPath } from "@/app/lib/review/program-ui";
+import PublishedHomeColor from './PublishedHomeColor';
 
 class RequestFailure extends Error {
   code: string; fields: Record<string, string>;
@@ -49,6 +50,7 @@ export default function ReviewWorkspace() {
   const [myseoulId, setMyseoulId] = useState<string | null>(null);
   const [programBlocked, setProgramBlocked] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
+  const [colorBlocked,setColorBlocked] = useState(false);
   const [aiBlocked,setAiBlocked]=useState(false);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [imageSelection, setImageSelection] = useState<CandidateImageSelection | null>(null);
@@ -57,7 +59,7 @@ export default function ReviewWorkspace() {
   const [filterBlocked, setFilterBlocked] = useState(false);
   const [operationBusy, setBusy] = useState(false);
   const [classificationBlocked,setClassificationBlocked]=useState(false),[classificationActive,setClassificationActive]=useState(false);
-  const busy = operationBusy || filterBlocked || classificationBlocked || aiBlocked || locationBusy;
+  const busy = operationBusy || filterBlocked || classificationBlocked || aiBlocked || locationBusy || colorBlocked;
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
@@ -153,7 +155,7 @@ export default function ReviewWorkspace() {
         command.action === "review_change" ? `${publicChange && command.disposition === "edited" ? "공개 내용을 수정하고 " : ""}최신 원문 대조와 처리 근거를 저장했습니다. AI 실행·재번역은 하지 않았습니다.` :
         command.action === "save_published_body" ? "한국어·일본어 공개 본문과 수정 이력을 저장했습니다. 게시 시각과 탐색 정보는 유지했습니다." :
         command.action === "save_candidate" ? "수정 내용을 비공개로 저장했습니다. AI 실행·재번역은 하지 않았습니다." :
-        command.action === "publish" ? "저장된 내용의 승인·게시와 이력을 기록했습니다." : command.action === "exclude" ? `제외했습니다. ${time(data.expiresAt)} (한국 시간)까지 휴지통에서 복구할 수 있습니다.` : "사유를 기록하고 후보를 반려했습니다.";
+        command.action === "publish" ? `저장된 내용의 승인·게시와 이력을 기록했습니다. ${data.mode === "local-fixture" ? "로컬 시험에서는 실제 이미지 분석을 실행하지 않았습니다." : homeColorNotice(data.homeColor)}` : command.action === "exclude" ? `제외했습니다. ${time(data.expiresAt)} (한국 시간)까지 휴지통에서 복구할 수 있습니다.` : "사유를 기록하고 후보를 반려했습니다.";
       if (command.action === "exclude") { setItem(null); setFacts(null); pendingRequest.current = null; }
       setNotice(data.mode === "local-fixture" ? `${result} 실제 DB 저장·게시는 아닌 로컬 시험 결과입니다.` : result);
     } catch (e) {
@@ -219,6 +221,7 @@ export default function ReviewWorkspace() {
             <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>
             <p className="mt-3 text-sm leading-6 text-info-muted">{item.source.name}{item.kind === "candidates" ? ` · ${item.category ? categories[item.category] : "분류 확인 필요"} · ${item.period}` : ""}</p>
           </header>
+          {publishedMode&&item.kind==='candidates'&&item.status==='published'&&item.publishedId&&<PublishedHomeColor key={item.id+item.version} id={item.id} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||locationBusy||fieldsDirty||Boolean(note)||Boolean(confirmation)} onBlocked={setColorBlocked}/>}
           {(!publishedMode&&(item.kind==='facts'||item.kind==='candidates'&&item.status==='published'))&&<ClassificationPanel key={item.id+item.version} id={item.id} disabled={operationBusy||fieldsDirty||Boolean(confirmation)} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const data=await call(`/api/admin/review/${item.kind}/${item.id}`);accept(data.item);setReload(n=>n+1);}}/>}
           {item.kind==='facts'&&!classificationActive&&<FactsGuidance item={item}/>}
           <details className="my-6 border-b border-info-rule pb-6">
