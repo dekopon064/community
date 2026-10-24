@@ -6,6 +6,7 @@ import { publicCurationItem, supportsExploration } from '@/app/lib/publicContent
 import Link from "@/app/components/PublicNavigationLink";
 import type { LocalizedCuration } from "@/app/lib/types";
 import { USER_CATEGORIES, type UserCategory } from "@/app/lib/userCategories";
+import programStyles from './ProgramListLayout.module.css';
 
 export default function CurationExplorer({
   curations,
@@ -22,6 +23,7 @@ export default function CurationExplorer({
   const t = useTranslations("Info");
   const categoriesT = useTranslations("Categories");
   const intro = selectedCategory ? t(`categoryIntros.${selectedCategory}`) : t("intro");
+  const program = selectedCategory === 'program';
 
   const filtered =
     selectedCategory === undefined
@@ -29,23 +31,23 @@ export default function CurationExplorer({
       : curations.filter((item) => item.userCategory === selectedCategory);
 
   return (
-    <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14">
-      <aside className="lg:sticky lg:top-28 lg:self-start">
-        <div className="flex flex-wrap items-center gap-2.5 md:gap-3">
+    <div className={program ? programStyles.shell : "grid min-w-0 gap-6 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14"}>
+      <aside className={program ? programStyles.intro : "lg:sticky lg:top-28 lg:self-start"}>
+        <div className={program ? programStyles.heading : "flex flex-wrap items-center gap-2.5 md:gap-3"}>
           {selectedCategory && (
             <CategoryIcon category={selectedCategory} size={48} className="h-10 w-10 shrink-0 md:h-12 md:w-12" />
           )}
-          <h1 className={`max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-primary-text md:text-5xl${locale === "ja" && selectedCategory === "youth_space" ? " lg:whitespace-nowrap lg:text-[clamp(2rem,3.3vw,2.625rem)]" : ""}`}>
+          <h1 className={program ? 'text-primary-text' : `max-w-[12ch] text-4xl font-bold leading-[1.12] tracking-[-0.035em] text-primary-text md:text-5xl${locale === "ja" && selectedCategory === "youth_space" ? " lg:whitespace-nowrap lg:text-[clamp(2rem,3.3vw,2.625rem)]" : ""}`}>
             {selectedCategory ? categoriesT(selectedCategory) : t("title")}
           </h1>
         </div>
-        <p className="public-readable mt-3 text-sm leading-6 text-info-muted lg:hidden">
+        <p className={program ? programStyles.introCompact : "public-readable mt-3 text-sm leading-6 text-info-muted lg:hidden"}>
           {selectedCategory ? intro : t("compactReviewNote")}
         </p>
-        <p className="public-readable mt-5 hidden max-w-md text-base leading-7 text-info-body lg:block">
+        <p className={program ? programStyles.introBody : "public-readable mt-5 hidden max-w-md text-base leading-7 text-info-body lg:block"}>
           {intro}
         </p>
-        <p className="mt-7 hidden border-t border-info-rule pt-5 text-sm leading-6 text-info-muted lg:block">
+        <p className={program ? programStyles.introSource : "mt-7 hidden border-t border-info-rule pt-5 text-sm leading-6 text-info-muted lg:block"}>
           {t("reviewNote")}
         </p>
 
