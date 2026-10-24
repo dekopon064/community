@@ -24,6 +24,7 @@ import { programReasonText } from "@/app/lib/review/program-contract";
 import { canEditPublishedBody, publishedBodyCommand } from "@/app/lib/review/published-body";
 import { reviewDetailPath } from "@/app/lib/review/program-ui";
 import PublishedHomeColor from './PublishedHomeColor';
+import PublishedHomeFeatured from './PublishedHomeFeatured';
 
 class RequestFailure extends Error {
   code: string; fields: Record<string, string>;
@@ -51,6 +52,7 @@ export default function ReviewWorkspace() {
   const [programBlocked, setProgramBlocked] = useState(false);
   const [locationBusy, setLocationBusy] = useState(false);
   const [colorBlocked,setColorBlocked] = useState(false);
+  const [featuredBlocked,setFeaturedBlocked] = useState(false);
   const [aiBlocked,setAiBlocked]=useState(false);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [imageSelection, setImageSelection] = useState<CandidateImageSelection | null>(null);
@@ -59,7 +61,7 @@ export default function ReviewWorkspace() {
   const [filterBlocked, setFilterBlocked] = useState(false);
   const [operationBusy, setBusy] = useState(false);
   const [classificationBlocked,setClassificationBlocked]=useState(false),[classificationActive,setClassificationActive]=useState(false);
-  const busy = operationBusy || filterBlocked || classificationBlocked || aiBlocked || locationBusy || colorBlocked;
+  const busy = operationBusy || filterBlocked || classificationBlocked || aiBlocked || locationBusy || colorBlocked || featuredBlocked;
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
@@ -221,7 +223,8 @@ export default function ReviewWorkspace() {
             <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>
             <p className="mt-3 text-sm leading-6 text-info-muted">{item.source.name}{item.kind === "candidates" ? ` · ${item.category ? categories[item.category] : "분류 확인 필요"} · ${item.period}` : ""}</p>
           </header>
-          {publishedMode&&item.kind==='candidates'&&item.status==='published'&&item.publishedId&&<PublishedHomeColor key={item.id+item.version} id={item.id} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||locationBusy||fieldsDirty||Boolean(note)||Boolean(confirmation)} onBlocked={setColorBlocked}/>}
+          {publishedMode&&item.kind==='candidates'&&item.status==='published'&&item.publishedId&&<PublishedHomeColor key={item.id+item.version} id={item.id} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||locationBusy||featuredBlocked||fieldsDirty||Boolean(note)||Boolean(confirmation)} onBlocked={setColorBlocked}/>}
+          {publishedMode&&item.kind==='candidates'&&item.status==='published'&&item.publishedId&&<PublishedHomeFeatured key={'featured'+item.id+item.version} id={item.id} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||locationBusy||colorBlocked||fieldsDirty||Boolean(note)||Boolean(confirmation)} onBlocked={setFeaturedBlocked}/>}
           {(!publishedMode&&(item.kind==='facts'||item.kind==='candidates'&&item.status==='published'))&&<ClassificationPanel key={item.id+item.version} id={item.id} disabled={operationBusy||fieldsDirty||Boolean(confirmation)} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const data=await call(`/api/admin/review/${item.kind}/${item.id}`);accept(data.item);setReload(n=>n+1);}}/>}
           {item.kind==='facts'&&!classificationActive&&<FactsGuidance item={item}/>}
           <details className="my-6 border-b border-info-rule pb-6">

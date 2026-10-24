@@ -3,8 +3,9 @@ import { endpointBoundary, eventTiming, programTiming, publicCurationItem } from
 import { parseContentFilters } from './contentFilters';
 import type { LocalizedCuration } from './types';
 
-// Approved local scope: no editorial pins, inferred topics, or unknown/closed
-// fallback. The caller supplies only localized, complete, publicly visible rows.
+// The caller supplies only localized, complete, publicly visible rows. Pins
+// change order only; they never grant eligibility or fill with unknown facts.
+export type HomePin = { id: string; position: 1 | 2 };
 export const homeLimits = Object.freeze({ featured: 6, deadline: 1, experiences: 2, learning: 2, events: 1 });
 const learningTopics = new Set(['language_learning', 'employment_career', 'daily_safety']);
 const DAY = 86_400_000;
@@ -35,7 +36,7 @@ function topic(item: LocalizedCuration) {
   } catch { return null; }
 }
 
-export function selectHomeContent(rows: readonly LocalizedCuration[], now: number): HomeSelection {
+export function selectHomeContent(rows: readonly LocalizedCuration[], now: number, pins: readonly HomePin[] = []): HomeSelection {
   const week = homeWeek(now), ids = new Set<string>(), slugs = new Set<string>();
   const unique = [...rows].sort(latest).filter(item => {
     if (ids.has(item.id) || slugs.has(item.slug)) return false;
@@ -48,10 +49,16 @@ export function selectHomeContent(rows: readonly LocalizedCuration[], now: numbe
   const deadline = programs.filter(({ timing }) => timing.deadlineKind === 'fixed' && timing.deadline
     && endpointBoundary(timing.deadline) >= week.start && endpointBoundary(timing.deadline) < week.end)
     .sort((a, b) => endpointBoundary(a.timing.deadline!, true) - endpointBoundary(b.timing.deadline!, true) || latest(a.item, b.item));
+  const eligible = [...programs.map(x => x.item), ...events.map(x => x.item)].sort(latest);
+  const validPins = pins.length <= 2 && new Set(pins.map(x => x.id)).size === pins.length
+    && new Set(pins.map(x => x.position)).size === pins.length && pins.every(x => x.position === 1 || x.position === 2);
+  const pinned = validPins ? [...pins].sort((a, b) => a.position - b.position)
+    .flatMap(pin => eligible.find(x => x.id === pin.id) ?? []) : [];
+  const pinnedIds = new Set(pinned.map(x => x.id));
   // Each section has its own role; intentional cross-section repetition is allowed.
   // Within every result the public ID/slug is unique. Titles never assign a topic.
   return {
-    featured: [...programs.map(x => x.item), ...events.map(x => x.item)].sort(latest).slice(0, homeLimits.featured),
+    featured: [...pinned, ...eligible.filter(x => !pinnedIds.has(x.id))].slice(0, homeLimits.featured),
     sections: {
       deadline: deadline.slice(0, homeLimits.deadline).map(x => x.item),
       experiences: programs.filter(x => topic(x.item) === 'culture_experience').slice(0, homeLimits.experiences).map(x => x.item),

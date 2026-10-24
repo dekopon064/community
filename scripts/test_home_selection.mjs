@@ -25,7 +25,7 @@ const mocks = {
   'next/image': moduleUrl(`import React from 'react';export default function Image({src,alt,unoptimized,...p}){return React.createElement('img',{src,alt,...p})}`),
   '@/i18n/navigation': link,
   '@/i18n/routing': moduleUrl(`export const routing={locales:['ko','ja']}`),
-  '@/app/lib/supabase': moduleUrl(`const query={select(...a){globalThis.homeTest.queries.push(['select',...a]);return this},eq(...a){globalThis.homeTest.queries.push(['eq',...a]);return this},order(...a){globalThis.homeTest.queries.push(['order',...a]);return this},then(done){return Promise.resolve({data:globalThis.homeTest.rows,error:null,count:globalThis.homeTest.rows.length}).then(done)}};export const supabase={from(name){if(name!=='curations')throw Error('unexpected_table');globalThis.homeTest.queries.push(['from',name]);return query},async rpc(name,args){if(name!=='public_home_card_colors')throw Error('write_or_analysis_forbidden');globalThis.homeTest.rpcCalls.push({name,args});if(args.p_ids.length>6)throw Error('color_bound');return {data:args.p_ids.map(id=>({id,ready:true,tone:'purple',manual:true})),error:null}}}`),
+  '@/app/lib/supabase': moduleUrl(`const query={select(...a){globalThis.homeTest.queries.push(['select',...a]);return this},eq(...a){globalThis.homeTest.queries.push(['eq',...a]);return this},order(...a){globalThis.homeTest.queries.push(['order',...a]);return this},then(done){return Promise.resolve({data:globalThis.homeTest.rows,error:null,count:globalThis.homeTest.rows.length}).then(done)}};export const supabase={from(name){if(name!=='curations')throw Error('unexpected_table');globalThis.homeTest.queries.push(['from',name]);return query},async rpc(name,args){globalThis.homeTest.rpcCalls.push({name,args});if(name==='public_home_featured_pins'){if(globalThis.homeTest.pinFailure)throw Error('synthetic_read_failure');return {data:globalThis.homeTest.pins??[],error:null}}if(name!=='public_home_card_colors')throw Error('write_or_analysis_forbidden');if(args.p_ids.length>6)throw Error('color_bound');return {data:args.p_ids.map(id=>({id,ready:true,tone:'purple',manual:true})),error:null}}}`),
 };
 registerHooks({
   resolve(specifier, context, next) {
@@ -192,7 +192,7 @@ await test('actual route localizes published rows, fills four sections, bounds o
     assert(!JSON.stringify(result.props).includes('PRIVATE_'));
     assert(queries.some(x => x[0] === 'eq' && x[1] === 'is_published' && x[2] === true));
     assert.equal(queries.filter(x => x[0] === 'from').length, 1);
-    assert.equal(rpcCalls.length, 1); assert.equal(rpcCalls[0].args.p_ids.length, 3);
+    assert.equal(rpcCalls.filter(x=>x.name==='public_home_featured_pins').length,1); assert.equal(rpcCalls.filter(x=>x.name==='public_home_card_colors')[0].args.p_ids.length,3);
     assert(result.props.items.every(x => x.tone === 'purple' && x.toneManual));
     const html = renderToStaticMarkup(result);
     for (const label of [locale === 'ko' ? '이번 주 신청 마감' : '今週、申込締切の情報', 'culture', 'learn', 'event']) assert(html.includes(label));
@@ -203,7 +203,7 @@ await test('actual route preserves empty/one/two/six carousel states and no writ
   for (const locale of ['ko', 'ja']) for (const count of [0, 1, 2, 6, 9]) {
     const result = await route(Array.from({ length: count }, (_, i) => raw(row(String(i)))), locale, now);
     assert.equal(result.props.items.length, Math.min(count, 6));
-    assert.equal(rpcCalls.length, count ? 1 : 0);
+    assert.equal(rpcCalls.filter(x=>x.name==='public_home_card_colors').length,count?1:0); assert.equal(rpcCalls.filter(x=>x.name==='public_home_featured_pins').length,1);
     const html = renderToStaticMarkup(result);
     assert.equal((html.match(/data-dot=/g) || []).length, count > 1 ? Math.min(count, 6) : 0);
     assert.equal((html.match(/aria-haspopup="dialog"/g) || []).length, count > 1 ? 1 : 0);
@@ -212,6 +212,24 @@ await test('actual route preserves empty/one/two/six carousel states and no writ
 });
 
 const snapshotArg = process.argv.indexOf('--snapshot');
+await test('pins lead the same six-item selection, preserve lower sections and skip expired/missing pins',()=>{
+ const rows=Array.from({length:9},(_,i)=>row(String(i)));const original=JSON.stringify(rows),automatic=select(rows,now);
+ const pins=[{id:'8',position:2},{id:'7',position:1}];const chosen=select(rows,now,pins);
+ assert.deepEqual(idList(chosen.featured),['7','8','0','1','2','3']);assert.deepEqual(chosen.sections,automatic.sections);assert.equal(JSON.stringify(rows),original);
+ assert.deepEqual(idList(select(rows,now,[{id:'missing',position:1}]).featured),idList(automatic.featured));
+ const closed=app('closed',{sourceStatus:'closed'});assert(!idList(select([...rows,closed],now,[{id:'closed',position:1}]).featured).includes('closed'));
+ for(const invalid of [[...pins,{id:'6',position:1}],[pins[0],pins[0]],[{id:'7',position:3}]])assert.deepEqual(idList(select(rows,now,invalid).featured),idList(automatic.featured));
+ assert.equal(select([],now,pins).featured.length,0);assert.equal(select([row('7')],now,pins).featured.length,1);
+});
+await test('actual ko/ja page reads public pins once, orders both languages identically, falls back safely',async()=>{
+ const ids=Array.from({length:8},(_,i)=>'30000000-0000-4000-8000-'+String(i+1).padStart(12,'0'));
+ const data=ids.map(x=>raw(row(x)));globalThis.homeTest.pins=[{id:ids[7],position:1},{id:ids[6],position:2}];
+ for(const locale of ['ko','ja']){const result=await route(data,locale,now);assert.deepEqual(idList(result.props.items),[ids[7],ids[6],...ids.slice(0,4)]);assert.equal(rpcCalls.filter(x=>x.name==='public_home_featured_pins').length,1);assert(!JSON.stringify(result.props).includes('stateVersion'));}
+ globalThis.homeTest.pinFailure=true;assert.deepEqual(idList((await route(data,'ko',now)).props.items),ids.slice(0,6));globalThis.homeTest.pinFailure=false;
+ const {readHomePins}=await import('../app/lib/home-featured/public-read.ts');
+ for(const bad of [[{id:ids[0],position:1,actor:'PRIVATE'}],[{id:'bad',position:1}],Array(3).fill({id:ids[0],position:1}),[{id:ids[0],position:1},{id:ids[0],position:2}]])assert.deepEqual(await readHomePins({rpc:async()=>({data:bad,error:null})}),[]);
+ assert.deepEqual(await readHomePins({rpc:async()=>({data:null,error:{message:'PRIVATE'}})}),[]);globalThis.homeTest.pins=[];
+});
 if (snapshotArg >= 0) await test('preserved actual public projection flows through the same route in both languages, with body text omitted', async () => {
   const snapshot = JSON.parse(fs.readFileSync(process.argv[snapshotArg + 1], 'utf8'));
   assert.equal(snapshot.rows.length, snapshot.count);
