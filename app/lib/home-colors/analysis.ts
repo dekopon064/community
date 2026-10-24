@@ -1,7 +1,9 @@
 import sharp from 'sharp';
 import type { HomeTone } from '../homeCardPalette';
 
-export const imageByteLimit = 2 * 1024 * 1024;
+// Shared compressed-byte budget for download and decoder input. Pixel/time
+// limits below remain independent of this transport allowance.
+export const imageByteLimit = 8 * 1024 * 1024;
 export type ColorResult = { tone: HomeTone; reason: 'matched' | 'ambiguous' };
 
 // Count chromatic area, including pale backgrounds, rather than rewarding
