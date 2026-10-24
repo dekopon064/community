@@ -65,7 +65,7 @@ check('finder keeps canonical list topic/province/district keys and blocks inven
   assert.equal(homeFinderHref('event', 'culture_arts', '28'), '/info/category/event?topic=culture_arts&region=28');
   assert.equal(new Set(homeDistricts('11','ja')).size, 25); assert.equal(homeDistricts('11','ko')[0], '강남구');
 });
-for (const locale of ['ko','ja']) for (const count of [0,1,2,4]) check(`${locale} ${count} cards: controls, unique peeks, overview and local destinations`, () => {
+for (const locale of ['ko','ja']) for (const count of [0,1,2,4,6]) check(`${locale} ${count} cards: controls, unique peeks, overview and local destinations`, () => {
   const items = Array.from({length:count}, (_,i) => ({...homeItems([row('item-'+i)], locale, '2026-10-23', k=>k)[0], summary: '<script>unsafe</script>'}));
   const html = renderToStaticMarkup(React.createElement(HomeExperience,{ locale, items, headline:['한국 생활','더 가까이'], intro:'소개', topicLabels:{culture_experience:'문화',language_learning:'언어',employment_career:'취업'} }));
   assert.equal((html.match(/data-home-slide=/g)||[]).length, count ? 1 : 0);
@@ -76,6 +76,17 @@ for (const locale of ['ko','ja']) for (const count of [0,1,2,4]) check(`${locale
   assert(!html.includes('<script>unsafe</script>')); assert(!html.includes('http'));
   assert(html.includes('href="/feedback"')); assert(html.includes('role="tablist"'));
   if(count) assert(html.includes('data-image="false"')); else assert(html.includes(locale === 'ko' ? '지금은 소개할 정보가 없어요' : 'いま紹介できる情報はありません'));
+});
+for (const title of ['(센터 안내) 긴 핵심 제목', '[公園案内] 長いメインタイトル', '（施設案内）日本語のタイトル']) check(`peek preserves complete accessible title: ${title}`,()=>{
+ const item={...homeItems([row('peek-title')],'ja','2026-10-23',k=>k)[0],title};
+ const html=renderToStaticMarkup(React.createElement(HomeFeaturedCarousel,{locale:'ja',items:[{...item,id:'first'},item]}));
+ const peek=html.match(/<button class="peek nextPeek"[\s\S]*?<\/button>/)?.[0];assert(peek);
+ assert(peek.includes(`title="${title}"`));assert(peek.includes(`aria-label="次のコンテンツ: ${title}"`));assert(peek.includes('class="peekContext"'));assert(peek.includes('class="peekMain"'));assert(peek.includes('aria-hidden="true"'));
+});
+check('manual palette survives missing image in both main and neighbouring card',()=>{
+ const item={...homeItems([row('manual-peek')],'ko','2026-10-23',k=>k)[0],imageUrl:null,tone:'blue',toneManual:true};
+ const html=renderToStaticMarkup(React.createElement(HomeFeaturedCarousel,{locale:'ko',items:[{...item,id:'first'},item]}));
+ const peek=html.match(/<button class="peek nextPeek"[\s\S]*?<\/button>/)?.[0];assert(peek?.includes('data-tone="blue"'));assert(peek.includes('#EFF1FC'));assert(html.includes('#E5E8F8'));
 });
 check('the page retains one public fetch, structured selection and explicit section inputs', () => {
   const page = fs.readFileSync(path.join(root,'app/[locale]/page.tsx'),'utf8');

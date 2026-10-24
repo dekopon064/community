@@ -9,17 +9,20 @@ import { homeWords, type HomeItem } from '../lib/homePresentation';
 import { homeCardColors } from '../lib/homeCardPalette';
 import styles from './HomeExperience.module.css';
 
+const titlePrefix = /^(\([^)]*\)|（[^）]*）|\[[^\]]*\])([\s\S]+)$/;
+
 function FeaturedPeek({ item, className, label, onSelect }: {
   item: HomeItem; className: string; label: string; onSelect: () => void;
 }) {
   const [failed, setFailed] = useState<string | null>(null), src = sourceImageUrl(item.imageUrl);
   const image = src && failed !== src ? src : null;
-  const colors = homeCardColors(item.tone, !!image);
+  const colors = homeCardColors(item.tone, !!image || item.toneManual === true);
+  const parts = item.title.match(titlePrefix);
   return <button className={`${styles.peek} ${className}`} onClick={onSelect} aria-label={label}
-    data-tone={colors.tone} data-image={image ? 'true' : 'false'} style={colors.style as CSSProperties}>
+    title={item.title} data-tone={colors.tone} data-image={image ? 'true' : 'false'} style={colors.style as CSSProperties}>
     <span className={styles.peekInner} aria-hidden="true">{image &&
       <Image src={image} alt="" width={240} height={128} unoptimized draggable={false} referrerPolicy="no-referrer" onError={() => setFailed(image)} />}
-      <span>{item.title}</span></span>
+      <span className={styles.peekTitle}>{parts ? <><span className={styles.peekContext}>{parts[1]}</span><span className={styles.peekMain}>{parts[2]}</span></> : <span className={styles.peekMain}>{item.title}</span>}</span></span>
   </button>;
 }
 
