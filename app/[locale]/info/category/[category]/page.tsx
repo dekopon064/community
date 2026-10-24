@@ -4,6 +4,7 @@ import CurationExplorer from "@/app/components/CurationExplorer";
 import { todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurations } from "@/app/lib/curations";
 import { isUserCategory } from "@/app/lib/userCategories";
+import programStyles from '@/app/components/ProgramListLayout.module.css';
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +21,8 @@ export default async function CategoryPage({
   const now = new Date();
 
   return (
-    <div className="min-h-[60vh] bg-canvas px-5 pb-24 pt-8 md:px-8 md:pt-16 lg:px-10 lg:pt-20">
-      <div className="mx-auto max-w-6xl">
+    <div className={category === 'program' ? `min-h-[60vh] bg-canvas ${programStyles.page}` : "min-h-[60vh] bg-canvas px-5 pb-24 pt-8 md:px-8 md:pt-16 lg:px-10 lg:pt-20"}>
+      <div className={category === 'program' ? programStyles.container : "mx-auto max-w-6xl"}>
         <CurationExplorer
           curations={curations}
           todayKst={todayKst(now)}
