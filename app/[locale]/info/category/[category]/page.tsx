@@ -21,8 +21,8 @@ export default async function CategoryPage({
   const now = new Date();
 
   return (
-    <div className={category === 'program' ? `min-h-[60vh] bg-canvas ${programStyles.page}` : "min-h-[60vh] bg-canvas px-5 pb-24 pt-8 md:px-8 md:pt-16 lg:px-10 lg:pt-20"}>
-      <div className={category === 'program' ? programStyles.container : "mx-auto max-w-6xl"}>
+    <div className={category === 'program' || category === 'event' ? `min-h-[60vh] bg-canvas ${programStyles.page}` : "min-h-[60vh] bg-canvas px-5 pb-24 pt-8 md:px-8 md:pt-16 lg:px-10 lg:pt-20"}>
+      <div className={category === 'program' || category === 'event' ? programStyles.container : "mx-auto max-w-6xl"}>
         <CurationExplorer
           curations={curations}
           todayKst={todayKst(now)}

@@ -10,6 +10,7 @@ import Link from "@/app/components/PublicNavigationLink";
 import type { UserCategory } from "@/app/lib/userCategories";
 import styles from "./SourceImageLayout.module.css";
 import programStyles from './ProgramListLayout.module.css';
+import eventStyles from './EventListLayout.module.css';
 
 export interface CurationCardProps {
   slug: string; category: UserCategory | null; categoryLabel: string | null;
@@ -17,11 +18,11 @@ export interface CurationCardProps {
   locale: string; deadlineKind: string | null; deadlineOn: string | null;
   eventStartOn: string | null; eventEndOn: string | null; todayKst: string;
   periodOverride?: ReactNode;
-  programLayout?: boolean; comparisonFacts?: ReactNode;
+  programLayout?: boolean; eventLayout?: boolean; comparisonFacts?: ReactNode;
 }
 
 export default function CurationCard({ slug, category, categoryLabel, title, summary, imageUrl,
-  summaryLabel, locale, deadlineKind, deadlineOn, eventStartOn, eventEndOn, todayKst, periodOverride, programLayout = false, comparisonFacts }: CurationCardProps) {
+  summaryLabel, locale, deadlineKind, deadlineOn, eventStartOn, eventEndOn, todayKst, periodOverride, programLayout = false, eventLayout = false, comparisonFacts }: CurationCardProps) {
   const src = sourceImageUrl(imageUrl), [failed, setFailed] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ left: number; top: number; imageMaxHeight: number } | null>(null);
   const thumb = useRef<HTMLAnchorElement>(null), panel = useRef<HTMLDivElement>(null);
@@ -29,6 +30,8 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
   const suppressed = useRef(false), id = useId();
   const japanese = locale === "ja", href = `/info/${slug}`;
   const hasImage = !!src && src !== failed;
+  const comparisonLayout = programLayout || eventLayout;
+  const comparisonCard = `${programStyles.card}${eventLayout ? ` ${eventStyles.card}` : ''}`;
   function clearTimers() { if (showTimer.current) clearTimeout(showTimer.current); if (closeTimer.current) clearTimeout(closeTimer.current); }
   function show(keyboard = false) {
     if (suppressed.current || !window.matchMedia("(min-width: 768px)").matches || (!keyboard && !window.matchMedia("(hover: hover)").matches) || !thumb.current) return;
@@ -80,15 +83,15 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
       {summaryLabel && <span className="sr-only">{summaryLabel}: </span>}{summary}
     </p></>;
 
-  const titleParts = programLayout ? title.match(/^(\([^)]*\)|（[^）]*）|\[[^\]]*\]|【[^】]*】)([\s\S]+)$/) : null;
+  const titleParts = comparisonLayout ? title.match(/^(\([^)]*\)|（[^）]*）|\[[^\]]*\]|【[^】]*】)([\s\S]+)$/) : null;
   const programText = <Link feedback="card" href={href} className={programStyles.text}>
     <div className={programStyles.meta}>{meta}</div>
     <h2 className={programStyles.title}>{titleParts ? <><span className={programStyles.context}>{titleParts[1]}</span>{titleParts[2]}</> : title}</h2>
     {comparisonFacts}
-    <p className={programStyles.summary}>{summaryLabel && <span className="sr-only">{summaryLabel}: </span>}{summary}</p>
+    <p className={programStyles.summary} data-list-summary>{summaryLabel && <span className="sr-only">{summaryLabel}: </span>}{summary}</p>
   </Link>;
 
-  if (programLayout && !hasImage) return <article data-source-card className={programStyles.card}><div className={`${programStyles.grid} ${programStyles.noImage}`}>{programText}</div></article>;
+  if (comparisonLayout && !hasImage) return <article data-source-card className={comparisonCard}><div data-list-grid className={`${programStyles.grid} ${programStyles.noImage}`}>{programText}</div></article>;
   if (!hasImage) return <Link feedback="card" href={href} data-source-card className="group block border-b border-info-rule bg-info-surface px-4 py-5 transition-colors hover:bg-info-hover focus-visible:bg-info-hover md:px-6 md:py-6">
     <article className={`grid min-w-0 gap-x-3 ${category ? "grid-cols-[24px_minmax(0,1fr)]" : "grid-cols-1"}`}>
       <div className={category ? "col-start-2" : "col-start-1"}>{meta}</div>
@@ -98,9 +101,9 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
   </Link>;
 
   return <>
-    <article data-source-card className={programLayout ? programStyles.card : styles.card}>
-      <div className={programLayout ? programStyles.grid : styles.cardGrid}>
-        <Link feedback="card" href={href} ref={thumb} className={programLayout ? programStyles.poster : styles.thumbnail} aria-controls={preview ? id : undefined} aria-expanded={!!preview}
+    <article data-source-card className={comparisonLayout ? comparisonCard : styles.card}>
+      <div data-list-grid className={comparisonLayout ? programStyles.grid : styles.cardGrid}>
+        <Link feedback="card" href={href} ref={thumb} data-list-poster className={comparisonLayout ? programStyles.poster : styles.thumbnail} aria-controls={preview ? id : undefined} aria-expanded={!!preview}
           aria-label={`${japanese ? "画像のある情報" : "이미지가 있는 정보"}: ${title}`}
           onMouseEnter={() => { suppressed.current = false; clearTimers(); showTimer.current = setTimeout(() => show(), 250); }}
           onMouseLeave={() => { suppressed.current = false; scheduleClose(); }}
@@ -111,10 +114,10 @@ export default function CurationCard({ slug, category, categoryLabel, title, sum
               event.preventDefault(); suppressed.current = false; show();
             }
           }}>
-          <Image src={src} alt="" fill unoptimized referrerPolicy="no-referrer" loading="lazy" className={programLayout ? programStyles.image : styles.image}
+          <Image src={src} alt="" fill unoptimized referrerPolicy="no-referrer" loading="lazy" className={comparisonLayout ? programStyles.image : styles.image}
             onError={() => { close(); setFailed(src); }} />
         </Link>
-        {programLayout ? programText : <Link feedback="card" href={href} className={styles.textLink}>{meta}<div className="pt-2">{text}</div></Link>}
+        {comparisonLayout ? programText : <Link feedback="card" href={href} className={styles.textLink}>{meta}<div className="pt-2">{text}</div></Link>}
       </div>
     </article>
     {preview && createPortal(<div ref={panel} id={id} role="region" aria-label={japanese ? "画像の拡大プレビュー" : "이미지 확대 미리보기"}
