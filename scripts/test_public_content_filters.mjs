@@ -141,12 +141,40 @@ for(const locale of ['ko','ja']){
     assert(!missing.includes('<span>'+labels.programTopics.other+'</span>'));
     assert(!render({delivery:known('online'),location:na}).includes(locale==='ja'?'地域情報未確認':'지역 정보 미확인'));
   });
-  test(locale+' program title context preserves full title and layout remains program-only',()=>{
+  test(locale+' program title context preserves full title without changing policy layout',()=>{
     const title=locale==='ja'?'【提供機関】長いプログラムの正式なタイトル':'[제공 기관] 길이가 긴 프로그램의 정식 제목';
     const html=renderToStaticMarkup(React.createElement(List,{items:[{...program(),title}],category:'program',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
     assert.equal(html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/)[1].replace(/<[^>]*>/g,''),title);
-    const other=renderToStaticMarkup(React.createElement(List,{items:[event()],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
+    const other=renderToStaticMarkup(React.createElement(List,{items:[item('policy','policy')],todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
     assert(!other.includes('class="facts"'));assert(!other.includes('class="context"'));
+  });
+  test(locale+' event comparison separates event day and known hours from status',()=>{
+    const e=event('timed',[],{schedule:known({kind:'continuous',recurrence:null,occurrences:[{start:endpoint('2026-11-14T12:00:00+09:00','minute'),end:endpoint('2026-11-14T16:00:00+09:00','minute')}]})});
+    const html=renderToStaticMarkup(React.createElement(List,{items:[e],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
+    assert(html.includes(locale==='ja'?'開催日':'행사일'));assert(html.includes('12:00'));assert(html.includes('16:00'));
+    assert.equal((html.match(/datetime="2026-11-14"/gi)||[]).length,1);
+    assert(html.includes('2026-11-14T12:00:00+09:00'));assert(html.includes(globalThis.testMessages.PublicFilters.eventStates.upcoming));
+    assert(html.includes('data-event-facts'));assert(html.includes(globalThis.testMessages.PublicFilters.eventTopics.culture_arts));
+    assert(html.includes(locale==='ja'?globalThis.testMessages.PublicFilters.districts['11']['강남구']:'강남구'));
+  });
+  test(locale+' day-only multi-day events show both dates without invented hours',()=>{
+    const html=renderToStaticMarkup(React.createElement(List,{items:[event('range',[['2026-10-03','2026-10-04']])],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
+    assert(html.includes('2026-10-03'));assert(html.includes('2026-10-04'));assert(!html.includes('00:00'));assert(!html.includes('23:59'));
+    assert(html.includes('data-state="ended"'));assert(!html.includes(globalThis.testMessages.PublicFilters.deadline));
+  });
+  test(locale+' unknown event facts and legacy dates retain their actual meaning',()=>{
+    const render=e=>renderToStaticMarkup(React.createElement(List,{items:[e],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
+    const html=render(event('missing',[],{schedule:unknown,location:unknown,topic:unknown}));
+    assert(html.includes(locale==='ja'?'日程情報未確認':'일정 정보 미확인'));assert(html.includes(locale==='ja'?'地域情報未確認':'지역 정보 미확인'));
+    assert(html.includes('data-state="unknown"'));assert(!html.includes('data-state="ended"'));assert(!html.includes(globalThis.testMessages.PublicFilters.eventTopics.other));
+    const legacy=render({...item('legacy','event'),event_start_on:'2026-11-14',event_end_on:'2026-11-14'});
+    assert(legacy.includes('2026-11-14'));assert(!legacy.includes('data-event-facts'));assert(!legacy.includes('00:00'));
+  });
+  test(locale+' event images and complete titles preserve existing navigation',()=>{
+    const title=locale==='ja'?'【主催機関】正式なイベント名を省略しない':'[주최 기관] 행사 정식 제목을 생략하지 않습니다';
+    const html=renderToStaticMarkup(React.createElement(List,{items:[{...event('image'),title,source_image_url:'https://global.seoul.go.kr/synthetic-event.jpg'}],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
+    assert.equal(html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/)[1].replace(/<[^>]*>/g,''),title);
+    assert.equal((html.match(/href="\/info\/image"/g)||[]).length,2);assert(html.includes('src="https://global.seoul.go.kr/synthetic-event.jpg"'));
   });
   globalThis.testParams='space=news';
   test(locale+' news has no empty region disclosure',()=>{const html=renderToStaticMarkup(React.createElement(List,{items:[space('n','news')],category:'youth_space',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));assert(!html.includes('<details'));assert(html.includes(globalThis.testMessages.PublicFilters.spaceKinds.news));});

@@ -7,6 +7,8 @@ import { useLocale, useTranslations } from 'next-intl';
 import { ChevronDown, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import CurationCard from './CurationCard';
 import ProgramComparisonFacts from './ProgramComparisonFacts';
+import EventComparisonFacts from './EventComparisonFacts';
+import eventStyles from './EventListLayout.module.css';
 import InfoStatePanel from './InfoStatePanel';
 import PublicFilterCalendar from './PublicFilterCalendar';
 import { eventTopics, programTopics, provinceLabels } from '@/app/lib/contentFilters';
@@ -215,8 +217,8 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
       return <span className="text-info-status">{t(`states.${timing.state}`)}{timing.deadline?<>{' · '}{t('deadline')} <time className="whitespace-nowrap" dateTime={timing.deadline.value}>{formatEndpoint(timing.deadline)}</time></>:<>{' · '}{t(timing.deadlineKind==='none'?'noDeadline':'unknownDeadline')}</>}</span>;
     }
     if(category==='event') {
-      const timing=eventTiming(item,now), occurrence=timing.occurrence;
-      return <span className="text-info-status">{t(`eventStates.${timing.state}`)}{occurrence&&<>{' · '}<time className="whitespace-nowrap" dateTime={occurrence.start.value}>{formatEndpoint(occurrence.start)}</time>{occurrence.start.value!==occurrence.end.value&&<>{' – '}<time className="whitespace-nowrap" dateTime={occurrence.end.value}>{formatEndpoint(occurrence.end)}</time></>}</>}</span>;
+      const timing=eventTiming(item,now);
+      return <span className={eventStyles.state} data-state={timing.state}>{t(`eventStates.${timing.state}`)}</span>;
     }
     return undefined;
   }
@@ -250,7 +252,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
       </>}
       {!category&&<p tabIndex={-1} id="curation-results-title" role="status" aria-live="polite" className={`${styles.resultTitle} mb-4`}>{infoT('resultCount',{count:results.length})}</p>}
       <div id="curation-results" className="flex min-w-0 flex-col border-t border-info-rule">
-        {results.length?results.map(item=><CurationCard key={item.id} slug={item.slug} category={item.userCategory} categoryLabel={item.userCategory?categoriesT(item.userCategory):null} title={item.title} summary={item.summary} imageUrl={item.source_image_url} summaryLabel={infoT('atAGlance')} locale={locale} deadlineKind={item.application_deadline_kind} deadlineOn={item.application_deadline_on} eventStartOn={item.event_start_on} eventEndOn={item.event_end_on} todayKst={todayKst} periodOverride={period(item)} programLayout={category==='program'} comparisonFacts={category==='program'?<ProgramComparisonFacts filters={item.contentFilters}/>:undefined}/>):<InfoStatePanel title={infoT(filteredEmpty?'searchEmptyTitle':'emptyTitle')} description={infoT(filteredEmpty?'searchEmptyDescription':'emptyDescription')} role="status" headingLevel={2}>
+        {results.length?results.map(item=><CurationCard key={item.id} slug={item.slug} category={item.userCategory} categoryLabel={item.userCategory?categoriesT(item.userCategory):null} title={item.title} summary={item.summary} imageUrl={item.source_image_url} summaryLabel={infoT('atAGlance')} locale={locale} deadlineKind={item.application_deadline_kind} deadlineOn={item.application_deadline_on} eventStartOn={item.event_start_on} eventEndOn={item.event_end_on} todayKst={todayKst} periodOverride={period(item)} programLayout={category==='program'} eventLayout={category==='event'} comparisonFacts={category==='program'?<ProgramComparisonFacts filters={item.contentFilters}/>:category==='event'?<EventComparisonFacts filters={item.contentFilters} occurrence={eventTiming(item,now).occurrence}/>:undefined}/>):<InfoStatePanel title={infoT(filteredEmpty?'searchEmptyTitle':'emptyTitle')} description={infoT(filteredEmpty?'searchEmptyDescription':'emptyDescription')} role="status" headingLevel={2}>
           {count>0?<button type="button" onClick={reset} className="min-h-11 rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white hover:bg-action-hover">{t('reset')}</button>:<Link href="/info" className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white">{t('allCategories')}</Link>}
         </InfoStatePanel>}
       </div>
