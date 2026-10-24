@@ -51,14 +51,19 @@ export function imageDownloader(resolve: ImageLookup, connect: ImageRequest) {
           // retain the analyzer's full raster decode/pixel limits.
           const binaryPng = type === 'application/octet-stream';
           if (res.statusCode !== 200 || !type || !binaryPng && !['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'].includes(type)
-            || declared && (!/^\d+$/.test(declared) || Number(declared) > imageByteLimit)) {
-            res.destroy(); reject(Error('image_response')); return;
+            || declared && !/^\d+$/.test(declared)) {
+            reject(Error('image_response')); res.destroy(); return;
+          }
+          if (declared && Number(declared) > imageByteLimit) {
+            reject(Error('image_size')); res.destroy(); return;
           }
           let length = 0, stopped = false; const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => {
             if (stopped) return;
             length += chunk.length;
-            if (length > imageByteLimit) { stopped = true; res.destroy(); reject(Error('image_size')); }
+            // destroy() may synchronously emit aborted/request error. Settle the
+            // known size failure first so those secondary events cannot mask it.
+            if (length > imageByteLimit) { stopped = true; reject(Error('image_size')); res.destroy(); }
             else chunks.push(chunk);
           });
           res.on('end', () => {

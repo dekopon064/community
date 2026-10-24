@@ -35,6 +35,15 @@ const {LocalReviewStore}=await import('../app/lib/review/local-fixture.ts');
 const {AdminAccessError}=await import('../app/lib/auth/admin-policy.ts');
 let checks=0;const check=async(name,fn)=>{await fn();checks++;console.log('PASS '+name)};
 const png=async(color)=>sharp({create:{width:24,height:24,channels:4,background:color}}).png().toBuffer();
+// Valid JPEG comment segments supply exact encoded-byte boundaries without
+// operational posters, image files or an enormous decoded image.
+function jpegAtSize(jpeg,target){
+ let remaining=target-jpeg.length;assert(remaining>=4);const parts=[jpeg.subarray(0,2)];
+ while(remaining){let size=Math.min(65537,remaining);if(remaining-size>0&&remaining-size<4)size-=4;
+  assert(size>=4);const segment=Buffer.alloc(size);segment.writeUInt16BE(0xfffe,0);segment.writeUInt16BE(size-2,2);parts.push(segment);remaining-=size;
+ }
+ parts.push(jpeg.subarray(2));return Buffer.concat(parts,target);
+}
 const colors={orange:'#f58c25',yellow:'#eedb28',green:'#26a892',blue:'#3865d8',purple:'#923fe0',red:'#dc3263'};
 for(const [tone,color]of Object.entries(colors))await check('real PNG decoder selects '+tone,async()=>assert.equal((await analyzeHomeImage(await png(color))).tone,tone));
 for(const format of ['jpeg','webp','gif','avif'])await check(format+' raster decodes without AI or file storage',async()=>assert.equal((await analyzeHomeImage(await sharp(await png(colors.orange)).toFormat(format).toBuffer())).tone,'orange'));
@@ -112,12 +121,14 @@ await check('public-only address validation includes IPv4/IPv6 reserved and mapp
  for(const ip of ['8.8.8.8','1.1.1.1','2606:4700:4700::1111','2001:4860:4860::8888'])assert.equal(isPublicImageAddress(ip),true,ip);
 });
 const bytes=await png(colors.orange);const url='https://images.example.org/poster.png';
-function fakeHttp({status=200,type='image/png',chunks=[bytes],declared,hold=false}={}){
+function fakeHttp({status=200,type='image/png',chunks=[bytes],declared,hold=false,abortOnDestroy=false}={}){
  const calls=[];
  const connect=(options,callback)=>{
   calls.push(options);const req=new EventEmitter();req.end=()=>queueMicrotask(()=>{
    const response=new Readable({read(){if(!hold){for(const chunk of chunks)this.push(chunk);this.push(null)}}});
-   response.statusCode=status;response.headers={'content-type':type,...(declared?{'content-length':declared}:{})};callback(response);
+   response.statusCode=status;response.headers={'content-type':type,...(declared?{'content-length':declared}:{})};
+   if(abortOnDestroy){const destroy=response.destroy.bind(response);response.destroy=(...args)=>{if(!response.destroyed){response.emit('aborted');req.emit('error',Error('synthetic connection reset'));}return destroy(...args);};}
+   callback(response);
    options.signal.addEventListener('abort',()=>{response.destroy();req.emit('error',Error('synthetic abort'))},{once:true});
   });return req;
  };return {connect,calls};
@@ -140,6 +151,62 @@ await check('redirect, wrong type, excessive declared/streamed size fail without
  for(const options of [{status:302},{status:500},{type:'text/html'},{declared:String(imageByteLimit+1)},{chunks:[Buffer.alloc(imageByteLimit),Buffer.from([1])]}]){
   const h=fakeHttp(options);await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url));assert.equal(h.calls.length,1);
  }
+});
+await check('stream size overflow stays image_size when destroy synchronously emits aborted and request error',async()=>{
+ const h=fakeHttp({chunks:[Buffer.alloc(imageByteLimit),Buffer.from([1])],abortOnDestroy:true});
+ await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url),{message:'image_size'});
+ assert.equal(h.calls.length,1);
+});
+await check('declared size overflow is image_size before response destruction, with no retry',async()=>{
+ for(const type of ['image/jpeg','application/octet-stream']){
+  const h=fakeHttp({type,declared:String(imageByteLimit+1),abortOnDestroy:true});
+  await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url),{message:'image_size'});assert.equal(h.calls.length,1);
+ }
+});
+await check('bad status, MIME or malformed length remains image_response despite destroy events',async()=>{
+ for(const options of [{status:403},{status:302},{type:'text/html'},{declared:'2.5'},{declared:'-1'}]){
+  const h=fakeHttp({...options,abortOnDestroy:true});
+  await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url),{message:'image_response'});assert.equal(h.calls.length,1);
+ }
+});
+await check('genuine connection abort without a size overflow stays image_download',async()=>{
+ for(const event of ['response','request']){
+  let calls=0;
+  const connect=(_options,callback)=>{calls++;const req=new EventEmitter();req.end=()=>queueMicrotask(()=>{
+   const response=new Readable({read(){}});response.statusCode=200;response.headers={'content-type':'image/jpeg'};callback(response);
+   if(event==='response')response.emit('aborted');else req.emit('error',Error('synthetic TLS/network failure'));response.destroy();
+  });return req;};
+  await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],connect)(url),{message:'image_download'});assert.equal(calls,1);
+ }
+});
+await check('download and full decoder share exactly 8MiB at below/equal/above boundaries',async()=>{
+ assert.equal(imageByteLimit,8*1024*1024);const jpeg=await sharp(bytes).jpeg().toBuffer();
+ for(const size of [imageByteLimit-1,imageByteLimit]){
+  const image=jpegAtSize(jpeg,size);assert.equal(image.length,size);
+  for(const declared of [undefined,String(size)]){
+   const h=fakeHttp({type:'image/jpeg',chunks:[image.subarray(0,2097152),image.subarray(2097152)],declared});
+   const loaded=await imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url);
+   assert.equal(loaded.length,size);assert.equal((await analyzeHomeImage(loaded)).tone,'orange');assert.equal(h.calls.length,1);
+  }
+ }
+ const oversized=jpegAtSize(jpeg,imageByteLimit+1);
+ await assert.rejects(()=>analyzeHomeImage(oversized),{message:'image_size'});
+ for(const chunks of [[oversized],[oversized.subarray(0,imageByteLimit),oversized.subarray(imageByteLimit)]]){
+  const h=fakeHttp({type:'image/jpeg',chunks,declared:String(imageByteLimit),abortOnDestroy:true});
+  await assert.rejects(()=>imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)(url),{message:'image_size'});assert.equal(h.calls.length,1);
+ }
+});
+await check('8MiB allowance never admits HTML, SVG or corrupt raster data to the decoder',async()=>{
+ for(const prefix of [Buffer.from('<html>not an image</html>'),Buffer.from('<svg/>'),Buffer.from([255,216,255,0,0,0])]){
+  const input=Buffer.alloc(imageByteLimit);prefix.copy(input);
+  await assert.rejects(()=>analyzeHomeImage(input));
+ }
+});
+await check('16 million pixels remains an independent accepted boundary; one extra row is rejected',async()=>{
+ const exact=await sharp({create:{width:4000,height:4000,channels:3,background:colors.blue}}).jpeg().toBuffer();
+ assert(exact.length<imageByteLimit);assert.equal((await analyzeHomeImage(exact)).tone,'blue');
+ const oversized=await sharp({create:{width:4000,height:4001,channels:3,background:colors.blue}}).jpeg().toBuffer();
+ assert(oversized.length<imageByteLimit);await assert.rejects(()=>analyzeHomeImage(oversized),/pixel limit/i);
 });
 await check('octet-stream PNG passes by signature, including split signature and MIME parameters',async()=>{
  for(const chunks of [[bytes],[bytes.subarray(0,3),bytes.subarray(3,7),bytes.subarray(7)]]){
@@ -206,6 +273,23 @@ await check('generic PNG download connects to one fenced completion through shar
  const {client,record}=fakeRpc(),h=fakeHttp({type:'application/octet-stream'});
  assert.equal(await preparePublishedHomeColor(client,published,actor,imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)),'completed');
  assert.equal(record.tone,'orange');assert.equal(record.calls.length,2);assert.equal(h.calls.length,1);
+});
+await check('synthetic 2,735,430-byte / 2577x3624 JPEG reaches one fenced completion with no retry',async()=>{
+ const jpeg=await sharp({create:{width:2577,height:3624,channels:3,background:colors.blue}}).jpeg().toBuffer();
+ const input=jpegAtSize(jpeg,2735430),{client,record}=fakeRpc();
+ const h=fakeHttp({type:'image/jpeg;charset=UTF-8',chunks:[input.subarray(0,2097152),input.subarray(2097152)]});
+ assert.equal(await preparePublishedHomeColor(client,published,actor,imageDownloader(async()=>[{address:'8.8.8.8',family:4}],h.connect)),'completed');
+ assert.equal(record.tone,'blue');assert.equal(h.calls.length,1);
+ assert.deepEqual(record.calls.map(x=>x.name),['admin_home_color_claim','admin_home_color_finish']);assert.equal(record.calls[1].args.p_token,token);
+});
+await check('simulated decoder timeout keeps the two-second setting and one fenced failure, no retry',async()=>{
+ const original=sharp.prototype.timeout;let timeouts=0;const {client,record}=fakeRpc();
+ sharp.prototype.timeout=function(options){assert.deepEqual(options,{seconds:2});timeouts++;const pipeline=original.call(this,options);pipeline.toBuffer=async()=>{throw Error('synthetic_decode_timeout');};return pipeline;};
+ try{
+  assert.equal(await preparePublishedHomeColor(client,published,actor,async()=>bytes),'failed');
+  assert.equal(timeouts,1);assert.equal(record.reason,'analysis_failed');
+  assert.deepEqual(record.calls.map(x=>x.name),['admin_home_color_claim','admin_home_color_finish']);
+ }finally{sharp.prototype.timeout=original;}
 });
 await check('successful neutral analysis is distinguished from failure without changing stored completed state',async()=>{
  const {client,record}=fakeRpc();
