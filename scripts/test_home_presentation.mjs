@@ -30,7 +30,7 @@ registerHooks({
     return next(file, context);
   },
 });
-const { currentHomeItems, homeFinderHref, homeDistricts } = await import('../app/lib/homePresentation.ts');
+const { homeItems, homeFinderHref, homeDistricts } = await import('../app/lib/homePresentation.ts');
 const { homeCardPalette, homeCardColors } = await import('../app/lib/homeCardPalette.ts');
 const { default: HomeExperience } = await import('../app/components/HomeExperience.tsx');
 const { default: HomeContentCard } = await import('../app/components/HomeContentCard.tsx');
@@ -46,16 +46,16 @@ const row = id => ({ id, slug: id, title: '긴 제목 · 日本語のタイト�
   content: 'private body must not cross', source_item_id: 'private source identity', contentFilters: { private: true } });
 let passed = 0;
 function check(name, run) { run(); passed++; console.log(`PASS ${name}`); }
-check('existing first-two order, immutable input and minimal public projection', () => {
+check('display projection preserves selected order, immutable input and minimal fields', () => {
   const rows = Object.freeze(['newest','second','third'].map(id => Object.freeze(row(id))));
-  const items = currentHomeItems(rows, 'ko', '2026-10-23', k => k);
-  assert.deepEqual(items.map(x => x.id), ['newest','second']);
+  const items = homeItems(rows, 'ko', '2026-10-23', k => k);
+  assert.deepEqual(items.map(x => x.id), ['newest','second','third']);
   assert(!JSON.stringify(items).includes('private')); assert.equal(items[0].period, '상시 모집');
   assert.equal(items[0].tone, undefined);
 });
 check('unknown dates stay unknown and closed content is not reclassified', () => {
-  assert.equal(currentHomeItems([{...row('a'), application_deadline_kind: null}], 'ko', '2026-10-23', k=>k)[0].period, null);
-  assert.equal(currentHomeItems([{...row('a'), application_deadline_kind: 'closed'}], 'ja', '2026-10-23', k=>k)[0].period, '受付終了');
+  assert.equal(homeItems([{...row('a'), application_deadline_kind: null}], 'ko', '2026-10-23', k=>k)[0].period, null);
+  assert.equal(homeItems([{...row('a'), application_deadline_kind: 'closed'}], 'ja', '2026-10-23', k=>k)[0].period, '受付終了');
 });
 check('finder keeps canonical list topic/province/district keys and blocks invented values', () => {
   const href = homeFinderHref('program', 'culture_experience', '11:강동구');
@@ -66,7 +66,7 @@ check('finder keeps canonical list topic/province/district keys and blocks inven
   assert.equal(new Set(homeDistricts('11','ja')).size, 25); assert.equal(homeDistricts('11','ko')[0], '강남구');
 });
 for (const locale of ['ko','ja']) for (const count of [0,1,2,4]) check(`${locale} ${count} cards: controls, unique peeks, overview and local destinations`, () => {
-  const items = Array.from({length:count}, (_,i) => ({...currentHomeItems([row('item-'+i)], locale, '2026-10-23', k=>k)[0], summary: '<script>unsafe</script>'}));
+  const items = Array.from({length:count}, (_,i) => ({...homeItems([row('item-'+i)], locale, '2026-10-23', k=>k)[0], summary: '<script>unsafe</script>'}));
   const html = renderToStaticMarkup(React.createElement(HomeExperience,{ locale, items, headline:['한국 생활','더 가까이'], intro:'소개', topicLabels:{culture_experience:'문화',language_learning:'언어',employment_career:'취업'} }));
   assert.equal((html.match(/data-home-slide=/g)||[]).length, count ? 1 : 0);
   assert.equal((html.match(/data-home-measure=/g)||[]).length, count);
@@ -77,11 +77,11 @@ for (const locale of ['ko','ja']) for (const count of [0,1,2,4]) check(`${locale
   assert(html.includes('href="/feedback"')); assert(html.includes('role="tablist"'));
   if(count) assert(html.includes('data-image="false"')); else assert(html.includes(locale === 'ko' ? '지금은 소개할 정보가 없어요' : 'いま紹介できる情報はありません'));
 });
-check('the page retains public fetch and existing first-two adapter, with no editorial selection policy', () => {
+check('the page retains one public fetch, structured selection and explicit section inputs', () => {
   const page = fs.readFileSync(path.join(root,'app/[locale]/page.tsx'),'utf8');
   assert.equal((page.match(/fetchLocalizedCurations\(locale\)/g)||[]).length,1);
-  assert(page.includes('force-dynamic')); assert(page.includes('currentHomeItems(rows'));
-  assert(!page.includes('sections=')); assert(!page.includes('SKETCH_DATA'));
+  assert(page.includes('force-dynamic')); assert(page.includes('selectHomeContent(rows, now)'));
+  assert(page.includes('sections={sections}')); assert(!page.includes('SKETCH_DATA'));
 });
 const approved = {
   default: {main:'#E8E8F3',peek:'#F0F0F7'}, orange: {main:'#FFF0E5',peek:'#FFF5EF'},
@@ -101,7 +101,7 @@ check('unassigned, invalid, inherited and former sketch tones use default; no im
   for(const tone of Object.keys(approved)) assert.equal(homeCardColors(tone,false).tone,'default');
 });
 for(const locale of ['ko','ja']) for(const [tone,colors] of Object.entries(approved)) check(`${locale} ${tone}: shared main/peek family with no visible review controls`, () => {
-  const item={...currentHomeItems([row(tone)],locale,'2026-10-23',k=>k)[0],imageUrl:'https://images.seoul.go.kr/poster.jpg',tone};
+  const item={...homeItems([row(tone)],locale,'2026-10-23',k=>k)[0],imageUrl:'https://images.seoul.go.kr/poster.jpg',tone};
   const html=renderToStaticMarkup(React.createElement(HomeFeaturedCarousel,{locale,items:[item,{...item,id:'other',slug:'other'}]}));
   const elements=[...html.matchAll(/<(a|button)\b[^>]*data-tone="([^"]*)"[^>]*>/g)].map(m=>m[0]);
   assert.equal(elements.length,4); // two inert measurements, one active card, one unique peek
@@ -114,7 +114,7 @@ for(const locale of ['ko','ja']) for(const [tone,colors] of Object.entries(appro
 });
 check('no image and rejected image URL use default even with a supplied color; list cards stay unchanged', () => {
   for(const imageUrl of [null,'javascript:alert(1)','http://localhost/poster.jpg']) {
-    const item={...currentHomeItems([row('fallback')],'ko','2026-10-23',k=>k)[0],imageUrl,tone:'red'};
+    const item={...homeItems([row('fallback')],'ko','2026-10-23',k=>k)[0],imageUrl,tone:'red'};
     const featured=renderToStaticMarkup(React.createElement(HomeFeaturedCarousel,{locale:'ko',items:[item,{...item,id:'other'}]}));
     assert.equal((featured.match(/data-tone="default"/g)||[]).length,4);
     assert(!featured.includes('data-tone="red"'));
