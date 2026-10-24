@@ -43,7 +43,7 @@ export default function HomeExperience({ locale, headline, intro, items, section
       </div>
       <section className={styles.learning} aria-labelledby="home-learning-title"><div className={styles.sectionHeading}>
         <h2 id="home-learning-title">{words.learning}</h2></div>{rows(sections?.learning)}
-        <Link className={styles.sectionMore} href="/info/category/program?topic=language_learning">{words.morePrograms}<HomeArrow /></Link>
+        <Link className={styles.sectionMore} href="/info/category/program?topic=language_learning&topic=employment_career&topic=daily_safety">{words.morePrograms}<HomeArrow /></Link>
       </section>
     </div>
     <section className={styles.events} aria-labelledby="home-events-title"><div className={styles.sectionHeading}>

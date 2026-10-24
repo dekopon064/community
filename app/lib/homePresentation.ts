@@ -3,6 +3,7 @@ import { districtChoices, eventTopics, programTopics, provinceLabels } from './c
 import { sortedDistrictChoices } from './districtSort';
 import type { LocalizedCuration } from './types';
 import type { HomeTone } from './homeCardPalette';
+import { eventTiming, programTiming, publicCurationItem } from './publicContentFilters';
 
 export type { HomeTone } from './homeCardPalette';
 export type HomeItem = {
@@ -11,18 +12,33 @@ export type HomeItem = {
 };
 export type HomeSections = { deadline: HomeItem[]; experiences: HomeItem[]; learning: HomeItem[]; events: HomeItem[] };
 
-// Preserve the incumbent home contract: the first two localized published rows,
-// already ordered by created_at descending in fetchLocalizedCurations. No new eligibility policy.
-export function currentHomeItems(rows: readonly LocalizedCuration[], locale: string, today: string,
-  categories: (key: string) => string): HomeItem[] {
-  return rows.slice(0, 2).map(item => ({
+// Display projection only. Selection is performed on structured public facts in
+// homeSelection; no body, private source identity or filter snapshot crosses here.
+export function homeItems(rows: readonly LocalizedCuration[], locale: string, today: string,
+  categories: (key: string) => string, now = Date.parse(today + 'T00:00:00+09:00')): HomeItem[] {
+  return rows.map(item => {
+    // Use the same published filter precedence/state as selection and public
+    // lists. Stale legacy dates must not label an eligible card as closed, and
+    // the next actual event occurrence must not become an application deadline.
+    let deadlineKind = item.application_deadline_kind, deadlineOn = item.application_deadline_on;
+    let eventStartOn = item.event_start_on, eventEndOn = item.event_end_on;
+    if (item.userCategory === 'program') {
+      const timing = programTiming(publicCurationItem(item), now);
+      deadlineKind = timing.state === 'closed' ? 'closed' : timing.deadlineKind === 'unknown' ? null : timing.deadlineKind;
+      deadlineOn = timing.state === 'closed' ? null : timing.deadline?.value.slice(0, 10) ?? null;
+    } else if (item.userCategory === 'event') {
+      const occurrence = eventTiming(publicCurationItem(item), now).occurrence;
+      eventStartOn = occurrence?.start.value.slice(0, 10) ?? null;
+      eventEndOn = occurrence?.end.value.slice(0, 10) ?? null;
+    }
+    return {
     id: item.id, slug: item.slug, title: item.title, summary: item.summary,
     imageUrl: item.source_image_url ?? null,
     categoryLabel: item.userCategory ? categories(item.userCategory) : '',
-    period: formatCurationPeriod({ category: item.userCategory, deadlineKind: item.application_deadline_kind,
-      deadlineOn: item.application_deadline_on, eventStartOn: item.event_start_on,
-      eventEndOn: item.event_end_on, todayKst: today, locale }),
-  }));
+    period: formatCurationPeriod({ category: item.userCategory, deadlineKind,
+      deadlineOn, eventStartOn, eventEndOn, todayKst: today, locale }),
+    };
+  });
 }
 
 // A destination builder only: the list remains the authority for filtering.

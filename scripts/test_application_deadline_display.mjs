@@ -85,7 +85,9 @@ const card = readFileSync(
   join(root, "../app/components/CurationCard.tsx"),
   "utf8",
 );
-assert.match(home, /todayKst=\{today\}/);
+// Home now projects dates before the carousel/list client boundary. The real
+// route and KST-relative label are also exercised in test_home_selection.mjs.
+assert.match(home, /homeItems\(values, locale, today,/);
 assert.match(entry, /CurationCard/);
 assert.match(detail, /CurationPeriodText/);
 assert.match(card, /CurationPeriodText/);

@@ -216,6 +216,6 @@ await check('actual handler: auth/origin/stale publish protections precede image
 await check('actual route is Node-only and calls the shared post-publish path, never a page-view analysis',()=>{
  const route=fs.readFileSync('app/api/admin/review/[kind]/[id]/route.ts','utf8'),page=fs.readFileSync('app/[locale]/page.tsx','utf8');
  assert(route.includes("runtime = 'nodejs'"));assert(route.includes('preparePublishedHomeColor(getReviewRpcClient(), item, actor)'));
- assert(page.includes('attachHomeCardColors(currentHomeItems('));assert(!/analyzeHomeImage|preparePublishedHomeColor|downloadHomeImage/.test(page));
+ assert(page.includes('attachHomeCardColors(display(selection.featured), supabase)'));assert(!/analyzeHomeImage|preparePublishedHomeColor|downloadHomeImage/.test(page));
 });
 console.log(JSON.stringify({passed:checks,real_images:0,external_network:0,operational_db:0,ai:0}));
