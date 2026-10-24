@@ -42,6 +42,68 @@ for(const color of ['#ffffff','#000000','#888888',{r:255,g:0,b:0,alpha:0}])await
 await check('balanced multiple colors do not force a family',()=>assert.equal(sampleTone(Uint8Array.from([255,0,0,255,0,0,255,255])).tone,'default'));
 await check('white margins and black text do not outweigh chromatic poster area',()=>assert.equal(sampleTone(Uint8Array.from([...Array(20).fill([255,255,255,255]).flat(),...Array(10).fill([0,0,0,255]).flat(),...Array(10).fill([255,120,20,255]).flat()])).tone,'orange'));
 await check('tiny color marks are not a dominant poster color',()=>assert.equal(sampleTone(Uint8Array.from([...Array(100).fill([255,255,255,255]).flat(),255,0,0,255])).tone,'default'));
+const pixels=(...parts)=>Uint8Array.from(parts.flatMap(([count,color])=>Array.from({length:count},()=>color).flat()));
+const paleColors={orange:[255,228,217,255],yellow:[255,255,221,255],green:[92,107,97,255],blue:[204,211,248,255],purple:[226,213,238,255],red:[245,217,225,255]};
+for(const [tone,color]of Object.entries(paleColors))await check('broad pale '+tone+' is a color, not a neutral margin',async()=>{
+ const rgba=pixels([75,color],[15,[255,255,255,255]],[10,[0,0,0,255]]);
+ assert.equal(sampleTone(rgba).tone,tone);
+ const image=await sharp(Buffer.from(rgba),{raw:{width:10,height:10,channels:4}}).png().toBuffer();
+ assert.equal((await analyzeHomeImage(image)).tone,tone);
+});
+await check('muted background area outweighs a small highly saturated decoration',()=>{
+ assert.equal(sampleTone(pixels([75,paleColors.green],[20,[255,255,255,255]],[5,[255,0,0,255]])).tone,'green');
+ assert.equal(sampleTone(pixels([70,paleColors.yellow],[20,[0,0,255,255]],[10,[255,120,0,255]])).tone,'yellow');
+});
+await check('pastel peach background is not replaced by a green illustration',()=>{
+ assert.equal(sampleTone(pixels([65,paleColors.orange],[20,[0,140,125,255]],[15,[255,255,255,255]])).tone,'orange');
+});
+await check('equal or sub-40% families stay ambiguous regardless of saturation',()=>{
+ for(const color of [paleColors.blue,[0,0,255,255]])assert.equal(sampleTone(pixels([50,color],[50,[255,0,0,255]])).tone,'default');
+ assert.equal(sampleTone(pixels([34,paleColors.yellow],[33,paleColors.green],[33,paleColors.red])).tone,'default');
+ assert.equal(sampleTone(pixels([39,paleColors.yellow],[35,paleColors.green],[26,paleColors.red])).tone,'default');
+});
+await check('exactly 40% qualifies when it is the unique largest chromatic area',()=>{
+ assert.equal(sampleTone(pixels([40,paleColors.yellow],[35,paleColors.green],[25,paleColors.red])).tone,'yellow');
+});
+await check('when two families exceed 40%, the larger area wins without a lead requirement',()=>{
+ assert.equal(sampleTone(pixels([47,paleColors.orange],[43,paleColors.red],[10,paleColors.green])).tone,'orange');
+ assert.equal(sampleTone(pixels([43,paleColors.orange],[47,paleColors.red],[10,paleColors.green])).tone,'red');
+ assert.equal(sampleTone(pixels([501,paleColors.orange],[499,paleColors.red])).tone,'orange');
+});
+await check('white margins are excluded from the 40% denominator but not the coverage guard',()=>{
+ assert.equal(sampleTone(pixels([75,[255,255,255,255]],[12,paleColors.blue],[13,[255,0,0,255]])).tone,'red');
+ assert.equal(sampleTone(pixels([93,[255,255,255,255]],[7,[0,0,255,255]])).tone,'default');
+ assert.equal(sampleTone(pixels([92,[255,255,255,255]],[8,[0,0,255,255]])).tone,'blue');
+});
+await check('an exact top tie remains default with white margins and another family',()=>{
+ assert.equal(sampleTone(pixels([50,[255,255,255,255]],[22,paleColors.orange],[22,paleColors.red],[6,paleColors.green])).tone,'default');
+});
+await check('partial-alpha ties are independent of family and pixel order',()=>{
+ const rgba=pixels([255,[255,0,0,128]],[128,[0,0,255,255]]);
+ assert.equal(sampleTone(rgba).tone,'default');
+ assert.equal(sampleTone(pixels([128,[0,0,255,255]],[255,[255,0,0,128]])).tone,'default');
+});
+await check('close neighbouring red/orange families are not automatically merged',()=>{
+ assert.equal(sampleTone(pixels([50,[250,40,50,255]],[50,[255,120,20,255]])).tone,'default');
+});
+await check('near-white warm paper and gray paper do not become background colors',()=>{
+ for(const paper of [[255,253,252,255],[245,245,245,255],[100,100,100,255]]){
+  assert.equal(sampleTone(pixels([97,paper],[3,[0,0,255,255]])).tone,'default');
+ }
+});
+await check('transparent pixels cannot invent a background or dilute a visible one',()=>{
+ assert.equal(sampleTone(pixels([900,[255,0,0,0]],[100,paleColors.green])).tone,'green');
+ assert.equal(sampleTone(pixels([900,[0,0,255,100]],[100,paleColors.yellow])).tone,'yellow');
+});
+await check('white information sheets retain a strong sparse accent',()=>{
+ assert.equal(sampleTone(pixels([75,[255,255,255,255]],[10,[30,65,100,255]],[15,[255,140,0,255]])).tone,'orange');
+});
+await check('larger portrait and landscape rasters preserve broad pale colors without upscaling',async()=>{
+ for(const [width,height]of [[384,512],[512,384],[8,8]]){
+  const buffer=await sharp({create:{width,height,channels:4,background:{r:92,g:107,b:97,alpha:1}}}).png().toBuffer();
+  assert.equal((await analyzeHomeImage(buffer)).tone,'green');
+ }
+});
 await check('corrupt, empty, excessive, SVG and TIFF input are rejected',async()=>{
  for(const bytes of [Buffer.from('not an image'),Buffer.alloc(0),Buffer.alloc(imageByteLimit+1),Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>'),await sharp(await png('#ff0000')).tiff().toBuffer()])await assert.rejects(()=>analyzeHomeImage(bytes));
 });
@@ -152,6 +214,36 @@ await check('successful neutral analysis is distinguished from failure without c
 });
 for(const state of ['no_image','processing','completed','failed'])await check(state+' never downloads or finishes again',async()=>{
  const {client,record}=fakeRpc({state});await preparePublishedHomeColor(client,published,actor,async()=>{throw Error('must not download')});assert.equal(record.calls.length,1);
+});
+await check('new pale-image logic completes only a new pending attempt through the same fenced RPC',async()=>{
+ const {client,record}=fakeRpc();let loads=0;
+ assert.equal(await preparePublishedHomeColor(client,published,actor,async()=>{loads++;return png({r:92,g:107,b:97,alpha:1});}),'completed');
+ assert.equal(record.tone,'green');assert.equal(record.reason,'matched');assert.equal(loads,1);
+ assert.deepEqual(record.calls.map(x=>x.name),['admin_home_color_claim','admin_home_color_finish']);
+ assert.equal(record.calls[1].args.p_token,token);
+});
+await check('40% winner reaches one fenced completion and a tied result stores default once',async()=>{
+ for(const [rgba,tone,outcome]of [
+  [pixels([40,paleColors.yellow],[35,paleColors.green],[25,paleColors.red]),'yellow','completed'],
+  [pixels([45,paleColors.orange],[45,paleColors.red],[10,paleColors.green]),'default','completed_default']
+ ]){
+  const {client,record}=fakeRpc();let loads=0;
+  const input=await sharp(Buffer.from(rgba),{raw:{width:10,height:10,channels:4}}).png().toBuffer();
+  const load=async()=>{loads++;return input;};
+  assert.equal(await preparePublishedHomeColor(client,published,actor,load),outcome);
+  assert.equal(record.tone,tone);assert.equal(record.reason,tone==='default'?'ambiguous':'matched');
+  assert.equal(await preparePublishedHomeColor(client,published,actor,load),'unchanged');
+  assert.equal(loads,1);assert.equal(record.calls.filter(x=>x.name==='admin_home_color_finish').length,1);
+ }
+});
+await check('stored successful and ambiguous results remain immutable after analyzer changes',async()=>{
+ for(const [tone,reason]of [['blue','matched'],['default','ambiguous']]){
+  const {client,record}=fakeRpc({state:'completed'});record.tone=tone;record.reason=reason;
+  const saved={state:record.state,tone:record.tone,reason:record.reason};
+  assert.equal(await preparePublishedHomeColor(client,published,actor,async()=>{throw Error('must_not_reanalyze');}),'unchanged');
+  assert.deepEqual({state:record.state,tone:record.tone,reason:record.reason},saved);
+  assert.deepEqual(record.calls.map(x=>x.name),['admin_home_color_claim']);
+ }
 });
 for(const load of [async()=>{throw Error('SECRET_URL')},async()=>Buffer.from('invalid')])await check('known download/decode failure saves default once',async()=>{
  const {client,record}=fakeRpc();assert.equal(await preparePublishedHomeColor(client,published,actor,load),'failed');
