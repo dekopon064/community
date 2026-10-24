@@ -50,6 +50,7 @@ try{
  await db.exec(textFix);eq(normalized((await q("select pg_get_functiondef('machimoa_review.home_featured_detail(uuid)'::regprocedure) definition"))[0].definition),normalized(originalDetail));
  const transported=originalDetail.replace('공개 글을 확인할 수 없습니다.','���� ���� Ȯ���� �� �����ϴ�.');assert.notEqual(transported,originalDetail);
  await db.exec(transported);await db.exec(textFix);eq(normalized((await q("select pg_get_functiondef('machimoa_review.home_featured_detail(uuid)'::regprocedure) definition"))[0].definition),normalized(originalDetail));eq(await fingerprint(),before);
+ await db.exec(await read('20261024021227_home_featured_legacy_filter_compat.sql'));eq(await fingerprint(),before);
  eq(await q('select oid,pg_get_functiondef(oid) definition,proacl::text acl from pg_proc where oid=any($1::oid[]) order by oid',[funcs.map(x=>x.oid)]),funcs);
  eq(await rpc('public_home_featured_pins',[]),[]);
  const a=await published('pin-a'),b=await published('pin-b'),c=await published('pin-c');let d=await detail(a.cid);eq(d.position,null);eq(d.stateVersion,0);eq(d.eligible,true);ok(!/PRIVATE|token|worker|content_ko/.test(JSON.stringify(d)));
@@ -83,6 +84,12 @@ try{
  data.application.value={deadlineKind:'none',start:null,end:null,sourceStatus:'open'};eq(await eligible(data),true);data.application=unknown;eq(await eligible(data),false);
  data=filters();data.application.value.sourceStatus='not_started';data.application.value.start=endpoint('2026-10-25');eq(await eligible(data),false);data.application.value.start=endpoint('2026-10-24');eq(await eligible(data),true);
  data=filters('event');eq(await eligible(data,undefined,'event'),true);data.schedule=unknown;eq(await eligible(data,undefined,'event'),false);
+ // parseContentFilters and the installed validator accept this optional legacy omission.
+ data=filters();delete data.foreignerProgram;eq(await eligible(data),true);
+ data.application.value.sourceStatus='unknown';eq(await eligible(data),false);data.application.value.sourceStatus='closed';eq(await eligible(data),false);
+ data.application.value.sourceStatus='open';data.application.value.start=endpoint('2099-01-01');eq(await eligible(data),false);
+ data=filters('event');delete data.foreignerProgram;eq(await eligible(data,undefined,'event'),true);
+ data.schedule=unknown;eq(await eligible(data,undefined,'event',{start:'2099-01-01',end:'2099-01-02'}),false);
  eq(await eligible(null,undefined,'event',{start:'2026-10-25',end:'2026-10-26'}),true);eq(await eligible(null,undefined,'event'),false);eq(await eligible(null),false);
  await q("update public.curations set user_category='program',application_deadline_kind='none',event_start_on=null,event_end_on=null,content_filters=$2 where id=$1",[c.pid,JSON.stringify(filters())]);
  await q("update public.curations set content_ja=null where id=$1",[c.pid]);eq((await detail(c.cid)).eligible,false);await reject(async()=>save(c.cid,await detail(c.cid),c.pid,2));await q("update public.curations set content_ja='本文' where id=$1",[c.pid]);

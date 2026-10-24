@@ -221,6 +221,12 @@ await test('pins lead the same six-item selection, preserve lower sections and s
  for(const invalid of [[...pins,{id:'6',position:1}],[pins[0],pins[0]],[{id:'7',position:3}]])assert.deepEqual(idList(select(rows,now,invalid).featured),idList(automatic.featured));
  assert.equal(select([],now,pins).featured.length,0);assert.equal(select([row('7')],now,pins).featured.length,1);
 });
+await test('optional legacy foreigner metadata never changes existing home eligibility or pin priority',()=>{
+ const legacy=row('legacy-open');delete legacy.contentFilters.foreignerProgram;
+ assert.deepEqual(idList(select([row('auto'),legacy],now,[{id:legacy.id,position:1}]).featured),['legacy-open','auto']);
+ legacy.contentFilters.application.value.sourceStatus='closed';assert.deepEqual(idList(select([legacy],now,[{id:legacy.id,position:1}]).featured),[]);
+ legacy.contentFilters.application.value.sourceStatus='unknown';assert.deepEqual(select([legacy],now).featured,[]);
+});
 await test('actual ko/ja page reads public pins once, orders both languages identically, falls back safely',async()=>{
  const ids=Array.from({length:8},(_,i)=>'30000000-0000-4000-8000-'+String(i+1).padStart(12,'0'));
  const data=ids.map(x=>raw(row(x)));globalThis.homeTest.pins=[{id:ids[7],position:1},{id:ids[6],position:2}];
