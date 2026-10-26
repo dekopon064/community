@@ -1,0 +1,16 @@
+[
+  {
+    "id": "seoul_reservation",
+    "label": "서울 공공서비스예약",
+    "collector": "seoul_culture_v1",
+    "ai": "seoul_program_v1",
+    "collectionHint": "문화 REST 최대 2,000건·HTTP 2회, 기존 항목 건너뜀"
+  },
+  {
+    "id": "myseoul_program",
+    "label": "My서울+",
+    "collector": "myseoul_v1",
+    "ai": "myseoul_program_v1",
+    "collectionHint": "목록 최대 2페이지·상세 최대 10건, 신규 발견과 상세 처리 수 구분"
+  }
+]

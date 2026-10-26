@@ -194,7 +194,32 @@ def process_seoul_collection(store, adapter, connector) -> dict:
     return counts
 
 
-def bounded_queue_targets(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pages: int) -> tuple[list[dict], dict]:
+def ready_queue_page(response,sources):
+    """Existing eligibility rules, shared by bounded selection and frozen PC runs."""
+    if (not isinstance(response,dict) or type(response.get('items')) is not list
+        or len(response['items'])>QUEUE_PAGE_SIZE or type(response.get('hasMore')) is not bool):
+        raise ValueError('seoul_queue_response_invalid')
+    targets=[];counts=dict(scanned=0,other_source=0,state_skipped=0)
+    for item in response['items']:
+        counts['scanned']+=1
+        if not isinstance(item,dict):raise ValueError('seoul_queue_response_invalid')
+        if item.get('sourceName') not in sources:
+            counts['other_source']+=1;continue
+        if (item.get('status')!='queued' or item.get('currentRevision') is not True
+            or item.get('leaseState')!='none' or type(item.get('retryCount')) is not int
+            or item['retryCount']!=0 or item.get('nextRetryAt') is not None):
+            counts['state_skipped']+=1;continue
+        UUID(item['sourceItemId'])
+        if not re.fullmatch('[a-f0-9]{64}',item['revision']):raise ValueError('seoul_queue_response_invalid')
+        targets.append(item)
+    return targets,counts
+
+
+def bounded_queue_targets(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pages: int, source: str | tuple[str,...] = 'seoul_reservation') -> tuple[list[dict], dict]:
+    sources=source if isinstance(source,tuple) else (source,)
+    if (not sources or len(sources)>25 or any(not isinstance(s,str) or not re.fullmatch('[a-z_]{1,40}',s) for s in sources)
+        or isinstance(source,str) and source not in {'seoul_reservation','myseoul_program'}):
+        raise ValueError('unsupported_queue_source')
     if type(max_jobs) is not int or not 1 <= max_jobs <= QUEUE_PAGE_SIZE or type(queue_pages) is not int or not 1 <= queue_pages <= 5:
         raise ValueError('seoul_ai_limits_required')
     targets, seen = [], set()
@@ -203,24 +228,9 @@ def bounded_queue_targets(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pag
                   unprocessed=0, automatic_retries=0, publish=False)
     for page in range(queue_pages):
         response = adapter.invoke('admin_review_ai_queue', {'p_offset':page*QUEUE_PAGE_SIZE,'p_limit':QUEUE_PAGE_SIZE,'p_watch':[]})
-        if (not isinstance(response,dict) or type(response.get('items')) is not list
-                or len(response['items'])>QUEUE_PAGE_SIZE or type(response.get('hasMore')) is not bool):
-            raise ValueError('seoul_queue_response_invalid')
-        for item in response['items']:
-            counts['scanned'] += 1
-            if not isinstance(item,dict):
-                raise ValueError('seoul_queue_response_invalid')
-            if item.get('sourceName')!='seoul_reservation':
-                counts['other_source'] += 1
-                continue
-            if (item.get('status')!='queued' or item.get('currentRevision') is not True
-                    or item.get('leaseState')!='none' or type(item.get('retryCount')) is not int
-                    or item['retryCount']!=0 or item.get('nextRetryAt') is not None):
-                counts['state_skipped'] += 1
-                continue
-            UUID(item['sourceItemId'])
-            if not re.fullmatch('[a-f0-9]{64}',item['revision']):
-                raise ValueError('seoul_queue_response_invalid')
+        rows,page_counts=ready_queue_page(response,sources)
+        for name,value in page_counts.items():counts[name]+=value
+        for item in rows:
             key=(item['sourceItemId'],item['revision'])
             if key in seen:
                 continue
@@ -239,18 +249,26 @@ def process_seoul_queue(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pages
     if type(no_retry) is not bool:
         raise ValueError('seoul_ai_failure_policy_invalid')
     targets,counts=bounded_queue_targets(adapter,max_jobs=max_jobs,queue_pages=queue_pages)
+    def process(item):
+        return process_seoul_program_job(adapter,source_item_id=item['sourceItemId'],revision=item['revision'],
+            summarize_ko=summarize_ko,translate_ja=translate_ja,worker_id=worker_id,no_retry=no_retry)
+    return process_ready_targets(targets,counts,process,
+        policy_for=lambda item:(no_retry,summarize_ko,translate_ja))
+
+
+def process_ready_targets(targets,counts,process_one,*,policy_for,after_each=None):
+    """Shared bounded batch: only an acknowledged item failure releases the Pro budget."""
     counts.update(items=[], batch_stopped=False, stop_reason=None)
     for index,item in enumerate(targets):
         # The existing claim authoritatively rechecks facts/filters, revisions,
         # active attempts and duplicate candidates. A queue read is no claim.
-        result=process_seoul_program_job(adapter,source_item_id=item['sourceItemId'],revision=item['revision'],
-            summarize_ko=summarize_ko,translate_ja=translate_ja,worker_id=worker_id,no_retry=no_retry)
+        result=process_one(item)
         counts['completed']+=result.completed
         counts['failed']+=result.failed+result.retried
         counts['unavailable_skipped']+=int(result.status=='ai_no_jobs')
         counts['state_unknown']+=result.state_unknown or int(result.status=='ai_state_unknown')
-        counts['items'].append(dict(sourceItemId=item['sourceItemId'], revision=item['revision'],
-            status=result.status, completed=result.completed, failed=result.failed,
+        counts['items'].append(dict(sourceItemId=item['sourceItemId'], revision=item['revision'],sourceName=item.get('sourceName'),
+            status=result.status, completed=result.completed, failed=result.failed,retried=result.retried,
             stateUnknown=result.state_unknown, errorCode=getattr(result,'error_code',None),
             failureScope=getattr(result,'failure_scope',None),
             failureStage=getattr(result,'failure_stage',None),
@@ -258,6 +276,7 @@ def process_seoul_queue(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pages
         stop = ('state_unknown' if result.status=='ai_state_unknown' or result.state_unknown else
                 'retry_registered' if result.retried else
                 'common_failure' if result.failed else None)
+        no_retry,summarize_ko,translate_ja=policy_for(item)
         if (no_retry and result.failed == 1 and not result.retried and not result.state_unknown
                 and result.status == 'processed' and getattr(result,'failure_scope',None)=='item'):
             # Only an acknowledged terminal failure releases the per-item Pro
@@ -275,5 +294,7 @@ def process_seoul_queue(adapter: ProgramAIAdapter, *, max_jobs: int, queue_pages
         if stop:
             counts.update(batch_stopped=True, stop_reason=stop)
             counts['unprocessed']+=len(targets)-index-1
+        if after_each is not None:after_each(counts)
+        if stop:
             break  # Never call another provider or write after ambiguity/common failure.
     return counts

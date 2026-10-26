@@ -1,5 +1,6 @@
 "use client";
 import {useCallback,useEffect,useRef,useState} from "react";
+import type {ReactNode} from 'react';
 import {aiSnapshot,aiStateText,aiFailureText,observeAi} from "@/app/lib/review/ai-queue";
 import type {AiSnapshot,Observation} from "@/app/lib/review/ai-queue";
 import {failureText} from "@/app/lib/review/presentation";
@@ -8,7 +9,7 @@ import AiQueueReview from './AiQueueReview';
 import type {AiReview} from '@/app/lib/review/ai-review';
 const sources={youthcenter_policy:"온통청년 정책",youthcenter_content:"온통청년 콘텐츠",seoul_reservation:"서울 공공서비스예약",myseoul_program:"마이서울플러스"};
 function time(value:string){return new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"short"}).format(new Date(value));}
-export default function AiQueuePanel({active,onBusy,onReview}:{active:boolean;onBusy:(blocked:boolean)=>void;onReview:(item:AiReview)=>void}){
+export default function AiQueuePanel({active,onBusy,onReview,execution}:{active:boolean;onBusy:(blocked:boolean)=>void;onReview:(item:AiReview)=>void;execution?:ReactNode}){
  const [selected,setSelected]=useState<string|null>(null),[detailBlocked,setDetailBlocked]=useState(false);
  const detailBusy=useCallback((blocked:boolean)=>{setDetailBlocked(blocked);onBusy(blocked);},[onBusy]);
  const [snapshot,setSnapshot]=useState<AiSnapshot|null>(null),[offset,setOffset]=useState(0);
@@ -47,6 +48,7 @@ export default function AiQueuePanel({active,onBusy,onReview}:{active:boolean;on
    <div><h2 className="text-xl font-bold">AI 작업 대기</h2><p className="mt-2 max-w-3xl leading-7 text-info-body">현재 검토를 마치고 실행 가능한 항목을 표시합니다. 검토 미완료 항목은 사람 사실 review에서 확인하세요. 새로고침은 상태 조회만 수행합니다.</p></div>
    <button type="button" className={secondaryButton} disabled={loading||detailBlocked} onClick={()=>void load(offset)}>{loading?"확인 중…":"새로고침"}</button>
   </div>
+  {execution}
   <p className="mt-3 text-sm leading-6 text-info-muted">{snapshot?`갱신 기준: ${time(snapshot.checkedAt)} (한국 시간)`:"수동으로 최신 상태를 확인합니다."} 화면에서 확인한 작업의 완료만 안내합니다.</p>
   {mode==="local-fixture"&&<p className="mt-3 text-sm text-info-status">로컬 시험 데이터 · 실제 운영 상태가 아닙니다.</p>}
   {error&&<div role="alert" className="my-5 border-y border-info-rule py-4 leading-7"><p className="text-info-status">AI 작업 목록을 불러오지 못했습니다. {failureText[error]??failureText.unavailable}</p>{snapshot&&<p className="mt-2 text-info-muted">아래는 마지막으로 확인한 상태입니다. 새로고침으로 다시 확인해 주세요.</p>}</div>}
