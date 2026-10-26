@@ -14,6 +14,7 @@ import LocationResearchPanel from "./LocationResearchPanel";
 import MySeoulReviewPanel from "./MySeoulReviewPanel";
 import { myseoulGuidance } from "@/app/lib/review/myseoul-contract";
 import AiQueuePanel from "./AiQueuePanel";
+import PcWorkerPanel,{PcWorkerProvider,PcAiRunPanel} from './PcWorkerPanel';
 import type {AiReview} from '@/app/lib/review/ai-review';
 import TrashPanel from "./TrashPanel";
 import { quickReasons } from "@/app/lib/review/trash";
@@ -175,7 +176,8 @@ export default function ReviewWorkspace() {
   const errorMessage = error ? publishedMode && error === "program_unavailable" ? "현재 수집원 권한 또는 공개 상태로 본문을 수정할 수 없습니다. 입력은 유지했습니다." : failureText[error] ?? failureText.unavailable : "";
   const source = item ? sourceLink(item.source.url) : null;
 
-  return <div className="mt-8">
+  return <PcWorkerProvider><div className="mt-8">
+    <PcWorkerPanel disabled={busy || dirty || Boolean(confirmation)} />
     <nav aria-label="검토 단계" className="flex flex-wrap gap-2 border-b border-info-rule pb-4">
       <button type="button" aria-current={kind === "facts" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("facts")} className={kind === "facts" ? primaryButton : secondaryButton}>사람 사실 review</button>
       <button type="button" aria-current={kind === "ai" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("ai")} className={kind === "ai" ? primaryButton : secondaryButton}>AI 작업 대기</button>
@@ -184,7 +186,7 @@ export default function ReviewWorkspace() {
       <button type="button" aria-current={kind === "trash" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("trash")} className={kind === "trash" ? primaryButton : secondaryButton}>휴지통</button>
     </nav>
     <TrashPanel active={kind === "trash"} onBusy={trashBusy} onRestored={restored} />
-    <AiQueuePanel active={kind === "ai"} onBusy={setAiBlocked} onReview={openAiRecheck}/>
+    <AiQueuePanel active={kind === "ai"} onBusy={setAiBlocked} onReview={openAiRecheck} execution={<PcAiRunPanel disabled={busy || dirty || Boolean(confirmation)}/>}/>
     <div hidden={kind === "ai" || kind === "trash"}>
     <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : publishedMode ? "게시된 글의 한국어·일본어 상세 본문을 수정합니다. ‘공개 본문 저장’은 현재 공개 글에 직접 반영되며, 수정 사유와 전후 이력을 남깁니다." : publicChange ? "공개된 콘텐츠의 원문 변경을 확인합니다. ‘공개 내용 수정·변경 확인’은 현재 공개 글에 직접 반영됩니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
     {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}
@@ -298,5 +300,5 @@ export default function ReviewWorkspace() {
       </section>
     </div>}
     </div>
-  </div>;
+  </div></PcWorkerProvider>;
 }
