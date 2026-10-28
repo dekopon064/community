@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import { sourceImageUrl } from "@/app/lib/sourceImages";
+import { sourceImageDisplayUrl as sourceImageUrl } from "@/app/lib/sourceImages";
 import styles from "./SourceImage.module.css";
 
 interface Props {

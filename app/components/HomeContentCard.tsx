@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import { useState, type CSSProperties } from 'react';
 import Link from './PublicNavigationLink';
-import { sourceImageUrl } from '../lib/sourceImages';
+import { sourceImageDisplayUrl as sourceImageUrl } from '../lib/sourceImages';
 import { homeWords, type HomeItem } from '../lib/homePresentation';
 import { homeCardColors } from '../lib/homeCardPalette';
 import styles from './HomeExperience.module.css';

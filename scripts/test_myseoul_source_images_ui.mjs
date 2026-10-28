@@ -9,11 +9,11 @@ const load=(path,deps)=>{
  }).outputText;
  const exports={};new Function('require','exports',code)(s=>s in deps?deps[s]:require(s),exports);return exports;
 };
-const {sourceImageUrl}=load('../app/lib/sourceImages.ts',{});
+const {sourceImageUrl,sourceImageDisplayUrl}=load('../app/lib/sourceImages.ts',{});
 let failed=null;
 const {default:SourceImage}=load('../app/components/SourceImage.tsx',{
  react:{useState:()=>[failed,v=>{failed=v;}]},'next/image':{default:()=>null},
- '@/app/lib/sourceImages':{sourceImageUrl},'./SourceImage.module.css':{default:{}}
+ '@/app/lib/sourceImages':{sourceImageUrl,sourceImageDisplayUrl},'./SourceImage.module.css':{default:{}}
 });
 const props={title:'합성 프로그램',locale:'ko',variant:'detail'};
 assert.equal(SourceImage(props),null);

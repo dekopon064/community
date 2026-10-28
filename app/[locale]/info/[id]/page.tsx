@@ -14,6 +14,8 @@ import ContentComments from "@/app/components/ContentComments";
 import { getCurationPeriodPresentation, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 import { isUserCategory } from "@/app/lib/userCategories";
+import LivingImageGallery from '@/app/components/LivingImageGallery';
+import { publicLivingGallery } from '@/app/lib/living/public-gallery';
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +46,7 @@ export default async function InfoDetailPage({
   };
   const hasPeriod = !!getCurationPeriodPresentation(periodInput);
   const canSave = isUserCategory(item.userCategory);
+  const gallery = await publicLivingGallery(item.source,item.source_item_id);
   return (
     <div className="mx-auto min-h-[60vh] max-w-6xl bg-canvas px-5 pt-8 pb-24 md:px-8 md:pt-12 lg:px-10 lg:pt-16">
       <CurationDetailHeading
@@ -56,7 +59,7 @@ export default async function InfoDetailPage({
             {t("back")}
           </Link>
         )}
-        url={item.source_image_url}
+        url={gallery.length?null:item.source_image_url}
         title={item.title}
         locale={locale}
         category={item.userCategory ? (
@@ -70,6 +73,7 @@ export default async function InfoDetailPage({
       />
 
       <CurationMobileSourceLink sourceUrl={item.source_url} />
+      {gallery.length>0&&<LivingImageGallery images={gallery} title={item.title} locale={locale}/>}
 
       <div className="mt-8 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
         <article className="public-readable min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">

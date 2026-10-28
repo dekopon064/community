@@ -1,7 +1,7 @@
 import { parseContentFilters } from './contentFilters';
 import { supabase } from "@/app/lib/supabase";
 import { isUserCategory, type UserCategory } from "@/app/lib/userCategories";
-import { sourceImageUrl } from "@/app/lib/sourceImages";
+import { sourceImageDisplayUrl as sourceImageUrl } from "@/app/lib/sourceImages";
 import type { Curation, LocalizedCuration } from "@/app/lib/types";
 import { routing } from "@/i18n/routing";
 

@@ -1,0 +1,53 @@
+{
+  "description": "Read-only production catalog contract for the living publish columns; not a full schema reconstruction.",
+  "projectRef": "czhiqikcpmujeujyfunq",
+  "capturedOn": "2026-10-28",
+  "constraints": [
+    {
+      "name": "curations_application_deadline_ck",
+      "definition": "CHECK ((((application_deadline_kind IS NULL) AND (application_deadline_on IS NULL)) OR ((application_deadline_kind = 'fixed'::text) AND (application_deadline_on IS NOT NULL)) OR ((application_deadline_kind = ANY (ARRAY['none'::text, 'closed'::text])) AND (application_deadline_on IS NULL))))",
+      "definition_md5": "8961f7e7c53fba389542ab26136a9a21"
+    },
+    {
+      "name": "curations_content_ja_length_ck",
+      "definition": "CHECK (((content_ja IS NULL) OR (((char_length(content_ja) >= 1) AND (char_length(content_ja) <= 200000)) AND (content_ja = btrim(content_ja)))))",
+      "definition_md5": "6e9ca1dcdc4f0ec71d8947d7d8221f86"
+    },
+    {
+      "name": "curations_content_ko_length_ck",
+      "definition": "CHECK (((content_ko IS NULL) OR (((char_length(content_ko) >= 1) AND (char_length(content_ko) <= 200000)) AND (content_ko = btrim(content_ko)))))",
+      "definition_md5": "902903ef56afb4de2b370acb40c4c262"
+    },
+    {
+      "name": "curations_source_image_url_ck",
+      "definition": "CHECK (((source_image_url IS NULL) OR ((machimoa_review.safe_source_image_url(source_image_url) IS NOT NULL) AND (source_image_url = machimoa_review.safe_source_image_url(source_image_url)))))",
+      "definition_md5": "9dabe9f0b490e9abbe7acbb55058286b"
+    },
+    {
+      "name": "curations_summary_ja_length_ck",
+      "definition": "CHECK (((summary_ja IS NULL) OR (((char_length(summary_ja) >= 1) AND (char_length(summary_ja) <= 1000)) AND (summary_ja = btrim(summary_ja)))))",
+      "definition_md5": "dec69e788431a10fd4bdbc343a3e00e6"
+    },
+    {
+      "name": "curations_summary_ko_length_ck",
+      "definition": "CHECK (((summary_ko IS NULL) OR (((char_length(summary_ko) >= 1) AND (char_length(summary_ko) <= 1000)) AND (summary_ko = btrim(summary_ko)))))",
+      "definition_md5": "d72aac0194109b5997122122c2a3ee6d"
+    },
+    {
+      "name": "curations_title_ja_length_ck",
+      "definition": "CHECK (((title_ja IS NULL) OR (((char_length(title_ja) >= 1) AND (char_length(title_ja) <= 300)) AND (title_ja = btrim(title_ja)))))",
+      "definition_md5": "d7e7c4ff7ce0bc824640b257c6148409"
+    },
+    {
+      "name": "curations_title_ko_length_ck",
+      "definition": "CHECK (((title_ko IS NULL) OR (((char_length(title_ko) >= 1) AND (char_length(title_ko) <= 300)) AND (title_ko = btrim(title_ko)))))",
+      "definition_md5": "7026f02d581d1171b3136128031b1b11"
+    },
+    {
+      "name": "curations_user_category_period_ck",
+      "definition": "CHECK ((((user_category IS NULL) AND (event_start_on IS NULL) AND (event_end_on IS NULL)) OR ((user_category = ANY (ARRAY['policy'::text, 'program'::text])) AND (application_deadline_kind IS NOT NULL) AND (event_start_on IS NULL) AND (event_end_on IS NULL)) OR ((user_category = 'event'::text) AND (application_deadline_kind IS NULL) AND (event_start_on IS NOT NULL) AND (event_end_on IS NOT NULL) AND (event_start_on <= event_end_on)) OR ((user_category = ANY (ARRAY['youth_space'::text, 'living'::text])) AND (application_deadline_kind IS NULL) AND (event_start_on IS NULL) AND (event_end_on IS NULL))))",
+      "definition_md5": "b6502733f2697767f3a6d006a5890b61"
+    }
+  ],
+  "sourceImageFunctionBodyMd5": "4d1fcb163dfe0aa059daa854d93647d8"
+}

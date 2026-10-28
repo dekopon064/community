@@ -6,9 +6,10 @@ import { useEffect, useId, useRef, useState, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import styles from "./SourceImageLayout.module.css";
 
-export default function SourceImageDialog({ src, title, locale, trigger }: {
+export default function SourceImageDialog({ src, title, locale, trigger, kind='source' }: {
   src: string; title: string; locale: string;
   trigger: React.RefObject<HTMLButtonElement | null>;
+  kind?: 'source'|'article';
 }) {
   const id = useId(), dialog = useRef<HTMLDialogElement>(null);
   const [open, setOpen] = useState(false);
@@ -119,7 +120,7 @@ export default function SourceImageDialog({ src, title, locale, trigger }: {
         const next = index < 0 ? (event.shiftKey ? targets.length - 1 : 0) : (index + (event.shiftKey ? -1 : 1) + targets.length) % targets.length;
         event.preventDefault(); targets[next]?.focus({ preventScroll: true });
       }}>
-      <h2 id={id} className="sr-only">{japanese ? "提供元の画像を拡大" : "수집원 이미지 크게 보기"}</h2>
+      <h2 id={id} className="sr-only">{kind==='article'?(japanese?'画像を拡大':'이미지 크게 보기'):(japanese ? "提供元の画像を拡大" : "수집원 이미지 크게 보기")}</h2>
       <button type="button" onClick={close} className={styles.close} aria-label={japanese ? "画像の拡大表示を閉じる" : "이미지 확대 보기 닫기"}><X size={16} aria-hidden="true" /></button>
       <div ref={scrollArea} className={styles.dialogScroll} tabIndex={0}
         aria-label={japanese ? "長い画像はスクロールして確認できます" : "긴 이미지는 스크롤해서 확인할 수 있습니다"}
@@ -132,7 +133,7 @@ export default function SourceImageDialog({ src, title, locale, trigger }: {
             if (event.detail === 0 || gesture.current.clickAllowed) close();
             gesture.current.clickAllowed = false;
           }}>
-          <Image src={src} alt={`${japanese ? "提供元の画像" : "수집원 제공 이미지"}: ${title}`} width={600} height={800} unoptimized referrerPolicy="no-referrer" draggable={false} className={styles.fullImage} />
+          <Image src={src} alt={`${kind==='article'?(japanese?'カードニュース':'카드뉴스'):(japanese ? "提供元の画像" : "수집원 제공 이미지")}: ${title}`} width={600} height={800} unoptimized referrerPolicy="no-referrer" draggable={false} className={styles.fullImage} />
         </button>
       </div>
     </dialog>, document.body,
