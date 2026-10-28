@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import Image from 'next/image';
-import { sourceImageUrl } from '../lib/sourceImages';
+import { sourceImageDisplayUrl as sourceImageUrl } from '../lib/sourceImages';
 import Link from './PublicNavigationLink';
 import HomeContentCard, { HomeArrow } from './HomeContentCard';
 import { homeWords, type HomeItem } from '../lib/homePresentation';

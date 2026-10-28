@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CategoryIcon from "@/app/components/CategoryIcon";
 import CurationPeriodText from "@/app/components/CurationPeriodText";
-import { sourceImageUrl } from "@/app/lib/sourceImages";
+import { sourceImageDisplayUrl as sourceImageUrl } from "@/app/lib/sourceImages";
 import Link from "@/app/components/PublicNavigationLink";
 import type { UserCategory } from "@/app/lib/userCategories";
 import styles from "./SourceImageLayout.module.css";

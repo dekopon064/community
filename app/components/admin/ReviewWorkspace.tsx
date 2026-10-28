@@ -179,6 +179,7 @@ export default function ReviewWorkspace() {
   return <PcWorkerProvider><div className="mt-8">
     <PcWorkerPanel disabled={busy || dirty || Boolean(confirmation)} />
     <nav aria-label="검토 단계" className="flex flex-wrap gap-2 border-b border-info-rule pb-4">
+      <Link href="/ko/admin/living" className={secondaryButton} aria-disabled={busy||dirty||Boolean(confirmation)} onClick={event=>{if(busy||dirty||confirmation)event.preventDefault();}}>생활 글 작성</Link>
       <button type="button" aria-current={kind === "facts" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("facts")} className={kind === "facts" ? primaryButton : secondaryButton}>사람 사실 review</button>
       <button type="button" aria-current={kind === "ai" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("ai")} className={kind === "ai" ? primaryButton : secondaryButton}>AI 작업 대기</button>
       <button type="button" aria-current={kind === "candidates" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("candidates")} className={kind === "candidates" ? primaryButton : secondaryButton}>AI 결과 후보 검토</button>

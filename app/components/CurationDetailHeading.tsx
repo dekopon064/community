@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { ZoomIn } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
-import { sourceImageUrl } from "@/app/lib/sourceImages";
+import { sourceImageDisplayUrl as sourceImageUrl } from "@/app/lib/sourceImages";
 import SourceImageDialog from "./SourceImageDialog";
 import styles from "./SourceImageLayout.module.css";
 
