@@ -14,6 +14,7 @@ export default async function CurationMobileSourceLink({
   return (
     <div className="mt-5 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-info-rule pt-3.5 text-sm leading-6 lg:hidden" data-mobile-source>
       <a
+        data-ga4-official-link="mobile_source"
         href={source.href}
         target="_blank"
         rel="noopener noreferrer"

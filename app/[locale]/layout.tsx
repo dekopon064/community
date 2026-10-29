@@ -10,6 +10,8 @@ import Header from "@/app/components/Header";
 import SiteFooter from "@/app/components/SiteFooter";
 import BottomNav from "@/app/components/BottomNav";
 import ThemeBootstrap from "@/app/components/ThemeBootstrap";
+import Ga4Analytics from "@/app/components/Ga4Analytics";
+import { ga4Config } from "@/app/lib/analytics/ga4";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -84,6 +86,7 @@ export default async function LocaleLayout({
   setRequestLocale(locale);
 
   const notoSans = locale === "ja" ? notoSansJp : notoSansKr;
+  const analytics = ga4Config(process.env);
 
   return (
     <html
@@ -103,6 +106,7 @@ export default async function LocaleLayout({
               <SiteFooter />
             </main>
             <BottomNav />
+            {analytics ? <Ga4Analytics config={analytics} /> : null}
           </div>
         </NextIntlClientProvider>
       </body>
