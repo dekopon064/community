@@ -48,7 +48,8 @@ export default async function InfoDetailPage({
   const canSave = isUserCategory(item.userCategory);
   const gallery = await publicLivingGallery(item.source,item.source_item_id);
   return (
-    <div className="mx-auto min-h-[60vh] max-w-6xl bg-canvas px-5 pt-8 pb-24 md:px-8 md:pt-12 lg:px-10 lg:pt-16">
+    <div className="mx-auto min-h-[60vh] max-w-6xl bg-canvas px-5 pt-8 pb-24 md:px-8 md:pt-12 lg:px-10 lg:pt-16"
+      data-ga4-content-slug={id} data-ga4-content-language={locale} data-ga4-content-title={item.title}>
       <CurationDetailHeading
         back={(
           <Link

@@ -68,6 +68,7 @@ export default async function CurationTrustPanel({
       <div className="pt-5">
         {source ? (
           <a
+            data-ga4-official-link="trust_panel"
             href={source.href}
             target="_blank"
             rel="noopener noreferrer"
