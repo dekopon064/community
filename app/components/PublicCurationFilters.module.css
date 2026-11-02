@@ -164,7 +164,7 @@
   .mobileSelection {display:block;}
   .browseResults .search {margin-bottom:12px;}
   .sidebarLayout .toolbar {display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;border-top:0;padding:0 0 12px;gap:8px;}
-  .sidebarLayout .mobileFilter {grid-column:1;grid-row:1;display:inline-flex;width:auto;min-height:44px;margin:0;padding:8px 10px;gap:6px;font-size:12px;}
+  .sidebarLayout .mobileFilter {grid-column:1;grid-row:1;display:inline-flex;width:auto;min-height:44px;margin:0;padding:8px 6px;gap:4px;font-size:12px;}
   .sidebarLayout .resultSummary {display:contents;}
   .sidebarLayout .sort {grid-column:3;grid-row:1;}
   .sidebarLayout .sort select {font-size:12px;max-width:144px;min-height:44px;padding-inline:8px 24px;}
