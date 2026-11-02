@@ -97,3 +97,13 @@
   .spaceTabs button { flex:1; }
   .districtScroll .options { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
+.search { min-width:0; margin-bottom:24px; }
+.search > label { display:block; margin-bottom:8px; color:var(--color-primary-text); font-size:14px; font-weight:650; }
+.searchControls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.searchControls input { flex:1 1 180px; min-width:0; min-height:48px; border:1px solid var(--color-info-muted); border-radius:8px; padding:10px 12px; background:var(--color-info-surface); color:var(--color-primary-text); font-size:16px; }
+.searchControls input::placeholder { color:var(--color-info-muted); opacity:1; }
+.searchControls input:focus-visible { outline:2px solid var(--color-primary-text); outline-offset:2px; }
+.searchSubmit { min-height:48px; padding:10px 20px; border-radius:8px; background:var(--color-ink); color:var(--color-canvas-white); font-size:14px; font-weight:650; }
+.searchSubmit:hover { background:var(--color-action-hover); }
+.searchClear { min-height:44px; padding:8px 4px; color:var(--color-primary-text); text-decoration:underline; text-underline-offset:3px; font-size:14px; }
+.search > p { margin-top:8px; }

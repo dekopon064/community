@@ -77,8 +77,8 @@
     "filteredEmptyDescription": "別のカテゴリーを選んでください。",
     "homeAction": "ホームへ",
     "loading": "情報を読み込んでいます。",
-    "searchEmptyTitle": "選択した条件に合う情報がありません。",
-    "searchEmptyDescription": "条件を減らすかリセットすると、他の情報を見ることができます。"
+    "searchEmptyTitle": "検索語・条件に合う情報がありません。",
+    "searchEmptyDescription": "検索語を変えるか条件を減らしてみてください。リセットすると他の情報を見ることができます。"
   },
   "LocaleSwitcher": {
     "label": "言語を選択",
@@ -388,6 +388,14 @@
     "description": "保存した情報をもう一度確認できます。",
     "emptyMore": "情報の詳細ページから必要な内容を保存してみましょう。",
     "explore": "生活情報を探す"
+  },
+  "PublicSearch": {
+    "label": "タイトル・要約・本文を検索",
+    "placeholder": "キーワードを入力してください",
+    "submit": "検索",
+    "clear": "検索語をクリア",
+    "help": "表示中の言語のタイトル・要約・本文を検索します。複数の語は、すべて含む情報を表示します。",
+    "resetAll": "検索・条件をリセット"
   },
   "PublicFilters": {
     "foreignerGroup": "外国人向けプログラムの区分",
