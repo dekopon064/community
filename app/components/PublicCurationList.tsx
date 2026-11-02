@@ -36,7 +36,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
   const filterTrigger=useRef<HTMLButtonElement>(null), panelClose=useRef<HTMLButtonElement>(null);
   const selectedControls=useRef<HTMLUListElement>(null);
   const browseRoot=useRef<HTMLDivElement>(null);
-  const sidebarLayout=category==='program';
+  const sidebarLayout=category==='program'||category==='event';
   const savedScroll=useRef(0);
   const rawParams=new URLSearchParams(params.toString());
   // Default tab is a view choice. The shared query parser and data classifications are unchanged.
@@ -253,7 +253,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
         {groups.map(group=>group.key==='additional'?<details key={group.key} className={styles.sidebarAdditional}>
           <summary><span>{group.label}{groupCount(group.key)>0&&<span className={styles.sidebarCount}>{t('selectionCount',{count:groupCount(group.key)})}</span>}</span><ChevronDown size={16} aria-hidden="true"/></summary>
           {fields(group.key,'sidebar')}
-        </details>:<section key={group.key} className={styles.sidebarGroup}><h3>{group.label}</h3>{fields(group.key,'sidebar')}</section>)}
+        </details>:<section key={group.key} className={styles.sidebarGroup}><h3>{group.label}</h3>{group.key==='date'?<button ref={element=>{if(element)triggers.current.date=element;}} type="button" className={`${styles.filterTrigger} ${styles.sidebarDateTrigger} ${groupCount('date')?styles.hasSelection:''}`} aria-label={`${group.label} ${summary('date')}`} aria-expanded={openGroup==='date'} aria-controls={openGroup==='date'?`${id}-popover`:undefined} onClick={()=>openGroup==='date'?closePopover():setOpenGroup('date')}><span>{summary('date')}</span><ChevronDown size={16} aria-hidden="true"/></button>:fields(group.key,'sidebar')}</section>)}
       </aside>}
       <div className={sidebarLayout?styles.browseResults:undefined}>
     <PublicContentSearch id={id} value={query.search} onSearch={search=>update({...query,search})}/>

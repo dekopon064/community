@@ -112,13 +112,16 @@
 .searchClear { grid-column:2; grid-row:1; align-self:center; min-height:44px; margin-block:-10px; padding:8px 0 8px 8px; color:var(--color-info-body); text-decoration:underline; text-underline-offset:4px; font-size:12px; line-height:1.6; white-space:nowrap; }
 .searchClear:hover { color:var(--color-primary-text); }
 .searchSubmit:focus-visible,.searchClear:focus-visible,.mobileFilter:focus-visible { outline:3px solid var(--color-focus); outline-offset:3px; }
-/* Program B: persistent PC conditions and compact, result-first mobile tools. */
+/* List B: persistent PC conditions and compact, result-first mobile tools. */
 .sidebarLayout {display:grid;grid-template-columns:232px minmax(0,1fr);gap:36px;align-items:start;min-width:0;}
 .filterSidebar {min-width:0;padding-right:24px;border-right:1px solid var(--color-info-rule);}
 .sidebarTitle {display:flex;align-items:center;gap:8px;min-height:24px;margin:0 0 18px;font-size:15px;font-weight:700;line-height:1.6;color:var(--color-primary-text);}
 .sidebarTitle svg {flex-shrink:0;}
 .sidebarGroup {padding-top:16px;margin-top:18px;border-top:1px solid var(--color-info-rule);}
 .sidebarGroup > h3 {margin-bottom:8px;font-size:13px;font-weight:700;line-height:1.7;}
+.sidebarDateTrigger {display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:48px;padding:8px 12px;font-size:13px;line-height:1.6;}
+.sidebarDateTrigger svg {flex-shrink:0;}
+.sidebarDateTrigger:focus-visible {outline:3px solid var(--color-focus);outline-offset:3px;}
 .filterSidebar .options {grid-template-columns:minmax(0,1fr);gap:2px;}
 .filterSidebar .compactOptions {display:flex;flex-wrap:wrap;gap:4px;}
 .filterSidebar .option {min-height:44px;padding:8px 4px;font-size:13px;gap:8px;}
