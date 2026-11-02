@@ -129,7 +129,8 @@ for(const locale of ['ko','ja']){
   test(locale+' no content shows genuine empty state',()=>{const html=renderToStaticMarkup(React.createElement(List,{items:[],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));assert(html.includes(globalThis.testMessages.Info.emptyTitle));assert(!html.includes(globalThis.testMessages.Info.searchEmptyTitle));});
   test(locale+' existing image and card destinations are preserved',()=>{const html=renderToStaticMarkup(React.createElement(List,{items:[{...program(),source_image_url:'https://global.seoul.go.kr/synthetic-poster.jpg'}],category:'program',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));assert(html.includes('src="https://global.seoul.go.kr/synthetic-poster.jpg"'));assert(html.includes('referrerPolicy="no-referrer"'));assert.equal((html.match(/href="\/info\/p"/g)||[]).length,2);});
   test(locale+' program comparison shows confirmed facts without onsite or invented unknown values',()=>{
-    const render=(patch={})=>renderToStaticMarkup(React.createElement(List,{items:[program('facts',patch)],category:'program',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
+    // Compare card facts independently from the now-visible sidebar filter choices.
+    const render=(patch={})=>renderToStaticMarkup(React.createElement(List,{items:[program('facts',patch)],category:'program',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()})).match(/<article\b[\s\S]*?<\/article>/)[0];
     const labels=globalThis.testMessages.PublicFilters;
     const onsite=render();
     assert(onsite.includes(labels.provinces['11']));assert(onsite.includes(labels.programTopics.language_learning));
@@ -144,7 +145,7 @@ for(const locale of ['ko','ja']){
   test(locale+' program title context preserves full title without changing policy layout',()=>{
     const title=locale==='ja'?'【提供機関】長いプログラムの正式なタイトル':'[제공 기관] 길이가 긴 프로그램의 정식 제목';
     const html=renderToStaticMarkup(React.createElement(List,{items:[{...program(),title}],category:'program',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
-    assert.equal(html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/)[1].replace(/<[^>]*>/g,''),title);
+    assert.equal(html.slice(html.indexOf('<article')).match(/<h2[^>]*>([\s\S]*?)<\/h2>/)[1].replace(/<[^>]*>/g,''),title);
     const other=renderToStaticMarkup(React.createElement(List,{items:[item('policy','policy')],todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
     assert(!other.includes('class="facts"'));assert(!other.includes('class="context"'));
   });

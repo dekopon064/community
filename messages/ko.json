@@ -389,6 +389,8 @@
     "explore": "생활정보 둘러보기"
   },
   "PublicSearch": {
+    "applied": "적용 검색어",
+    "helpLabel": "검색·필터 안내",
     "label": "제목·요약·본문 검색",
     "placeholder": "검색어를 입력하세요",
     "submit": "검색",
@@ -433,6 +435,9 @@
     "combinationNote": "같은 항목에서 여러 조건을 고르면 하나라도 맞는 정보를, 다른 항목을 함께 고르면 모두 맞는 정보를 표시합니다.",
     "find": "조건으로 찾기",
     "conditions": "필터 선택",
+    "browseConditions": "조건으로 찾기",
+    "compactFilter": "필터",
+    "compactFilterWithCount": "필터 {count}",
     "sort": "정렬",
     "deadlineSort": "마감 가까운순",
     "eventSort": "개최일 가까운순",

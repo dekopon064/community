@@ -390,6 +390,8 @@
     "explore": "生活情報を探す"
   },
   "PublicSearch": {
+    "applied": "適用中の検索語",
+    "helpLabel": "検索・絞り込みについて",
     "label": "タイトル・要約・本文を検索",
     "placeholder": "キーワードを入力してください",
     "submit": "検索",
@@ -434,6 +436,9 @@
     "combinationNote": "同じ項目で複数選ぶと、いずれかに合う情報を表示します。異なる項目を組み合わせると、すべての条件に合う情報を表示します。",
     "find": "条件で探す",
     "conditions": "絞り込み条件",
+    "browseConditions": "条件から探す",
+    "compactFilter": "絞り込み",
+    "compactFilterWithCount": "絞り込み {count}",
     "sort": "並び順",
     "deadlineSort": "申込締切が近い順",
     "eventSort": "開催日が近い順",

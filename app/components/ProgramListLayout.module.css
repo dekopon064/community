@@ -33,6 +33,10 @@
 .text:focus-visible .title,.poster:focus-visible {outline:3px solid var(--color-focus);outline-offset:4px;}
 /* Navigation feedback uses the link box; display:contents needs an explicit grid slot. */
 .text>:global([role=status]) {grid-column:1;grid-row:5;}
+.browseShell {display:block;}
+.browseIntro {position:static;padding-top:0;margin-bottom:28px;}
+.browseIntro .introCompact {display:block;margin-top:8px;font-size:14px;line-height:1.8;color:var(--color-info-body);}
+.browseIntro .introBody,.browseIntro .introSource {display:none;}
 @media(min-width:768px) and (max-width:1150px) {
   .page {padding:36px 28px 60px;}
   .shell {grid-template-columns:180px minmax(0,1fr);gap:32px;}
@@ -50,4 +54,6 @@
   .poster {grid-row:2;align-self:start;height:96px;}.image {object-position:center top;}
   .facts {grid-column:1/-1;font-size:12px;gap:4px 14px;}.facts svg {width:14px;height:14px;}
   .summary {grid-column:1/-1;font-size:13px;line-height:1.85;}
+  .browseIntro {margin-bottom:20px;}
+  .browseIntro .introCompact {font-size:13px;}
 }
