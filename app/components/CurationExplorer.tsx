@@ -31,8 +31,8 @@ export default function CurationExplorer({
       : curations.filter((item) => item.userCategory === selectedCategory);
 
   return (
-    <div className={comparisonLayout ? `${programStyles.shell} ${selectedCategory === 'program' ? programStyles.browseShell : ''}` : "grid min-w-0 gap-6 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14"}>
-      <aside className={comparisonLayout ? `${programStyles.intro} ${selectedCategory === 'program' ? programStyles.browseIntro : ''}` : "lg:sticky lg:top-28 lg:self-start"}>
+    <div className={comparisonLayout ? `${programStyles.shell} ${programStyles.browseShell}` : "grid min-w-0 gap-6 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14"}>
+      <aside className={comparisonLayout ? `${programStyles.intro} ${programStyles.browseIntro}` : "lg:sticky lg:top-28 lg:self-start"}>
         <div className={comparisonLayout ? programStyles.heading : "flex flex-wrap items-center gap-2.5 md:gap-3"}>
           {selectedCategory && (
             <CategoryIcon category={selectedCategory} size={48} className="h-10 w-10 shrink-0 md:h-12 md:w-12" />

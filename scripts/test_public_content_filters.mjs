@@ -164,7 +164,7 @@ for(const locale of ['ko','ja']){
     assert(html.includes('data-state="ended"'));assert(!html.includes(globalThis.testMessages.PublicFilters.deadline));
   });
   test(locale+' unknown event facts and legacy dates retain their actual meaning',()=>{
-    const render=e=>renderToStaticMarkup(React.createElement(List,{items:[e],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
+    const render=e=>renderToStaticMarkup(React.createElement(List,{items:[e],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()})).match(/<article\b[\s\S]*?<\/article>/)[0];
     const html=render(event('missing',[],{schedule:unknown,location:unknown,topic:unknown}));
     assert(html.includes(locale==='ja'?'日程情報未確認':'일정 정보 미확인'));assert(html.includes(locale==='ja'?'地域情報未確認':'지역 정보 미확인'));
     assert(html.includes('data-state="unknown"'));assert(!html.includes('data-state="ended"'));assert(!html.includes(globalThis.testMessages.PublicFilters.eventTopics.other));
@@ -174,7 +174,7 @@ for(const locale of ['ko','ja']){
   test(locale+' event images and complete titles preserve existing navigation',()=>{
     const title=locale==='ja'?'【主催機関】正式なイベント名を省略しない':'[주최 기관] 행사 정식 제목을 생략하지 않습니다';
     const html=renderToStaticMarkup(React.createElement(List,{items:[{...event('image'),title,source_image_url:'https://global.seoul.go.kr/synthetic-event.jpg'}],category:'event',todayKst:'2026-10-08',nowIso:new Date(now).toISOString()}));
-    assert.equal(html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/)[1].replace(/<[^>]*>/g,''),title);
+    assert.equal(html.slice(html.indexOf('<article')).match(/<h2[^>]*>([\s\S]*?)<\/h2>/)[1].replace(/<[^>]*>/g,''),title);
     assert.equal((html.match(/href="\/info\/image"/g)||[]).length,2);assert(html.includes('src="https://global.seoul.go.kr/synthetic-event.jpg"'));
   });
   globalThis.testParams='space=news';

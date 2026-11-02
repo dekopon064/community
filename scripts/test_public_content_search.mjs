@@ -74,8 +74,26 @@ for(const locale of ['ko','ja']){
     assert.equal((html.match(/role="search"/g)||[]).length,1);
     assert(html.includes(globalThis.testMessages.PublicFilters.compactFilterWithCount.replace('{count}','2')));
     assert(html.includes(globalThis.testMessages.PublicSearch.clear));
-    const event=renderToStaticMarkup(React.createElement(List,{...props,category:'event'}));
-    assert(!event.includes(globalThis.testMessages.PublicFilters.browseConditions));
+    for(const category of [undefined,'youth_space']){
+      const other=renderToStaticMarkup(React.createElement(List,{...props,category}));
+      assert(!other.includes(globalThis.testMessages.PublicFilters.browseConditions));
+    }
+  });
+  test(locale+' event sidebar preserves date and region filtering without program-only controls',()=>{
+    const known=value=>({status:'known',value});
+    const data={...emptyContentFilters('event'),topic:known('lecture_commemoration'),location:known({scope:'specific',venues:[{province:'11',district:'중구',facility:'합성 행사장',address:'합성 주소'}]}),schedule:known({kind:'continuous',recurrence:null,occurrences:[{start:{value:'2026-12-01',precision:'day'},end:{value:'2026-12-02',precision:'day'}}]})};
+    const item={...(locale==='ko'?ko:ja),userCategory:'event',contentFilters:data};
+    globalThis.testParams='q='+encodeURIComponent(locale==='ko'?'목공':'木工')+'&topic=lecture_commemoration&region=11&date=2026-12-01';
+    const html=renderToStaticMarkup(React.createElement(List,{items:[item],category:'event',todayKst:'2026-11-02',nowIso:'2026-11-02T00:00:00Z'}));
+    const sidebar=html.match(/<aside\b[\s\S]*?<\/aside>/)[0];
+    assert(sidebar.includes(globalThis.testMessages.PublicFilters.browseConditions));
+    for(const label of Object.values(globalThis.testMessages.PublicFilters.eventTopics))assert(sidebar.includes(label));
+    assert(sidebar.includes(globalThis.testMessages.PublicFilters.date+' 2026.12.01'));
+    assert(!sidebar.includes(globalThis.testMessages.PublicFilters.applicationState));
+    assert(!sidebar.includes('role="grid"')); // The full-size desktop calendar opens separately.
+    assert(html.includes(globalThis.testMessages.PublicFilters.compactFilterWithCount.replace('{count}','3')));
+    assert(html.includes('data-event-facts'));assert(/datetime="2026-12-01"/i.test(html));
+    const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);assert.equal(new Set(ids).size,ids.length);
   });
 }
 console.log(JSON.stringify({search_checks:checks,real_network:0,operational_db:0,ai_calls:0}));
