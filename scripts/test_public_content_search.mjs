@@ -39,4 +39,43 @@ for(const locale of ['ko','ja']){
   test(locale+' actual list renders body search, applied query, result and translated clear action',()=>{globalThis.testParams='q='+encodeURIComponent(locale==='ko'?'초보자':'初心者');const html=renderToStaticMarkup(React.createElement(List,{items:[locale==='ko'?ko:ja],todayKst:'2026-11-02',nowIso:'2026-11-02T00:00:00Z'}));assert(html.includes('role="search"'));assert(html.includes(globalThis.testMessages.PublicSearch.label));assert(html.includes(globalThis.testMessages.PublicSearch.clear));assert(html.includes(locale==='ko'?row.title_ko:row.title_ja));});
   test(locale+' actual empty list offers reset and escapes arbitrary search text',()=>{globalThis.testParams='q='+encodeURIComponent('<script>alert(1)</script>');const html=renderToStaticMarkup(React.createElement(List,{items:[ko],todayKst:'2026-11-02',nowIso:'2026-11-02T00:00:00Z'}));assert(html.includes(globalThis.testMessages.Info.searchEmptyTitle));assert(html.includes(globalThis.testMessages.PublicSearch.resetAll));assert(!html.includes('<script>'));});
 }
+for(const locale of ['ko','ja']){
+  globalThis.testLocale=locale;globalThis.testMessages=JSON.parse(fs.readFileSync(`messages/${locale}.json`,'utf8'));
+  test(locale+' applied query is identified outside the form and reset scope is visible text',()=>{
+    const term=locale==='ko'?'목공':'木工';
+    globalThis.testParams='q='+encodeURIComponent(term)+'&region=11';
+    const html=renderToStaticMarkup(React.createElement(List,{items:[locale==='ko'?ko:ja],category:'program',todayKst:'2026-11-02',nowIso:'2026-11-02T00:00:00Z'}));
+    const form=html.slice(html.indexOf('<form'),html.indexOf('</form>'));
+    assert(!form.includes(globalThis.testMessages.PublicSearch.help));
+    assert(html.includes(globalThis.testMessages.PublicSearch.applied));
+    assert(html.includes(`<strong title="${term}">${term}</strong>`));
+    assert(html.includes(`<span>${globalThis.testMessages.PublicSearch.resetAll}</span>`));
+    assert(html.includes(globalThis.testMessages.PublicSearch.helpLabel));
+    assert(html.includes(globalThis.testMessages.PublicSearch.help));
+  });
+  test(locale+' search-only lists expose the applied query without adding permanent help',()=>{
+    globalThis.testParams='q='+encodeURIComponent(locale==='ko'?'목공':'木工');
+    const html=renderToStaticMarkup(React.createElement(List,{items:[locale==='ko'?ko:ja],todayKst:'2026-11-02',nowIso:'2026-11-02T00:00:00Z'}));
+    assert(html.includes(globalThis.testMessages.PublicSearch.applied));
+    assert(!html.includes(globalThis.testMessages.PublicSearch.help));
+    assert(!html.includes('<details'));
+    const description=html.match(/aria-describedby="([^"]+-applied-search)"/);
+    assert(description&&html.includes(`id="${description[1]}"`));
+  });
+  test(locale+' program sidebar preserves filter vocabulary, unique IDs and the search-only clear action',()=>{
+    globalThis.testParams='q='+encodeURIComponent(locale==='ko'?'목공':'木工')+'&region=11&topic=culture_experience';
+    const props={items:[locale==='ko'?ko:ja],todayKst:'2026-11-02',nowIso:'2026-11-02T00:00:00Z'};
+    const html=renderToStaticMarkup(React.createElement(List,{...props,category:'program'}));
+    const sidebar=html.match(/<aside\b[\s\S]*?<\/aside>/)[0];
+    for(const label of [globalThis.testMessages.PublicFilters.browseConditions,...Object.values(globalThis.testMessages.PublicFilters.programTopics),...Object.values(globalThis.testMessages.PublicFilters.deliveries)])assert(sidebar.includes(label));
+    assert(sidebar.includes('type="checkbox"'));
+    const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);
+    assert.equal(new Set(ids).size,ids.length);
+    assert.equal((html.match(/role="search"/g)||[]).length,1);
+    assert(html.includes(globalThis.testMessages.PublicFilters.compactFilterWithCount.replace('{count}','2')));
+    assert(html.includes(globalThis.testMessages.PublicSearch.clear));
+    const event=renderToStaticMarkup(React.createElement(List,{...props,category:'event'}));
+    assert(!event.includes(globalThis.testMessages.PublicFilters.browseConditions));
+  });
+}
 console.log(JSON.stringify({search_checks:checks,real_network:0,operational_db:0,ai_calls:0}));
