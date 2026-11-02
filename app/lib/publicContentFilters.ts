@@ -2,11 +2,44 @@ import { districtChoices, eventTopics, filterDay, parseContentFilters, programTo
 import type { ContentFilters, FilterCategory, FilterEndpoint, FilterOccurrence } from './contentFilters';
 import type { LocalizedCuration } from './types';
 
-// Only published display data crosses the client boundary. No body, actor or source history.
-export type PublicCurationItem = Pick<LocalizedCuration, 'id'|'slug'|'userCategory'|'title'|'summary'|'source_image_url'|'application_deadline_kind'|'application_deadline_on'|'event_start_on'|'event_end_on'|'created_at'|'contentFilters'>;
+// Only published display data and a normalized search index cross the client boundary.
+// Do not serialize source payloads, the other locale, actor or review history.
+export type PublicCurationItem = Pick<LocalizedCuration, 'id'|'slug'|'userCategory'|'title'|'summary'|'source_image_url'|'application_deadline_kind'|'application_deadline_on'|'event_start_on'|'event_end_on'|'created_at'|'contentFilters'> & { searchText?: string };
+export const publicSearchLimit = 200;
+export function normalizePublicSearch(value: string): string {
+  return value.normalize('NFKC').replace(/[\u0000-\u001f\u007f\s]+/g,' ').trim().slice(0,publicSearchLimit).trim();
+}
+function normalizeSearchText(value: string): string {
+  return value.normalize('NFKC').toLowerCase().replace(/\s+/g,' ').trim();
+}
+function searchableBody(value: string): string {
+  return value
+    .replace(/<!--[\s\S]*?-->/g,' ')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi,' ')
+    .replace(/<[^>]*>/g,' ')
+    .replace(/^ {0,3}\[[^\]]+\]:[^\n]*$/gm,'')
+    .replace(/!?\[([^\]]*)\]\((?:[^()\n]|\([^()\n]*\))*\)/g,'$1')
+    .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g,'$1')
+    .replace(/[*_`~]/g,'')
+    .replace(/^ {0,3}(?:#{1,6}\s+|>\s*|[-+]\s+)/gm,'')
+    .replace(/\|/g,' ')
+    .replace(/&(?:amp|lt|gt|quot|apos|nbsp);|&#(?:x[\da-f]+|\d+);/gi,entity=>{
+      const names:Record<string,string>={'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&apos;':"'",'&nbsp;':' '};
+      if(entity[1]!=='#')return names[entity.toLowerCase()]??entity;
+      const hex=entity[2].toLowerCase()==='x', code=parseInt(entity.slice(hex?3:2,-1),hex?16:10);
+      return code>0&&code<=0x10ffff&&!(code>=0xd800&&code<=0xdfff)?String.fromCodePoint(code):' ';
+    });
+}
+export function matchesPublicSearch(item: PublicCurationItem, search: string): boolean {
+  const terms=normalizeSearchText(normalizePublicSearch(search)).split(' ').filter(Boolean);
+  if(!terms.length)return true;
+  const text=item.searchText??normalizeSearchText(`${item.title}\n${item.summary}`);
+  return terms.every(term=>text.includes(term));
+}
 export function publicCurationItem(item: LocalizedCuration): PublicCurationItem {
   const { id, slug, userCategory, title, summary, source_image_url, application_deadline_kind, application_deadline_on, event_start_on, event_end_on, created_at, contentFilters } = item;
-  return { id, slug, userCategory, title, summary, source_image_url, application_deadline_kind, application_deadline_on, event_start_on, event_end_on, created_at, contentFilters };
+  return { id, slug, userCategory, title, summary, source_image_url, application_deadline_kind, application_deadline_on, event_start_on, event_end_on, created_at, contentFilters,
+    searchText:normalizeSearchText(`${title}\n${summary}\n${searchableBody(item.content??'')}`) };
 }
 export type Province = keyof typeof provinceLabels;
 export const deliveries = ['online', 'onsite', 'mixed'] as const;
@@ -18,9 +51,9 @@ export type ApplicationState = typeof applicationStates[number] | 'unknown';
 export type ExplorationQuery = {
   topics: string[]; provinces: Province[]; districts: string[];
   deliveries: string[]; audiences: string[]; foreignerPrograms: string[]; states: string[]; spaceKinds: string[];
-  date: string; sort: 'default'|'latest';
+  date: string; sort: 'default'|'latest'; search: string;
 };
-export const explorationKeys = ['topic','region','district','delivery','audience','foreigner','status','space','date','sort'] as const;
+export const explorationKeys = ['topic','region','district','delivery','audience','foreigner','status','space','date','sort','q'] as const;
 export function supportsExploration(category?: string): category is FilterCategory {
   return category === 'program' || category === 'event' || category === 'youth_space';
 }
@@ -36,6 +69,7 @@ export function readExplorationQuery(params: URLSearchParams, category?: string)
   const provinces = supportsExploration(category) ? choices(params,'region',Object.keys(provinceLabels)) as Province[] : [];
   const validDistricts = provinces.flatMap(p => districtChoices[p].map(d => `${p}:${d}`));
   return {
+    search:normalizePublicSearch(params.get('q')??''),
     topics: category === 'program' ? choices(params,'topic',Object.keys(programTopics)) : category === 'event' ? choices(params,'topic',Object.keys(eventTopics)) : [],
     provinces, districts: choices(params,'district',validDistricts),
     deliveries: category === 'program' ? choices(params,'delivery',deliveries) : [],
@@ -52,6 +86,8 @@ export function writeExplorationQuery(current: URLSearchParams, query: Explorati
   explorationKeys.forEach(k => next.delete(k));
   next.delete('page');
   const values: Record<string,string[]> = { topic:query.topics,region:query.provinces,district:query.districts,delivery:query.deliveries,audience:query.audiences,foreigner:query.foreignerPrograms,status:query.states,space:query.spaceKinds,date:query.date?[query.date]:[],sort:query.sort==='latest'?['latest']:[] };
+  const search=normalizePublicSearch(query.search);
+  if(search)next.set('q',search);
   for (const [key,items] of Object.entries(values)) items.forEach(v => next.append(key,v));
   const valid = readExplorationQuery(next,category);
   for (const [key,items] of Object.entries({ topic:valid.topics,region:valid.provinces,district:valid.districts,delivery:valid.deliveries,audience:valid.audiences,foreigner:valid.foreignerPrograms,status:valid.states,space:valid.spaceKinds,date:valid.date?[valid.date]:[],sort:valid.sort==='latest'?['latest']:[] })) {
@@ -151,6 +187,7 @@ function matchesRegion(item: PublicCurationItem, data: ContentFilters|null, q: E
   });
 }
 export function matchesExploration(item: PublicCurationItem, q: ExplorationQuery, now: number): boolean {
+  if(!matchesPublicSearch(item,q.search))return false;
   const data = metadata(item);
   if (q.topics.length && (!data || data.topic.status!=='known' || !q.topics.includes(data.topic.value))) return false;
   if (q.deliveries.length && (!data || data.delivery.status!=='known' || !q.deliveries.includes(data.delivery.value))) return false;

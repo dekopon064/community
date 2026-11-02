@@ -41,8 +41,8 @@ eq(matches(''),['foreign','other','unclassified','old']);eq(matches('foreigner=f
 eq(matches('foreigner=foreigner&foreigner=other'),['foreign','other']);eq(matches('foreigner=foreigner&audience=children'),[]);
 eq(matches('foreigner=foreigner&delivery=online&topic=culture_experience'),['foreign']);
 eq(query('foreigner=eligible').foreignerPrograms,[]);eq(pub.readExplorationQuery(new URLSearchParams('foreigner=foreigner'),'event').foreignerPrograms,[]);
-const url=pub.writeExplorationQuery(new URLSearchParams('q=keep&page=3'),query('foreigner=foreigner'),'program');eq(url.get('foreigner'),'foreigner');eq(url.get('q'),'keep');ok(!url.has('page'));
-eq(pub.writeExplorationQuery(url,query(''),'program').toString(),'q=keep');
+const url=pub.writeExplorationQuery(new URLSearchParams('q=keep&page=3&utm_source=test'),query('q=keep&foreigner=foreigner'),'program');eq(url.get('foreigner'),'foreigner');eq(url.get('q'),'keep');ok(!url.has('page'));
+eq(pub.writeExplorationQuery(url,query(''),'program').toString(),'utm_source=test');
 const nodes=t=>!t||typeof t!=='object'?[]:[t,...React.Children.toArray(t.props?.children).flatMap(nodes)];
 let draft=structuredClone(data);
 const tree=admin.FilterInputs({data:draft,fields:['foreignerProgram'],onChange:next=>{draft=next},disabled:false,missing:[]});

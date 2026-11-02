@@ -11,10 +11,11 @@ import EventComparisonFacts from './EventComparisonFacts';
 import eventStyles from './EventListLayout.module.css';
 import InfoStatePanel from './InfoStatePanel';
 import PublicFilterCalendar from './PublicFilterCalendar';
+import PublicContentSearch from './PublicContentSearch';
 import { eventTopics, programTopics, provinceLabels } from '@/app/lib/contentFilters';
 import { sortedDistrictChoices } from '@/app/lib/districtSort';
 import type { FilterCategory, FilterEndpoint } from '@/app/lib/contentFilters';
-import { applicationStates, deliveries, eventTiming, exploreCurations, nextExplorationTransition, programTiming, readExplorationQuery, writeExplorationQuery } from '@/app/lib/publicContentFilters';
+import { applicationStates, deliveries, eventTiming, exploreCurations, matchesPublicSearch, nextExplorationTransition, programTiming, readExplorationQuery, writeExplorationQuery } from '@/app/lib/publicContentFilters';
 import type { ExplorationQuery, PublicCurationItem } from '@/app/lib/publicContentFilters';
 import Link from './PublicNavigationLink';
 import styles from './PublicCurationFilters.module.css';
@@ -25,6 +26,7 @@ type Choice = { key: MultiKey | 'date'; value: string; label: string };
 
 export default function PublicCurationList({items,category,todayKst,nowIso}:{items:PublicCurationItem[];category?:FilterCategory;todayKst:string;nowIso:string}) {
   const locale=useLocale(), t=useTranslations('PublicFilters'), infoT=useTranslations('Info'), categoriesT=useTranslations('Categories');
+  const searchT=useTranslations('PublicSearch');
   const params=useSearchParams(), id=useId();
   const [openGroup,setOpenGroup]=useState<GroupKey | null>(null);
   const [panelOpen,setPanelOpen]=useState(false);
@@ -59,9 +61,10 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
     return()=>clearTimeout(timer);
   },[items,now]);
 
-  const results=category?exploreCurations(items,category,query,now):items;
+  const results=category?exploreCurations(items,category,query,now):items.filter(item=>matchesPublicSearch(item,query.search));
   function update(next:ExplorationQuery) {
     const search=writeExplorationQuery(new URLSearchParams(window.location.search),next,category).toString();
+    if(search===window.location.search.slice(1))return;
     window.history.pushState(null,'',window.location.pathname+(search?'?'+search:'')+window.location.hash);
   }
   function toggle(key:MultiKey,value:string) {
@@ -205,7 +208,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
     return key==='states'?options('states',applicationStates,t('applicationState'),true):options('topics',Object.keys(category==='program'?programTopics:eventTopics),t(category==='program'?'programTopic':'eventTopic'));
   }
   function resetButton(scope:string) {
-    return <span className={styles.resetControl}><button type="button" className={`${styles.iconButton} ${styles.resetButton}`} aria-label={t('resetAll')} aria-describedby={`${id}-${scope}-reset-hint`} onClick={reset}><RotateCcw size={16} aria-hidden="true"/></button><span id={`${id}-${scope}-reset-hint`} className={styles.resetHint} role="tooltip">{t('resetHint')}</span></span>;
+    return <span className={styles.resetControl}><button type="button" className={`${styles.iconButton} ${styles.resetButton}`} aria-label={query.search?searchT('resetAll'):t('resetAll')} aria-describedby={`${id}-${scope}-reset-hint`} onClick={reset}><RotateCcw size={16} aria-hidden="true"/></button><span id={`${id}-${scope}-reset-hint`} className={styles.resetHint} role="tooltip">{query.search?searchT('resetAll'):t('resetHint')}</span></span>;
   }
   function formatEndpoint(value:FilterEndpoint) {
     if(value.precision==='day')return value.value.replaceAll('-','.');
@@ -223,8 +226,9 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
     return undefined;
   }
 
-  const filteredEmpty=items.length>0&&(count>0||(category==='youth_space'&&query.spaceKinds.length>0));
+  const filteredEmpty=items.length>0&&(Boolean(query.search)||count>0||(category==='youth_space'&&query.spaceKinds.length>0));
   return <>
+    <PublicContentSearch key={query.search} id={id} value={query.search} onSearch={search=>update({...query,search})}/>
     {category==='youth_space'&&<div className={styles.spaceTabs} role="tablist" aria-label={t('spaceKind')}>
       {(['introduction','news'] as const).map(value=><button key={value} id={`${id}-tab-${value}`} type="button" role="tab" aria-selected={spaceKind===value} aria-controls={`${id}-space-content`} tabIndex={spaceKind===value||(multipleSpaces&&value==='introduction')?0:-1} onClick={()=>chooseSpace(value)} onKeyDown={event=>{
         if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const target=event.key==='Home'?'introduction':event.key==='End'?'news':value==='introduction'?'news':'introduction';document.getElementById(`${id}-tab-${target}`)?.focus();}
@@ -253,7 +257,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
       {!category&&<p tabIndex={-1} id="curation-results-title" role="status" aria-live="polite" className={`${styles.resultTitle} mb-4`}>{infoT('resultCount',{count:results.length})}</p>}
       <div id="curation-results" className="flex min-w-0 flex-col border-t border-info-rule">
         {results.length?results.map(item=><CurationCard key={item.id} slug={item.slug} category={item.userCategory} categoryLabel={item.userCategory?categoriesT(item.userCategory):null} title={item.title} summary={item.summary} imageUrl={item.source_image_url} summaryLabel={infoT('atAGlance')} locale={locale} deadlineKind={item.application_deadline_kind} deadlineOn={item.application_deadline_on} eventStartOn={item.event_start_on} eventEndOn={item.event_end_on} todayKst={todayKst} periodOverride={period(item)} programLayout={category==='program'} eventLayout={category==='event'} comparisonFacts={category==='program'?<ProgramComparisonFacts filters={item.contentFilters}/>:category==='event'?<EventComparisonFacts filters={item.contentFilters} occurrence={eventTiming(item,now).occurrence}/>:undefined}/>):<InfoStatePanel title={infoT(filteredEmpty?'searchEmptyTitle':'emptyTitle')} description={infoT(filteredEmpty?'searchEmptyDescription':'emptyDescription')} role="status" headingLevel={2}>
-          {count>0?<button type="button" onClick={reset} className="min-h-11 rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white hover:bg-action-hover">{t('reset')}</button>:<Link href="/info" className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white">{t('allCategories')}</Link>}
+          {query.search||count>0?<button type="button" onClick={reset} className="min-h-11 rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white hover:bg-action-hover">{query.search?searchT('resetAll'):t('reset')}</button>:<Link href="/info" className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white">{t('allCategories')}</Link>}
         </InfoStatePanel>}
       </div>
       {category&&regionAvailable&&<details className={styles.help}><summary>{t('help')}</summary><div><p>{t('combinationNote')}</p><p>{t('unknownNote')}</p><p>{t(category==='program'?'programRegionNote':category==='youth_space'?'spaceRegionNote':'regionNote')}</p>{category!=='youth_space'&&<p>{t(category==='program'?'programSortNote':'eventSortNote')}</p>}</div></details>}
