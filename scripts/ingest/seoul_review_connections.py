@@ -66,7 +66,7 @@ def propose_connections(detail: dict, *, provider_fields=None, tables=(), operat
                'provider_fields': provider_fields or {}, 'tables': tables}
     record = SimpleNamespace(normalized_payload=payload, body_usable=len(facts['description'].strip()) >= 20,
                              has_source_url=bool(facts['official_url']), attachment_present=False)
-    parsed = extract_program_facts(record).to_payload()
+    parsed = extract_program_facts(record, itinerary_title=detail.get('source', {}).get('title', '')).to_payload()
     data = info['data']
     for key, reason in (('content_kind', 'program_purpose_unconfirmed'),
                         ('delivery_mode', 'delivery_mode_unknown'), ('activity_region', 'activity_location_unknown')):
@@ -87,6 +87,8 @@ def propose_connections(detail: dict, *, provider_fields=None, tables=(), operat
             result['resolve'].append(reason)
     # Extract with current known facts first. New proposals supply unknowns only.
     merged = {**facts, **result['facts_patch']}
+    if 'delivery_mode_unknown' in parsed['missing']:
+        merged['missing'] = (*facts['missing'], 'delivery_mode_unknown')
     # Current description is the authority for venue roles. Never mutate the
     # saved evidence, or let an older meeting-point quote re-enter extraction.
     merged['activity_evidence'] = parsed['activity_evidence']

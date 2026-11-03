@@ -515,7 +515,7 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
         mode = facts.get("delivery_mode")
         if mode in {"online", "offline", "hybrid", "mixed"}:
             put("delivery", {"offline": "onsite", "hybrid": "mixed"}.get(mode, mode), "delivery_mode", prefix="facts")
-        else:
+        elif source != "seoul_reservation" or "delivery_mode_unknown" not in facts.get("missing", ()):
             lines = _lines(body, "진행 방식|교육 방식")
             if len(lines) == 1:
                 mode = {"온라인": "online", "현장": "onsite", "온라인·현장 혼합": "mixed", "혼합": "mixed"}.get(lines[0])
