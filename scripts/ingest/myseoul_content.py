@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError
 from ingest.body_sections import normalize_schedule_heading
 from ingest.body_markdown import comparison_text, inline_text, read_body, schedule_table_lines, schedule_tables
 from ingest.myseoul_ai_support import schedule_values
@@ -59,10 +59,10 @@ def merge_reviewed_sections(content: str, reviewed: dict[str, str]) -> str:
     matches = list(re.finditer(r'(?ms)^[ \t]*('+boundary+r')[ \t]*(.*?)(?=^[ \t]*(?:'+boundary+r')(?=[ \t]|$)|\Z)', content))
     if (not matches or content[:matches[0].start()].strip()
             or len({m[1] for m in matches}) != len(matches)):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('reviewed_section', 'missing_or_mismatched')
     sections = {m[1]: m[2].strip() for m in matches}
     if not sections.get('[한 줄 요약]') or not sections.get('[주요 내용]'):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('reviewed_section', 'missing_or_mismatched')
     canonical = [line for value in reviewed.values() for line in value.splitlines() if line.strip()]
     method_rows = [v for v in reviewed.get('[신청 방법]', '').splitlines() if v.strip()]
     links = {row[1] for v in method_rows if (row := _public_fact_row(v)) and row[0] == '신청 링크'}
@@ -98,7 +98,7 @@ def merge_reviewed_sections(content: str, reviewed: dict[str, str]) -> str:
             kept[destination].append(line)
     for header, value in reviewed.items():
         if header not in kept:
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('reviewed_section', 'missing_or_mismatched')
         if value.strip():
             while kept[header] and not kept[header][-1].strip():
                 kept[header].pop()
@@ -107,13 +107,13 @@ def merge_reviewed_sections(content: str, reviewed: dict[str, str]) -> str:
                          if '\n'.join(kept[h]).strip())
     # No unsectioned internal checklist can silently become public method text.
     if re.search(r'(?m)^\s*확인한 분류·참가 안내\s*$', result):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('reviewed_section', 'missing_or_mismatched')
     for line in '\n'.join(kept['[신청 방법]']).splitlines():
         row = _public_fact_row(line)
         if row and (row[0] == '분류' or PUBLIC_FACT_SECTIONS.get(row[0], '[신청 방법]') != '[신청 방법]'):
             # Ambiguous/nested records are not silently discarded to force
             # completion. Use the worker's existing pre-translation failure.
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('reviewed_section', 'missing_or_mismatched')
     return result
 
 _DATED_LINE = (r'^(?:제?\d+\s*(?:회차|차)\s*[:.)-]?\s*)?'
@@ -290,7 +290,7 @@ def _validate_announcements(summary: str, f: dict) -> None:
             matched = True
             break
         if not matched:
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('announcement_date_time', 'missing_or_mismatched')
 
 
 def optional_period_section(content: str) -> str:
@@ -336,27 +336,39 @@ def _validate_session_table_rows(summary: str, f: dict) -> None:
     identity = lambda text: re.search(r'(\d+)\s*(?:회(?:차)?|차)', inline_text(text))
     source = [(int(m[1]), line) for line in evidence if (m := identity(line))]
     source_ids = [key for key, _ in source]
-    for table in schedule_tables(summary):
+    for table_index, table in enumerate(schedule_tables(summary), 1):
         headers = [inline_text(h) for h in table.headers]
         if '회차' not in headers:
             continue
         last = -1
-        for row in table.rows:
-            label = inline_text(row[headers.index('회차')]).strip()
+        ordinal_column = headers.index('회차')
+        for row_index, row in enumerate(table.rows, 1):
+            position = {'table': table_index, 'row': row_index}
+            label = inline_text(row[ordinal_column]).strip()
             m = identity(label) or re.fullmatch(r'(\d+)', label)
             if not m or int(m[1]) not in source_ids:
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('session_number', 'unsupported', location={**position, 'column': ordinal_column+1},
+                                      expected=source_ids, actual=int(m[1]) if m else None)
             key = int(m[1])
-            position = source_ids.index(key)
-            if position <= last:
-                raise AiJobError('ai_schema_error')
-            last = position
+            source_index = source_ids.index(key)
+            if source_index <= last:
+                raise ValidationError('session_order', 'duplicate_or_out_of_order',
+                                      location={**position, 'column': ordinal_column+1},
+                                      expected=source_ids[last+1:], actual=key)
+            last = source_index
             expected = [line for source_id, line in source if source_id == key]
             line = ' '.join(inline_text(cell) for cell in row)
             values = schedule_values(line)
-            if not any(all(not values[k] or values[k].issubset(schedule_values(text)[k])
-                           for k in ('dates', 'times', 'weekdays')) for text in expected):
-                raise AiJobError('ai_schema_error')
+            fact_keys = ('dates', 'times', 'weekdays')
+            active_keys = [k for k in fact_keys if values[k]]
+            for text in expected:
+                candidate = schedule_values(text) if active_keys else {}
+                if all(values[k].issubset(candidate[k]) for k in active_keys):
+                    break
+            else:
+                raise ValidationError('session_date_time', 'unsupported', location=position,
+                                      expected=[sorted(candidate[k]) for k in fact_keys],
+                                      actual=[sorted(values[k]) for k in fact_keys])
             # Compare only an explicitly labeled source activity, not arbitrary
             # narrative semantics. The original cell is retained without repair.
             activity_columns = [i for i, h in enumerate(headers) if h in {'활동', '활동 내용'}]
@@ -367,7 +379,7 @@ def _validate_session_table_rows(summary: str, f: dict) -> None:
                 if (m := re.search(r'(?:^|[/;])\s*활동(?: 내용)?\s*[:：]\s*(.+)$', text))]
             for index in activity_columns:
                 if activities and inline_text(row[index]).strip() not in activities:
-                    raise AiJobError('ai_schema_error')
+                    raise ValidationError('session_activity', 'mismatch', location={**position, 'column': index+1})
 
 
 def _operation_date_bounds(f: dict) -> list[tuple[date, date]]:
@@ -412,21 +424,21 @@ def _validate_schedule_years(line: str, evidence: list[str], f: dict, expected_y
         _, year, month, day = value
         matches = [value for value in dates if value[2:] == (month, day)]
         if not matches:
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('schedule_date', 'unsupported', expected=dates, actual=value)
         explicit = {value[1] for value in matches if value[1] is not None}
         # Explicit evidence wins. A period cannot override a conflicting year.
         allowed = explicit or {_unique_operation_year(month, day, bounds)}
         if year not in allowed:
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('schedule_year', 'mismatch', expected=sorted(y for y in allowed if y is not None), actual=year)
         try:
             occurrence = date(year, month, day)
         except ValueError:
-            raise AiJobError('ai_schema_error') from None
+            raise ValidationError('schedule_date', 'out_of_range', actual=value) from None
         if bounds and not any(start <= occurrence <= end for start, end in bounds):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('schedule_date', 'outside_operation_period', expected=[[(a.year,a.month,a.day),(b.year,b.month,b.day)] for a,b in bounds], actual=value)
         verified_years.add(year)
     if not schedule_values(line)['years'].issubset(verified_years):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('schedule_year', 'unsupported', expected=sorted(verified_years), actual=sorted(schedule_values(line)['years'] - verified_years))
 
 
 def _dated_schedule_details(text: str, *, known_years: frozenset = frozenset()) -> list[tuple[tuple, set, set]]:
@@ -453,7 +465,8 @@ def _validate_dated_schedule_details(line: str, evidence: list[str], f: dict) ->
         for index, actual in ((1, weekdays), (2, clocks)):
             explicit = set().union(*(entry[index] for entry in matches))
             if explicit and not actual.issubset(explicit):
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('dated_schedule_weekday' if index == 1 else 'dated_schedule_clock',
+                                      'mismatch', expected=sorted(explicit), actual=sorted(actual))
 
 
 def _period_values(text: str) -> list[tuple]:
@@ -470,7 +483,7 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
     clauses = re.split(r'(?<=[.!?。])\s+|[\n;；]|(?=실제\s*수업)', summary)
     period_roles = (r'신청\s*기간',
                     r'진행\s*기간|운영\s*기간|개최\s*기간|교육\s*기간|(?:교육\s*)?운영\s*범위|교육일시\s*안내\s*범위|(?:교육|진행|프로그램)\s*일시|교육')
-    for labels in period_roles:
+    for role, labels in zip(('application', 'operation'), period_roles):
         expected = _entry(canonical, labels)
         for clause in clauses:
             generated = _entry(_plain_schedule_line(clause), labels)
@@ -520,7 +533,8 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
                 a == b or a[0] == b[0] == 'date' and a[1] is None and a[2:] == b[2:]
                 for a, b in zip(actual_dates, expected_dates)) and clocks_match
             if actual_values and not compatible:
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('reviewed_period', 'mismatch', location={'period_role': role},
+                                      expected=expected_values, actual=actual_values)
     evidence = schedule_lines(f) + f.get('meeting_evidence', [])
     expected = schedule_values('\n'.join(evidence))
     expected_durations = _durations('\n'.join(evidence))
@@ -534,11 +548,15 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
         if (re.search(r'일정|회차|집결|실제\s*수업|총\s*\d+\s*회', line)
                 or re.match(_DATED_LINE, _plain_schedule_line(line))):
             actual = schedule_values(line)
-            if _durations(line).keys() - expected_durations.keys():
-                raise AiJobError('ai_schema_error')
-            if any(not values.issubset(expected[key]) for key, values in actual.items()
-                   if key != 'years' and not (key == 'times' and facility_hours)):
-                raise AiJobError('ai_schema_error')
+            durations = _durations(line)
+            if durations.keys() - expected_durations.keys():
+                raise ValidationError('schedule_duration_minutes', 'unsupported',
+                                      expected=list(expected_durations), actual=list(durations))
+            for key, values in actual.items():
+                if key != 'years' and not (key == 'times' and facility_hours) and not values.issubset(expected[key]):
+                    # The schedule extractor represents clock ranges in minutes since midnight.
+                    raise ValidationError('schedule_' + key, 'unsupported',
+                                          expected=sorted(expected[key]), actual=sorted(values - expected[key]))
             _validate_schedule_years(line, evidence, f, expected['years'])
             _validate_dated_schedule_details(line, evidence, f)
 
@@ -580,12 +598,15 @@ def validate_participant_quantities(f: dict, main: str) -> None:
                                       *f.get('capacity_raw', [])]), japanese=False)
     actual = _quantities(f['target'] + '\n' + main, japanese=False)
     if required.keys() - actual.keys():
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('participant_quantity', 'missing',
+                              expected=list(required.keys() - actual.keys()), actual=list(actual))
     # Additional quantities in generated prose must also occur in current data.
     source = '\n'.join([f.get('description', ''), f['target'],
         *participation_constraints(f), *f.get('capacity_raw', []), *schedule_lines(f)])
-    if actual.keys() - _quantities(source, japanese=False).keys():
-        raise AiJobError('ai_schema_error')
+    allowed = _quantities(source, japanese=False)
+    if actual.keys() - allowed.keys():
+        raise ValidationError('participant_quantity', 'unsupported',
+                              expected=list(allowed), actual=list(actual.keys() - allowed.keys()))
 
 
 _FEE_VALUE = re.compile(
@@ -602,9 +623,9 @@ def validate_summary_fees(main: str, activity: str) -> None:
             generated = re.split(r'(?:수강료|입장료|재료비|기타\s*비용)\s*(?:[:：]|는|은)',
                 generated, maxsplit=1)[0]
             if expected is None or _amounts(generated, japanese=False) != _amounts(expected, japanese=False):
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('reviewed_fee', 'missing_or_mismatched')
             if bool(re.search(r'무료|무상', generated)) != bool(re.search(r'무료|무상', expected)):
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('reviewed_fee', 'missing_or_mismatched')
     # Natural prose also carries a cost role; validate before removing repeats.
     for match in _FEE_VALUE.finditer(main):
         label = '기타 비용' if match['label'].startswith('기타') else match['label']
@@ -612,7 +633,7 @@ def validate_summary_fees(main: str, activity: str) -> None:
         value = match['value']
         if (expected is None or _amounts(value, japanese=False) != _amounts(expected, japanese=False)
                 or bool(re.search(r'무료|무상', value)) != bool(re.search(r'무료|무상', expected))):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('reviewed_fee', 'missing_or_mismatched')
 
 
 def _fee_sentences(text: str):
@@ -652,7 +673,7 @@ def validate_assembled_fees(content: str, activity: str, *, canonical_block: str
     """
     block = canonical_block if canonical_block is not None else activity
     if block and content.count(block) != 1:
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('assembled_fee', 'missing_or_mismatched')
     # Empty reviewed fees have no public fee row. Validate the entire text;
     # never invent a free/paid value or bypass the existing component checks.
     generated = content.replace(block, '', 1) if block else content
@@ -670,4 +691,4 @@ def validate_assembled_fees(content: str, activity: str, *, canonical_block: str
                     for h, c in zip(table.headers, row)))
     if any(_simple_fee_sentence(sentence) for sentence in [
             *[s for s in _fee_sentences(generated) if '|' not in s], *table_rows]):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('assembled_fee', 'missing_or_mismatched')

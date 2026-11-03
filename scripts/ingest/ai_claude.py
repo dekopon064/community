@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ingest.ai_errors import AI_UNEXPECTED_THINKING, AiJobError
+from ingest.ai_errors import AI_UNEXPECTED_THINKING, AiJobError, ValidationError, validation_location
 from ingest.region_ja_glossary import glossary_prompt_block, validate_japanese_output
 from ingest.translation_validation import validate_translation_fidelity
 from ingest.body_sections import normalize_schedule_heading
@@ -89,22 +89,23 @@ def conservative_cost_usd(input_tokens: int, output_tokens: int) -> float:
 
 def _require_string(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('required_text_field', 'missing_or_invalid', location={'field': field})
     return value
 
 
 def validate_summary_payload(payload: object) -> str:
     if not isinstance(payload, dict):
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('summary_payload', 'invalid_object')
     extra = set(payload) - {"content_ko", "facts"}
     if extra:
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('summary_payload', 'unexpected_fields')
     content_ko = _require_string(payload.get("content_ko"), "content_ko")
     from ingest.body_markdown import read_body, require_plain_summary
-    read_body(content_ko)
+    with validation_location(field='content_ko'):
+        read_body(content_ko)
     facts = payload.get("facts")
     if not isinstance(facts, dict):
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('summary_payload', 'missing_or_invalid', location={'field': 'facts'})
     required_facts = {
         "audience",
         "geo_age_income",
@@ -112,25 +113,30 @@ def validate_summary_payload(payload: object) -> str:
         "how_to_apply",
     }
     if set(facts) != required_facts:
-        raise AiJobError("ai_schema_error")
-    for key in required_facts:
+        missing = sorted(required_facts - facts.keys())
+        raise ValidationError('summary_facts', 'missing_field' if missing else 'unexpected_fields',
+                              location={'field': 'facts.' + missing[0] if missing else 'facts'})
+    for key in sorted(required_facts):
         if not isinstance(facts[key], str):
-            raise AiJobError("ai_schema_error")
-        require_plain_summary(facts[key])
+            raise ValidationError('summary_facts', 'invalid_text', location={'field': 'facts.' + key})
+        with validation_location(field='facts.' + key):
+            require_plain_summary(facts[key])
     return normalize_schedule_heading(content_ko, 'ko')
 
 
 def validate_translation_payload(payload: object) -> tuple[str, str]:
     if not isinstance(payload, dict):
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('translation_payload', 'invalid_object')
     extra = set(payload) - {"title_ja", "content_ja"}
     if extra:
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('translation_payload', 'unexpected_fields')
     title_ja = _require_string(payload.get("title_ja"), "title_ja")
     content_ja = _require_string(payload.get("content_ja"), "content_ja")
     from ingest.body_markdown import read_body, require_plain_summary
-    require_plain_summary(title_ja)
-    read_body(content_ja)
+    with validation_location(field='title_ja'):
+        require_plain_summary(title_ja)
+    with validation_location(field='content_ja'):
+        read_body(content_ja)
     return title_ja, normalize_schedule_heading(content_ja, 'ja')
 
 

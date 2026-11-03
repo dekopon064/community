@@ -11,7 +11,7 @@ from decimal import Decimal
 import re
 import unicodedata
 
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError, validation_location
 from ingest.body_sections import normalize_schedule_heading
 from ingest.body_markdown import read_body, inline_text, comparison_text, strong_spans, is_weekday_matrix
 
@@ -168,13 +168,13 @@ def _local_schedule_text(text: str) -> str:
         try:
             value = datetime.fromisoformat(match[0].replace('Z', '+00:00'))
         except ValueError:
-            raise AiJobError('ai_schema_error') from None
+            raise ValidationError('timestamp', 'invalid') from None
         return value.astimezone(timezone(timedelta(hours=9))).replace(tzinfo=None).isoformat()
     text = re.sub(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})', local, text)
     def annotation(match):
         offset = next(v for v in match.groups() if v is not None)
         if offset.replace(':','') != '+0900':
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('timezone', 'unsupported_offset')
         return ''
     # +09:00, (UTC+09:00), or an offset attached to a localized clock.
     return re.sub(r'\((?:UTC|GMT)?([+-]\d{2}:?\d{2})\)|'
@@ -208,7 +208,7 @@ def _dates_and_times(text: str, *, known_years: frozenset = frozenset()) -> list
         elif match['short_year']:
             candidates = {y for y in known_years if y % 100 == int(match['short_year'][1:])}
             if len(candidates) != 1:
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('date_year', 'ambiguous')
             year = next(iter(candidates))
             values.append(('date', year, int(match['short_month']), int(match['short_day'])))
         elif match['brief_month']:
@@ -224,7 +224,7 @@ def _dates_and_times(text: str, *, known_years: frozenset = frozenset()) -> list
             if match["meridiem"]:
                 hour = hour % 12 + (12 if match["meridiem"] in {"오후", "午後"} else 0)
             if hour > 23 or minute > 59 or second > 59:
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('clock', 'out_of_range', actual=(hour, minute, second))
             values.append(("time", hour, minute, second) if second else ("time", hour, minute))
         if values and values[-1][0] == 'date':
             _, date_year, month, day = values[-1]
@@ -232,18 +232,27 @@ def _dates_and_times(text: str, *, known_years: frozenset = frozenset()) -> list
                 # Validate month/day without inventing an omitted year.
                 value = datetime(date_year or 2000, month, day)
             except ValueError:
-                raise AiJobError('ai_schema_error') from None
+                raise ValidationError('calendar_date', 'out_of_range', actual=values[-1]) from None
             weekday = re.match(r'\.?\s*[（(]\s*([월화수목금토일月火水木金土日])(?:요일|曜日)?\s*[）)]', text[match.end():])
             if weekday and date_year is not None:
                 alphabet = '월화수목금토일' if weekday[1] in '월화수목금토일' else '月火水木金土日'
                 if alphabet.index(weekday[1]) != value.weekday():
-                    raise AiJobError('ai_schema_error')
+                    raise ValidationError('calendar_weekday', 'mismatch', expected=value.isoweekday(), actual=alphabet.index(weekday[1])+1)
     return values
 
 
-def _require_present(required: Counter, actual: Counter) -> None:
+def _counter_mismatch(rule: str, expected: Counter, actual: Counter) -> ValidationError:
+    missing, added = expected - actual, actual - expected
+    reason = 'mismatch' if missing and added else 'missing' if missing else 'added'
+    keys = dict.fromkeys((*missing, *added))
+    return ValidationError(rule, reason,
+                          expected=[(key, expected[key]) for key in keys if expected[key]],
+                          actual=[(key, actual[key]) for key in keys if actual[key]])
+
+
+def _require_present(rule: str, required: Counter, actual: Counter) -> None:
     if required - actual:
-        raise AiJobError("ai_schema_error")
+        raise _counter_mismatch(rule, required, actual)
 
 
 def _date_year_context(text: str) -> frozenset:
@@ -259,20 +268,22 @@ def _validate_field(korean: str, japanese: str, *, known_years: frozenset = froz
     korean, japanese = comparison_text(korean), comparison_text(japanese)
     # URLs are opaque. Do not NFKC-normalize their path, query or identifiers.
     if Counter(_URL.findall(korean)) - Counter(_URL.findall(japanese)):
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('official_link', 'missing')
     ko, ja = _normal(korean), _normal(japanese)
-    _require_present(_amounts(ko, japanese=False), _amounts(ja, japanese=True))
-    _require_present(_per_session(ko, japanese=False), _per_session(ja, japanese=True))
-    _require_present(_per_person(ko, japanese=False), _per_person(ja, japanese=True))
-    _require_present(_quantities(ko, japanese=False), _quantities(ja, japanese=True))
-    _require_present(_first_come(ko, japanese=False), _first_come(ja, japanese=True))
-    _require_present(_durations(ko), _durations(ja))
-    for ko_label, ja_label in _PERIOD_ROLES:
+    _require_present('fee_amount', _amounts(ko, japanese=False), _amounts(ja, japanese=True))
+    _require_present('per_session', _per_session(ko, japanese=False), _per_session(ja, japanese=True))
+    _require_present('per_person', _per_person(ko, japanese=False), _per_person(ja, japanese=True))
+    _require_present('quantity', _quantities(ko, japanese=False), _quantities(ja, japanese=True))
+    _require_present('first_come_quantity', _first_come(ko, japanese=False), _first_come(ja, japanese=True))
+    _require_present('duration_minutes', _durations(ko), _durations(ja))
+    for role, (ko_label, ja_label) in zip(('application', 'operation', 'meeting', 'deadline'), _PERIOD_ROLES):
         source = _entry(ko, ko_label)
         if source is not None and (expected := _dates_and_times(source, known_years=known_years)):
             target = _entry(ja, ja_label)
-            if target is None or _dates_and_times(target, known_years=known_years) != expected:
-                raise AiJobError("ai_schema_error")
+            actual = _dates_and_times(target, known_years=known_years) if target is not None else []
+            if actual != expected:
+                raise ValidationError('period_date_time', 'missing' if not actual else 'mismatch',
+                                      location={'period_role': role}, expected=expected, actual=actual)
     for ko_label, ja_label in _FEE_ROLES:
         source = _entry(ko, ko_label)
         if source is not None:
@@ -285,7 +296,7 @@ def _validate_field(korean: str, japanese: str, *, known_years: frozenset = froz
                 ) or (
                     any(amount > 0 for amount in amounts) and not free and re.search(r"無料|無償", target)
                 ):
-                    raise AiJobError("ai_schema_error")
+                    raise ValidationError('fee_role', 'missing_or_mismatched', expected=list(amounts), actual=list(_amounts(target or '', japanese=True)))
 
 
 def _cell_ordinal(text: str) -> tuple[int | None, str]:
@@ -327,7 +338,7 @@ def _explicit_source_cell(text: str) -> str:
         try:
             datetime(year, month, day)
         except ValueError:
-            raise AiJobError('ai_schema_error') from None
+            raise ValidationError('calendar_date', 'out_of_range', actual=('date',year,month,day)) from None
         return f'{year}년 {month}월 {day}일'
     text = re.sub(r'\b('+'|'.join(months)+r')\s+(\d{1,2}),\s*(\d{4})\b', english_date, text)
     def mongolian_date(match):
@@ -335,7 +346,7 @@ def _explicit_source_cell(text: str) -> str:
         try:
             datetime(year, month, day)
         except ValueError:
-            raise AiJobError('ai_schema_error') from None
+            raise ValidationError('calendar_date', 'out_of_range', actual=('date',year,month,day)) from None
         return f'{year}년 {month}월 {day}일'
     text = re.sub(r'\b(\d{4})\s+оны\s+(\d{1,2})-р\s+сарын\s+(\d{1,2})\b', mongolian_date, text)
     def english_clock_range(match):
@@ -343,7 +354,7 @@ def _explicit_source_cell(text: str) -> str:
         for hour, minute in ((match[1],match[2]), (match[3],match[4])):
             hour, minute = int(hour), int(minute)
             if not 1 <= hour <= 12 or not 0 <= minute <= 59:
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('clock', 'out_of_range', actual=(hour,minute))
             hour = hour % 12 + (12 if match[5] == 'PM' else 0)
             values.append(f'{hour}시{minute:02}분')
         return '~'.join(values)
@@ -361,57 +372,75 @@ def _validate_cell(korean: str, japanese: str, *, known_years: frozenset = froze
     source_id, source_text = _cell_ordinal(ko)
     target_id, target_text = _cell_ordinal(ja)
     if source_id != target_id:
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('session_number', 'mismatch', expected=source_id, actual=target_id)
     ko, ja = _explicit_source_cell(source_text), target_text
     _validate_field(ko, ja, known_years=known_years)
     # Within one cell/item a date or time cannot be recovered from another row.
-    if _dates_and_times(_normal(ko), known_years=known_years) != _dates_and_times(_normal(ja), known_years=known_years):
-        raise AiJobError('ai_schema_error')
-    for check in (_amounts, _quantities, _per_session, _per_person):
-        if check(_normal(ko), japanese=False) != check(_normal(ja), japanese=True):
-            raise AiJobError('ai_schema_error')
+    expected = _dates_and_times(_normal(ko), known_years=known_years)
+    actual = _dates_and_times(_normal(ja), known_years=known_years)
+    if expected != actual:
+        mismatch = next((i for i, pair in enumerate(zip(expected, actual)) if pair[0] != pair[1]),
+                        min(len(expected), len(actual)))
+        expected_value = expected[mismatch] if mismatch < len(expected) else None
+        actual_value = actual[mismatch] if mismatch < len(actual) else None
+        reason = 'added' if expected_value is None else 'missing' if actual_value is None else 'mismatch'
+        raise ValidationError('cell_date_time', reason, expected=expected_value, actual=actual_value)
+    for rule, check in (('fee_amount', _amounts), ('quantity', _quantities),
+                        ('per_session', _per_session), ('per_person', _per_person)):
+        expected = check(_normal(ko), japanese=False)
+        actual = check(_normal(ja), japanese=True)
+        if expected != actual:
+            raise _counter_mismatch(rule, expected, actual)
     source_allocation = _per_session_allocations(_normal(ko), japanese=False)
     target_allocation = _per_session_allocations(_normal(ja), japanese=True)
     if source_allocation and target_allocation and source_allocation != target_allocation:
-        raise AiJobError('ai_schema_error')
+        raise _counter_mismatch('session_allocation', source_allocation, target_allocation)
     # Class IDs/visa numbers without a recognized amount/date/unit still belong
     # to this cell. This is a bounded numeric check, not meaning interpretation.
     if not (_dates_and_times(ko, known_years=known_years) or _amounts(ko, japanese=False) or _quantities(ko, japanese=False) or _durations(ko)):
         source_digits = _PER_PERSON[False].sub(' ', _without_per_session(ko, japanese=False))
         target_digits = _PER_PERSON[True].sub(' ', _without_per_session(ja, japanese=True))
         if Counter(re.findall(r'\d+', source_digits)) != Counter(re.findall(r'\d+', target_digits)):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('opaque_numeric_identifier', 'mismatch')
     for source, target in ((r'필수|의무', r'必須|必要|義務'),
                            (r'(?:신청|참가|참여|예약)\s*(?:은|는|이|가)?\s*불가|금지',
                             r'不可|禁止|できません|できない|できなく')):
         if re.search(source, ko) and not re.search(target, ja):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('participation_constraint', 'missing')
 
 
 def _validate_markdown(korean: str, japanese: str) -> None:
     ko, ja = read_body(korean), read_body(japanese)
     known_years = _date_year_context(korean)
-    if len(ko.tables) != len(ja.tables) or len(ko.items) != len(ja.items):
-        raise AiJobError('ai_schema_error')
-    for source, target in zip(ko.tables, ja.tables):
-        if (source.section != target.section or len(source.headers) != len(target.headers)
-                or len(source.rows) != len(target.rows)):
-            raise AiJobError('ai_schema_error')
-        for source_header, target_header in zip(source.headers, target.headers):
-            _validate_role_label(source_header, target_header)
-        for source_row, target_row in zip(source.rows, target.rows):
-            _validate_role_label(source_row[0], target_row[0])
-            for source_cell, target_cell in zip(source_row, target_row):
-                if is_weekday_matrix(source.headers):
-                    _validate_weekday_cell(source_cell, target_cell)
-                _validate_cell(source_cell, target_cell, known_years=known_years)
-    for source, target in zip(ko.items, ja.items):
-        if (source.section, source.indent, source.number) != (target.section, target.indent, target.number):
-            raise AiJobError('ai_schema_error')
-        _validate_cell(source.text, target.text, known_years=known_years)
+    if len(ko.tables) != len(ja.tables):
+        raise ValidationError('table_count', 'mismatch', expected=len(ko.tables), actual=len(ja.tables))
+    if len(ko.items) != len(ja.items):
+        raise ValidationError('list_item_count', 'mismatch', expected=len(ko.items), actual=len(ja.items))
+    for table, (source, target) in enumerate(zip(ko.tables, ja.tables), 1):
+        expected_shape = (source.section, len(source.headers), len(source.rows))
+        actual_shape = (target.section, len(target.headers), len(target.rows))
+        with validation_location(table=table):
+            if expected_shape != actual_shape:
+                raise ValidationError('table_shape', 'mismatch', expected=expected_shape, actual=actual_shape)
+            for column, (source_header, target_header) in enumerate(zip(source.headers, target.headers), 1):
+                with validation_location(row=0, column=column):
+                    _validate_role_label(source_header, target_header)
+            for row, (source_row, target_row) in enumerate(zip(source.rows, target.rows), 1):
+                for column, (source_cell, target_cell) in enumerate(zip(source_row, target_row), 1):
+                    with validation_location(row=row, column=column):
+                        if column == 1:
+                            _validate_role_label(source_cell, target_cell)
+                        if is_weekday_matrix(source.headers):
+                            _validate_weekday_cell(source_cell, target_cell)
+                        _validate_cell(source_cell, target_cell, known_years=known_years)
+    for index, (source, target) in enumerate(zip(ko.items, ja.items), 1):
+        with validation_location(item=index):
+            if (source.section, source.indent, source.number) != (target.section, target.indent, target.number):
+                raise ValidationError('list_item_shape', 'mismatch')
+            _validate_cell(source.text, target.text, known_years=known_years)
     source_bold, target_bold = strong_spans(korean), strong_spans(japanese)
     if source_bold and not target_bold:
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('emphasis', 'missing')
     if len(source_bold) == len(target_bold):
         for source, target in zip(source_bold, target_bold):
             _validate_cell(source, target, known_years=known_years)
@@ -420,7 +449,7 @@ def _validate_markdown(korean: str, japanese: str) -> None:
     for ko_label, ja_label in (*_PERIOD_ROLES, *_FEE_ROLES):
         if any(re.search(ko_label, span) for span in source_bold) and not any(
                 re.search(ja_label, span) for span in target_bold):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('emphasized_fact_label', 'missing')
 
 
 def _validate_weekday_cell(korean: str, japanese: str) -> None:
@@ -433,12 +462,12 @@ def _validate_weekday_cell(korean: str, japanese: str) -> None:
     empty = {'', '—', '–', '-'}
     if source in empty or target in empty:
         if source not in empty or target not in empty:
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('weekday_cell', 'missing' if target in empty else 'added')
     languages = ((r'일본어|日本語', r'日本語'), (r'중국어|中国語', r'中国語'),
                  (r'영어|英語', r'英語'), (r'한국어|韓国語', r'韓国語'))
     for ko_pattern, ja_pattern in languages:
         if len(re.findall(ko_pattern, source)) != len(re.findall(ja_pattern, target)):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('session_language', 'mismatch', expected=len(re.findall(ko_pattern, source)), actual=len(re.findall(ja_pattern, target)))
 
 
 def _validate_role_label(korean: str, japanese: str) -> None:
@@ -447,24 +476,28 @@ def _validate_role_label(korean: str, japanese: str) -> None:
     if day:
         target = '月火水木金土日'['월화수목금토일'.index(day[1])]
         if not re.fullmatch(target+r'(?:曜日)?', inline_text(japanese).strip()):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('weekday_label', 'mismatch', expected='월화수목금토일'.index(day[1])+1)
     for ko_label, ja_label in (*_PERIOD_ROLES, *_FEE_ROLES):
         if re.fullmatch(r'(?:' + ko_label + r')(?:\s*\([^)]*\))?', inline_text(korean)):
             if not re.fullmatch(r'(?:' + ja_label + r')(?:\s*[（(][^）)]*[）)])?', inline_text(japanese)):
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('table_role_label', 'mismatch')
 
 
 def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str, content_ja: str) -> None:
     content_ko = normalize_schedule_heading(content_ko, 'ko')
     content_ja = normalize_schedule_heading(content_ja, 'ja')
-    for korean, japanese in ((title_ko, title_ja), (content_ko, content_ja)):
-        _validate_field(korean, japanese, known_years=_date_year_context(korean))
-    _validate_markdown(content_ko, content_ja)
+    with validation_location(field='title'):
+        _validate_field(title_ko, title_ja, known_years=_date_year_context(title_ko))
+    with validation_location(field='body'):
+        # Structured cells are checked before the body-wide inventory so a
+        # missing quantity or clock retains its actual table coordinates.
+        _validate_markdown(content_ko, content_ja)
+        _validate_field(content_ko, content_ja, known_years=_date_year_context(content_ko))
     expected = [_HEADERS[h] for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ko) if h in _HEADERS]
     actual = [h for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ja) if h in _HEADERS.values()]
     if actual != expected:
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('translated_sections', 'missing_added_or_reordered')
     if expected and re.match(r"\s*\[", content_ko):
         # A review verdict before the first required section is not content.
         if not content_ja.lstrip().startswith(f"[{expected[0]}]"):
-            raise AiJobError("ai_schema_error")
+            raise ValidationError('translated_sections', 'unexpected_preamble')

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import re
 from urllib.parse import urlsplit, parse_qs
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError
 from ingest.body_markdown import inline_text
 from ingest.seoul_fact_roles import optional_section
 
@@ -97,14 +97,14 @@ def ensure_application_guidance(content: str, facts: dict) -> str:
 
 def validate_public_guidance(content: str, locale: str) -> None:
     if without_reception_status(content, locale) != content.strip():
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('public_reception_status', 'unexpected')
     # Unknown/mixed status fields are not silently accepted or erased. They
     # need a new verified result; conditions must never be discarded to pass.
     label = r'(?:현재\s*)?접수\s*상태' if locale == 'ko' else r'(?:現在の)?受付状況'
     if re.search(r'(?m)^\s*(?:[-+*]\s+)?' + label + r'\s*[:：]', inline_text(content)):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('public_reception_status', 'unexpected')
     header = '[신청 방법]' if locale == 'ko' else '[申請方法]'
     from ingest.ai_worker import KO_SECTION_HEADERS, JA_SECTION_HEADERS
     from ingest.myseoul_ai_support import section_body
     if not section_body(content, header, KO_SECTION_HEADERS if locale == 'ko' else JA_SECTION_HEADERS).strip():
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('application_guidance', 'missing')

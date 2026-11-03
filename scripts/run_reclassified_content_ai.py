@@ -38,7 +38,15 @@ def main(argv=None,*,execute=None):
         print(json.dumps({'mode':'validation_only','target_count':1,**provider_validation_limits(),'automatic_retries':0,'failure_policy':'no_retry' if args.no_retry else 'existing','network_calls':0,'publish':False}));return 0
     try:
         r=(execute or execute_target)(args);success=r.status=='processed' and r.completed==1 and not (r.retried or r.failed or r.state_unknown)
-        print(json.dumps({'mode':'execution','completed':success,'status':r.status,'automatic_retries':0,'publish':False}));return 0 if success else 1
+        print(json.dumps({'mode':'execution','completed':success,'status':r.status,
+                          'source_item_id':args.source_item_id,'revision':args.revision,
+                          'automatic_retries':0,'publish':False,
+                          'error_code':getattr(r,'error_code',None),
+                          'failure_scope':getattr(r,'failure_scope',None),
+                          'failure_stage':getattr(r,'failure_stage',None),
+                          'diagnostic':getattr(r,'diagnostic',None),
+                          'termination_confirmed':getattr(r,'termination_confirmed',False)}))
+        return 0 if success else 1
     except Exception:
         print('classification_target_execution_failed');return 1
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import re
 from datetime import date, datetime, timezone, timedelta
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError
 from ingest.body_markdown import inline_text, read_body
 from ingest.myseoul_ai_support import schedule_values
 from ingest.myseoul_content import schedule_block, schedule_lines, _dated_schedule_details
@@ -101,7 +101,10 @@ def validate_checkin(content: str, view: dict) -> None:
               for m in _CHECKIN.finditer(parts[1])}
     if not expected: return
     for m in _CHECKIN.finditer(inline_text(content)):
-        if tuple(m.groups()) not in expected: raise AiJobError('ai_schema_error')
+        if tuple(m.groups()) not in expected:
+            expected_values = sorted((int(minutes), side == '전') for minutes, side in expected)
+            raise ValidationError('checkin_lead_minutes', 'mismatch',
+                                  expected=expected_values, actual=(int(m[1]), m[2] == '전'))
 
 
 def _covered(values: dict, rows: list[dict], occurrences=None) -> bool:

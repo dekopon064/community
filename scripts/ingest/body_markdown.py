@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError
 
 _LIST = re.compile(r'^( *)(?:([-+*])\s+|(\d+)[.)]\s+)(\S.*)$')
 _LINK = re.compile(r'(?<!!)\[([^\]\n]+)\]\((https?://[^\s]+?)\)')
@@ -88,9 +88,9 @@ def read_body(content: str) -> Body:
     Plain legacy bodies use the same comparison representation.
     """
     if re.search(r'(?m)^\s*(?:`{3,}|~{3,}|#{1,6}\s)|`[^`\n]+`|</?[A-Za-z][^>]*>|!\[', content):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('markdown', 'unsupported_markup')
     if re.search(r'\d[\d,.]*\*\*(?:원|명|세|회|시|분|년|월|일|ウォン|名|歳|回|時|分|年|月|日)', content):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('markdown', 'split_numeric_unit')
     lines = content.splitlines()
     tables, items, plain = [], [], []
     section = 0
@@ -105,7 +105,7 @@ def read_body(content: str) -> Body:
                 start = index
                 headers = _cells(line)
                 if len(headers) < 2 or len(headers) != len(separators) or any(not h for h in headers):
-                    raise AiJobError('ai_schema_error')
+                    raise ValidationError('table_header', 'invalid_shape', location={'table': len(tables)+1, 'line': index+1}, expected=len(separators), actual=len(headers))
                 weekday_matrix = is_weekday_matrix(headers)
                 index += 2
                 rows = []
@@ -116,7 +116,7 @@ def read_body(content: str) -> Body:
                     # empties; the required row clock and all widths stay strict.
                     if (len(row) != len(headers) or not row[0]
                             or (not weekday_matrix and any(not c for c in row))):
-                        raise AiJobError('ai_schema_error')
+                        raise ValidationError('table_row', 'invalid_shape', location={'table': len(tables)+1, 'row': len(rows)+1}, expected=len(headers), actual=len(row))
                     rows.append(row)
                     values = [inline_text(c) for c in row]
                     # First-cell row label + every column label are retained.
@@ -124,11 +124,11 @@ def read_body(content: str) -> Body:
                         *(inline_text(h) + ': ' + v for h, v in zip(headers, values))]))
                     index += 1
                 if not rows:
-                    raise AiJobError('ai_schema_error')
+                    raise ValidationError('table_rows', 'missing', location={'table': len(tables)+1})
                 tables.append(Table(section, headers, tuple(rows), '\n'.join(lines[start:index])))
                 continue
         if line.lstrip().startswith('|'):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('table', 'missing_header_or_separator', location={'line': index+1})
         match = _LIST.match(line)
         if match:
             value = inline_text(match[4])
@@ -170,4 +170,4 @@ def format_reviewed_block(text: str) -> str:
 def require_plain_summary(text: str) -> None:
     if (read_body(text).tables or read_body(text).items or strong_spans(text)
             or _LINK.search(text) or re.search(r'(?m)^\s*#{1,6}\s|`[^`]+`', text)):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('plain_text', 'unsupported_markup')

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError
 
 _GLOSSARY_PATH = (
     Path(__file__).resolve().parents[2]
@@ -114,14 +114,14 @@ def regions_in_text(text: str) -> tuple[RegionEntry, ...]:
 
 def validate_japanese_output(title_ja: str, content_ja: str, korean_source: str) -> None:
     if not isinstance(title_ja, str) or not title_ja.strip():
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('required_text_field', 'missing_or_invalid', location={'field': 'title_ja'})
     if not isinstance(content_ja, str) or not content_ja.strip():
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('required_text_field', 'missing_or_invalid', location={'field': 'content_ja'})
     combined = f"{title_ja}\n{content_ja}"
     if _HANGUL_RE.search(combined) is not None:
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('translation_language', 'untranslated_hangul')
     if any(mark in combined for mark in _YEN_MARKS):
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('translation_currency', 'unexpected_yen')
     for entry in regions_in_text(korean_source):
         if entry.ja not in combined:
-            raise AiJobError("ai_schema_error")
+            raise ValidationError('region_glossary', 'missing')

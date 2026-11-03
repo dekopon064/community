@@ -115,6 +115,8 @@ def main(argv: Sequence[str] | None = None, *, execute: Callable | None = None) 
                    and not (result.failed or result.retried or result.state_unknown))
         print(json.dumps({"mode": "execution", "completed": bool(success),
                           "status": result.status, "automatic_retries": 0, "publish": False,
+                          "source_item_id": args.source_item_id, "revision": args.revision,
+                          "termination_confirmed": getattr(result,'termination_confirmed',False),
                           "error_code": getattr(result,'error_code',None),
                           "failure_scope": getattr(result,'failure_scope',None),
                           "failure_stage": getattr(result,'failure_stage',None),

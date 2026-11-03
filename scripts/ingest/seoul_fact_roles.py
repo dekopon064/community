@@ -6,7 +6,7 @@ calendar expansion, source lookup or generated replacement facts.
 """
 from dataclasses import dataclass
 import re
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import AiJobError, ValidationError
 from ingest.body_markdown import inline_text, read_body
 
 ORDINAL = r'(?:제\s*)?\d+\s*회차'
@@ -146,22 +146,45 @@ def validate_weekly_schedule(content, description):
                  and all(re.fullmatch(WEEKDAY, plain(h)) for h in t.headers[1:])]
     if not source:
         if generated:
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('weekly_schedule_table', 'unsupported', expected=0, actual=len(generated))
         return
     if source.flattened:
         # Nonempty cell order cannot prove weekdays or empty positions. Even a
         # plausible seven-column generated table cannot repair lost evidence.
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('weekly_schedule_source', 'missing_cell_positions')
     if len(generated) != 1:
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('weekly_schedule_table', 'missing' if not generated else 'added', expected=1, actual=len(generated))
     table = generated[0]
     if ('시간', *(key(h).replace('요일', '') for h in table.headers[1:])) != tuple(key(h).replace('요일', '') for h in source.headers):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('weekly_schedule_headers', 'mismatch')
     rows = tuple(tuple(plain(c) for c in row) for row in table.rows)
     def cell_key(cell):
         return None if plain(cell) in EMPTY_CELL else key(cell)
-    if tuple(tuple(cell_key(c) for c in row) for row in rows) != tuple(tuple(cell_key(c) for c in row) for row in source.rows):
-        raise AiJobError('ai_schema_error')
+    if len(rows) != len(source.rows):
+        raise ValidationError('weekly_schedule_rows', 'mismatch', expected=len(source.rows), actual=len(rows))
+
+    def cell_facts(cell):
+        if cell_key(cell) is None:
+            return []
+        clock = re.search(CLOCK, cell)
+        ordinal = re.search(ORDINAL, cell)
+        values = []
+        if clock:
+            values.append(('time', *map(int, clock[0].split(':'))))
+        if ordinal:
+            values.append(('count', int(re.search(r'\d+', ordinal[0])[0])))
+        return values
+
+    for row_index, (expected_row, actual_row) in enumerate(zip(source.rows, rows), 1):
+        if len(expected_row) != len(actual_row):
+            raise ValidationError('weekly_schedule_columns', 'mismatch', location={'row': row_index},
+                                  expected=len(expected_row), actual=len(actual_row))
+        for column, (expected, actual) in enumerate(zip(expected_row, actual_row), 1):
+            if cell_key(expected) != cell_key(actual):
+                reason = 'added' if cell_key(expected) is None else 'missing' if cell_key(actual) is None else 'mismatch'
+                raise ValidationError('weekly_schedule_cell', reason,
+                                      location={'row': row_index, 'column': column},
+                                      expected=cell_facts(expected), actual=cell_facts(actual))
 
 
 def booking_covered(value, method):

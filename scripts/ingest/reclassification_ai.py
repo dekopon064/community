@@ -8,7 +8,7 @@ from uuid import UUID
 from ingest.ai_worker import (AiWorkerResult, extract_summary_section, KO_SUMMARY_HEADER,
     KO_SECTION_HEADERS, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
 from ingest.program_ai import ProgramAIAdapter
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError
 from ingest.rpc_errors import RpcAmbiguous
 from ingest.region_ja_glossary import validate_japanese_output
 from ingest.content_filters import validate_filters, program_application_complete, KEYS
@@ -232,7 +232,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
     stage='summary'
     try:
         content,status,model=summarize_ko(classification_input(c),c['sourceUrl'],title=c['title'])
-        if status!='success' or not isinstance(content,str):raise AiJobError('ai_schema_error')
+        if status!='success' or not isinstance(content,str):raise ValidationError('summary_result', 'missing_or_invalid')
         stage='korean_validation'
         native=c['nativeConfirmedFacts']['programFacts'] or {}
         links=native.get('application_links',[]) if c['source']=='myseoul_program' else []
@@ -274,7 +274,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             validate_assembled_fees(content,fact_sections(native)['activity'],canonical_block=fee_block)
         stage='translation'
         title_ja,content_ja,status_ja,_=translate_ja(c['title'],content)
-        if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise AiJobError('ai_schema_error')
+        if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise ValidationError('translation_result', 'missing_or_invalid')
         stage='japanese_validation'
         content_ja=normalize_schedule_heading(content_ja,'ja')
         if native.get('schema_version')=='program-scope-v1-local':
@@ -306,7 +306,8 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
                     terminate_no_retry(adapter,c,exc)
                     return terminal_failure_result(exc,stage)
                 except Exception as finish_exc:
-                    return unknown_failure_result(finish_exc,'failure_termination')
+                    return unknown_failure_result(finish_exc, 'failure_termination',
+                                                  validation_error=exc, validation_stage=stage)
         # No new write/provider retry. A separate fenced status read can establish
         # completion; expired attempts require an explicit close before any new job.
         try:

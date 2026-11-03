@@ -5,7 +5,7 @@ facts mutation or broad permission to use any clock found in source prose.
 """
 import re
 
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError
 from ingest.body_markdown import inline_text
 from ingest.translation_validation import _dates_and_times
 
@@ -29,7 +29,7 @@ def _ranges(text):
     for match in _RANGE.finditer(text):
         clocks = [v for v in _dates_and_times(match[0]) if v[0] == 'time']
         if len(clocks) != 2:
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('clock_range', 'invalid_shape', expected=2, actual=len(clocks))
         result.append(tuple(tuple(v[1:]) for v in clocks))
     return result
 
@@ -68,7 +68,7 @@ def _validate_hour_sentence(text, facts):
             own = {r for source in facts.get('description','').splitlines()
                    if re.search(role, source) for r in _ranges(source)}
             if any(r not in own for r in ranges):
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('receipt_or_viewing_hours', 'unsupported', expected=sorted(own), actual=ranges)
             return True
     if not _facility_hours(text):
         # Explicit fixed session claims must not borrow opening/receipt clocks,
@@ -77,7 +77,7 @@ def _validate_hour_sentence(text, facts):
             from ingest.myseoul_content import schedule_lines
             allowed = {r for value in schedule_lines(facts) for r in _ranges(value)}
             if any(r not in allowed for r in ranges):
-                raise AiJobError('ai_schema_error')
+                raise ValidationError('session_hours', 'unsupported', expected=sorted(allowed), actual=ranges)
         return False
     # A time-free arrangement clause is a separate role, not a fixed session.
     # Recognize only this complete qualified tail and require current evidence;
@@ -88,17 +88,17 @@ def _validate_hour_sentence(text, facts):
     if arrangement:
         if not re.search(r'(?:일정|시간)[^\n.。]{0,100}(?:협의|조율)|'
                          r'(?:협의|조율)[^\n.。]{0,100}(?:일정|시간)', facts.get('description','')):
-            raise AiJobError('ai_schema_error')
+            raise ValidationError('facility_arrangement', 'unsupported')
         text = text[:arrangement.start()]
     expected = {tuple(tuple(clock) for clock in record['clocks']) for record in records}
     if (len(ranges) != 1 or ranges[0] not in expected
             or re.search(r'접수|신청|관람|회차|매일.*(?:프로그램|체험|수업)|'
                          r'(?:프로그램|체험|수업|행사).*(?:진행|운영)\s*(?:합니다|됩니다)', text)):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('facility_hours', 'unsupported_value_or_role', expected=sorted(expected), actual=ranges)
     if re.search(r'협의|조율', text) and not re.search(
             r'(?:일정|시간)[^\n.。]{0,100}(?:협의|조율)|(?:협의|조율)[^\n.。]{0,100}(?:일정|시간)',
             facts.get('description', '')):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('facility_arrangement', 'unsupported')
     return True
 
 
@@ -114,5 +114,5 @@ def validate_facility_hours_clause(line, facts):
     # Mixed facility/session prose still passes through the existing general
     # schedule checks; no global time-set exemption for a single proven clause.
     if any(results) and not all(results):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('facility_hours', 'mixed_roles')
     return bool(results and all(results))

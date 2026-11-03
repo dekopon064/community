@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Callable
 from uuid import UUID
 
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import AiJobError, ValidationError
 from ingest.ai_worker import AiWorkerResult, extract_summary_section, KO_SUMMARY_HEADER, KO_SECTION_HEADERS, JA_SUMMARY_HEADER, JA_SECTION_HEADERS
 from ingest.program_scope import PROGRAM_PROFILE, PROGRAM_SCHEMA, ProgramFacts, assess_program_facts
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout, map_rpc_exception
@@ -190,7 +190,7 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         summarize_program = getattr(owner, "summarize_program_ko", summarize_ko)
         content_ko, status_ko, model = summarize_program(program_input(c), c["facts"]["official_url"], title=c["title"])
         if status_ko != "success" or not isinstance(content_ko, str):
-            raise AiJobError("ai_schema_error")
+            raise ValidationError('summary_result', 'missing_or_invalid')
         stage = 'korean_validation'
         from ingest.body_sections import normalize_schedule_heading
         content_ko = normalize_schedule_heading(content_ko, 'ko')
@@ -202,7 +202,7 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         stage = 'translation'
         title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content_ko)
         if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
-            raise AiJobError("ai_schema_error")
+            raise ValidationError('translation_result', 'missing_or_invalid')
         stage = 'japanese_validation'
         content_ja = normalize_schedule_heading(content_ja, 'ja')
         validate_public_body(content_ja)
@@ -238,7 +238,8 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
                 terminate_no_retry(adapter, c, exc)
                 return terminal_failure_result(exc, stage)
             except Exception as finish_exc:
-                return unknown_failure_result(finish_exc, 'failure_termination')
+                return unknown_failure_result(finish_exc, 'failure_termination',
+                                                      validation_error=exc, validation_stage=stage)
         error = exc.code if isinstance(exc, AiJobError) else "ai_or_enqueue_failed"
         try:
             status = adapter.invoke("fail_seoul_program_ai", {**fence, "p_error_code": error})
