@@ -29,7 +29,7 @@ export function ReviewSourceReference({
   const linkClass = "inline-flex min-h-11 items-center underline underline-offset-4";
 
   return (
-    <div className="my-6 border-b border-info-rule pb-5">
+    <div data-review-source-reference className="my-6 border-b border-info-rule pb-5">
       <details>
         <summary className="cursor-pointer py-3 font-semibold">원문 확인 · 읽기 전용</summary>
         <p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{body || emptyBody}</p>

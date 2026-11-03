@@ -115,7 +115,7 @@ export function SavedFilterValues({saved,data,onChange,disabled,missing,confirme
     })}</dl></details>;
 }
 
-export default function FilterReviewPanel({id,version,info,disabled,onBlocked,onSaved,reviewFields=[]}:{id:string;version:string;info:FilterInfo;disabled:boolean;onBlocked:(v:boolean)=>void;onSaved:()=>Promise<void>;reviewFields?:FilterKey[]}) {
+export default function FilterReviewPanel({id,version,info,disabled,onBlocked,onSaved,reviewFields=[],compactTop=false}:{id:string;version:string;info:FilterInfo;disabled:boolean;onBlocked:(v:boolean)=>void;onSaved:()=>Promise<void>;reviewFields?:FilterKey[];compactTop?:boolean}) {
   const [draft,setDraft]=useState(()=>structuredClone(info.data)),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const sending=useRef(false);
   const [pendingRepeat,setPendingRepeat]=useState(false),[resetKey,setResetKey]=useState(0);
@@ -125,7 +125,7 @@ export default function FilterReviewPanel({id,version,info,disabled,onBlocked,on
   useEffect(()=>{onBlocked(busy||dirty||editing!==null);return()=>onBlocked(false);},[busy,dirty,editing,onBlocked]);
   useEffect(()=>{if(!dirty&&editing===null)return;const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty,editing]);
 
-  return <section className="my-8 border-y border-info-rule py-6" aria-label="탐색 필터 확인"><h3 className="text-lg font-bold">{filterCategoryLabels[info.data.category]} 필터 확인</h3><p className="my-3 text-sm leading-6 text-info-muted">저장된 원문과 현재 사실을 확인한 뒤 선택합니다. 해당 카테고리의 값을 선택합니다. 다른 사실 확인사항은 그대로 유지합니다.</p>
+  return <section className={`${compactTop ? "mt-4 mb-8" : "my-8"} border-y border-info-rule py-6`} aria-label="탐색 필터 확인"><h3 className="text-lg font-bold">{filterCategoryLabels[info.data.category]} 필터 확인</h3><p className="my-3 text-sm leading-6 text-info-muted">저장된 원문과 현재 사실을 확인한 뒤 선택합니다. 해당 카테고리의 값을 선택합니다. 다른 사실 확인사항은 그대로 유지합니다.</p>
     <form onSubmit={async e=>{e.preventDefault();if(sending.current||disabled||editing!==null)return;if(pendingRepeat){setError('편집한 반복 조건으로 회차를 만든 뒤 저장해 주세요. 입력은 유지합니다.');return;}let body;try{body=filterSaveBody(info,version,draft,fields);}catch{setError('선택값·지역·날짜 형식을 확인해 주세요. 입력은 유지했습니다.');return;}sending.current=true;setBusy(true);setError('');try{await saveFilterRequest(id,body);await onSaved();}catch(e){setError(e instanceof Error?e.message:'저장 결과를 확인하지 못했습니다. 입력을 유지합니다.');}finally{setBusy(false);sending.current=false;}}}>
       <FilterInputs key={resetKey} onPending={setPendingRepeat} data={draft} fields={fields.filter(k=>k!==editing)} onChange={setDraft} disabled={disabled||busy||editing!==null} missing={info.missing} saved={info.data} confirmed={confirmedFilterFields(info)}/>
       <SavedFilterValues key={`saved-${resetKey}`} saved={info.data} data={draft} onChange={setDraft} disabled={disabled||busy} missing={info.missing} confirmed={confirmedFilterFields(info)} version={version} onEditing={setEditing}/>
