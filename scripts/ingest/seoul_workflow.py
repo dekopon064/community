@@ -272,6 +272,7 @@ def process_ready_targets(targets,counts,process_one,*,policy_for,after_each=Non
             stateUnknown=result.state_unknown, errorCode=getattr(result,'error_code',None),
             failureScope=getattr(result,'failure_scope',None),
             failureStage=getattr(result,'failure_stage',None),
+            terminationConfirmed=getattr(result,'termination_confirmed',False),
             diagnostic=getattr(result,'diagnostic',None)))
         stop = ('state_unknown' if result.status=='ai_state_unknown' or result.state_unknown else
                 'retry_registered' if result.retried else

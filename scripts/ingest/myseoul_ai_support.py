@@ -4,7 +4,7 @@ import re
 import unicodedata
 from typing import Callable
 from uuid import UUID
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import AiJobError, ValidationError
 from ingest.content_filters import validate_claim_filter, validate_program_filter_snapshot
 from ingest.ai_worker import AiWorkerResult
 from ingest.program_ai import ProgramAIAdapter
@@ -35,7 +35,7 @@ def schedule_values(text: str, *, japanese: bool = False) -> dict[str, set]:
     def minutes(value: str) -> int:
         parts = [int(v) for v in re.findall(r"\d+", value)]
         if parts[0] > 23:
-            raise AiJobError("ai_schema_error")
+            raise ValidationError('clock', 'out_of_range', actual=parts)
         return parts[0] * 60 + (parts[1] if len(parts) > 1 else 0)
     times = {(minutes(m[1]), minutes(m[2])) for m in re.finditer(
         rf"({clock})\s*(?:~|～|〜|–|—|-|부터|から)\s*({clock})", text)}
@@ -56,7 +56,8 @@ def section_body(content: str, header: str, headers: tuple[str, ...]) -> str:
     boundary = "|".join(re.escape(h) for h in headers)
     matches = list(re.finditer(r"(?ms)^\s*" + re.escape(header) + r"[ \t]*(.*?)(?=^\s*(?:" + boundary + r")|\Z)", content))
     if len(matches) != 1 or not matches[0][1].strip():
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('body_section', 'duplicate' if len(matches) > 1 else 'missing_or_empty',
+                              expected=1, actual=len(matches))
     return matches[0][1].strip()
 
 

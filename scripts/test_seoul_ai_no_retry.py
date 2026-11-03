@@ -34,9 +34,19 @@ class NoRetryTests(unittest.TestCase):
         native = c['nativeConfirmedFacts']['programFacts'] if classified else c['facts']
         assembled = assemble_seoul_body(summary['content_ko'], native)
         japanese = {'title_ja': '合成の解説', 'content_ja': fake_translation(assembled)}
-        if mode == 'ko_error': summary = {'content_ko': 'invalid'}
+        if mode == 'ko_error':
+            del summary['facts']['how_to_apply']
         if mode == 'ko_validation': summary['content_ko'] = summary['content_ko'].replace('10:00', '09:00')
-        if mode == 'ja_error': japanese = {'title_ja': '合成', 'content_ja': 'invalid'}
+        if mode == 'ja_error':
+            del japanese['title_ja']
+        if mode == 'ja_clock':
+            japanese['content_ja'] = japanese['content_ja'].replace('| 10:00 |', '| 10:30 |', 1)
+        if mode == 'ja_date':
+            japanese['content_ja'] = japanese['content_ja'].replace('2026-10-31', '2026-10-30', 1)
+        if mode == 'ja_quantity':
+            import re
+            japanese['content_ja'], changed = re.subn(r'15\s*([名人])', r'16\1', japanese['content_ja'])
+            self.assertGreater(changed, 0)
         client = streamed([response(json.dumps(summary, ensure_ascii=False)),
                            response(json.dumps(japanese, ensure_ascii=False))])
         provider = create_provider_adapter('chatgpt_plan', None, client=client, plan_session=verified_session())
@@ -99,6 +109,9 @@ class NoRetryTests(unittest.TestCase):
             self.assertEqual((r.failed, r.retried, r.completed), (1, 0, 0))
             self.assertEqual(r.failure_scope, 'item')
             self.assertEqual(r.failure_stage, 'summary')
+            self.assertTrue(r.termination_confirmed)
+            self.assertEqual(r.diagnostic, {'rule': 'summary_facts', 'reason': 'missing_field',
+                                            'location': {'field': 'facts.how_to_apply'}})
             self.assertEqual(calls, ['summary']); self.assertEqual(count, 1)
             self.assertEqual([x[0] for x in e][1:], ['fail_seoul_ai_no_retry'])
 
@@ -108,6 +121,9 @@ class NoRetryTests(unittest.TestCase):
             self.assertEqual((r.failed, r.retried, r.completed), (1, 0, 0))
             self.assertEqual(r.failure_scope, 'item')
             self.assertEqual(r.failure_stage, 'korean_validation')
+            self.assertEqual(r.diagnostic, {'rule': 'weekly_schedule_cell', 'reason': 'mismatch',
+                                            'location': {'row': 1, 'column': 1},
+                                            'expected': [['time', 10, 0]], 'actual': [['time', 9, 0]]})
             self.assertEqual(calls, ['summary']); self.assertEqual(count, 1)
             self.assertEqual(e[-1][0], 'fail_seoul_ai_no_retry')
 
@@ -119,12 +135,47 @@ class NoRetryTests(unittest.TestCase):
             self.assertEqual(calls, ['summary', 'translation']); self.assertEqual(count, 2)
             self.assertEqual(e[-1][0], 'fail_seoul_ai_no_retry')
 
+    def test_translation_comparisons_keep_values_and_cell_position(self):
+        for classified in (False, True):
+            with self.subTest(classified=classified):
+                result, events, calls, count = self.replay(classified, 'ja_clock')
+                self.assertEqual(result.diagnostic,
+                    {'rule': 'cell_date_time', 'reason': 'mismatch',
+                     'location': {'field': 'body', 'table': 1, 'row': 1, 'column': 1},
+                     'expected': ['time', 10, 0], 'actual': ['time', 10, 30]})
+                self.assertTrue(result.termination_confirmed)
+                self.assertEqual((count, calls), (2, ['summary', 'translation']))
+                self.assertEqual([name for name, _ in events][1:], ['fail_seoul_ai_no_retry'])
+                result, _, _, _ = self.replay(classified, 'ja_quantity')
+                self.assertEqual(result.diagnostic['rule'], 'quantity')
+                self.assertIn(15, [item[0][0] for item in result.diagnostic['expected']])
+                self.assertIn(16, [item[0][0] for item in result.diagnostic['actual']])
+                result, _, calls, count = self.replay(classified, 'ja_date')
+                self.assertEqual(result.diagnostic,
+                    {'rule': 'period_date_time', 'reason': 'mismatch',
+                     'location': {'field': 'body', 'item': 4, 'period_role': 'operation'},
+                     'expected': [['date', 2026, 10, 1], ['date', 2026, 10, 31]],
+                     'actual': [['date', 2026, 10, 1], ['date', 2026, 10, 30]]})
+                self.assertEqual((count, calls), (2, ['summary', 'translation']))
+
+    def test_translation_table_date_reports_first_differing_value(self):
+        from ingest.translation_validation import validate_translation_fidelity
+        korean = '| 날짜 | 장소 |\n| --- | --- |\n| 2026년 11월 7일 | 합성 장소 |'
+        japanese = '| 日付 | 場所 |\n| --- | --- |\n| 2026年11月8日 | 合成場所 |'
+        with self.assertRaises(AiJobError) as raised:
+            validate_translation_fidelity('합성', korean, '合成', japanese)
+        self.assertEqual(raised.exception.diagnostic,
+            {'rule': 'cell_date_time', 'reason': 'mismatch',
+             'location': {'field': 'body', 'table': 1, 'row': 1, 'column': 1},
+             'expected': ['date', 2026, 11, 7], 'actual': ['date', 2026, 11, 8]})
+
     def test_unknown_response_never_becomes_failed_or_retried(self):
         for classified in (False, True):
             for mode in ('ko_unknown', 'finish_unknown', 'finish_malformed', 'fail_unknown'):
                 r, e, calls, count = self.replay(classified, mode)
                 self.assertEqual((r.state_unknown, r.retried, r.failed), (1, 0, 0))
                 self.assertEqual(r.failure_scope, 'batch')
+                self.assertFalse(r.termination_confirmed)
                 self.assertNotIn('fail_seoul_program_ai', [n for n, _ in e])
                 self.assertEqual(sum(n == 'fail_seoul_ai_no_retry' for n, _ in e), int(mode == 'fail_unknown'))
                 self.assertEqual(sum(n.startswith('finish_') for n, _ in e), int(mode.startswith('finish')))
@@ -162,12 +213,17 @@ class NoRetryTests(unittest.TestCase):
                 self.assertEqual(entry(args+['--no-retry']), 0)
             value = json.loads(out.getvalue()); self.assertEqual(value['failure_policy'], 'no_retry')
             self.assertEqual(value['network_calls'], 0)
-            seen = []
+            result, _, _, _ = self.replay(entry is classified, 'ko_error')
             def execute(args):
-                from ingest.ai_worker import AiWorkerResult
-                seen.append(args.no_retry); return AiWorkerResult(status='processed', claimed=1, failed=1)
-            with redirect_stdout(io.StringIO()): self.assertEqual(entry(args+['--execute', '--no-retry'], execute=execute), 1)
-            self.assertEqual(seen, [True])
+                self.assertTrue(args.no_retry)
+                return result
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(entry(args+['--execute', '--no-retry'], execute=execute), 1)
+            value = json.loads(out.getvalue())
+            self.assertEqual(value['source_item_id'], base[3])
+            self.assertEqual(value['failure_stage'], 'summary')
+            self.assertTrue(value['termination_confirmed'])
+            self.assertEqual(value['diagnostic']['location'], {'field': 'facts.how_to_apply'})
 
     def test_bounded_queue_continues_after_acknowledged_item_failure(self):
         _, c = replay_context(); c['failurePolicy'] = {'policy': 'no_retry', 'attempt': 'f'*64}
@@ -182,13 +238,43 @@ class NoRetryTests(unittest.TestCase):
                 current=copy.deepcopy(c);current['sourceItemId']=a['p_source_item_id'];return [current]
             if n == 'fail_seoul_ai_no_retry': return 'failed'
             raise AssertionError(n)
-        def fail(*a, **k): raise AiJobError('ai_schema_error')
+        def fail(*a, **k):
+            from ingest.ai_errors import ValidationError
+            raise ValidationError('required_text_field', 'missing_or_invalid', location={'field': 'content_ko'})
         r = process_seoul_queue(ProgramAIAdapter(rpc), max_jobs=2, queue_pages=1,
             summarize_ko=fail, translate_ja=fail, worker_id=c['workerId'], no_retry=True)
         self.assertEqual((r['failed'], r['unprocessed']), (2, 0))
         self.assertFalse(r['batch_stopped'])
+        self.assertTrue(all(item['terminationConfirmed'] for item in r['items']))
+        self.assertEqual(r['items'][0]['diagnostic']['location'], {'field': 'content_ko'})
         self.assertEqual(events, ['admin_review_ai_queue', 'claim_seoul_program_ai_no_retry',
             'fail_seoul_ai_no_retry', 'claim_seoul_program_ai_no_retry', 'fail_seoul_ai_no_retry'])
+
+        events.clear()
+        def uncertain_rpc(name, args):
+            if name == 'fail_seoul_ai_no_retry':
+                events.append(name)
+                raise RpcTimeout()
+            return rpc(name, args)
+        r = process_seoul_queue(ProgramAIAdapter(uncertain_rpc), max_jobs=2, queue_pages=1,
+            summarize_ko=fail, translate_ja=fail, worker_id=c['workerId'], no_retry=True)
+        self.assertEqual((r['failed'], r['unprocessed'], r['state_unknown']), (0, 1, 1))
+        self.assertTrue(r['batch_stopped'])
+        self.assertFalse(r['items'][0]['terminationConfirmed'])
+        self.assertEqual(r['items'][0]['diagnostic']['validation']['location'], {'field': 'content_ko'})
+        self.assertEqual(events, ['admin_review_ai_queue', 'claim_seoul_program_ai_no_retry',
+                                  'fail_seoul_ai_no_retry'])
+
+    def test_comparison_diagnostics_drop_opaque_strings_and_bound_values(self):
+        from ingest.ai_errors import ValidationError
+        result = ValidationError('quantity', 'mismatch',
+                                 expected=[('people', 15, 'opaque-secret')],
+                                 actual=list(range(40)),
+                                 location={'field': 'opaque-secret', 'line': 2, 'key': 3})
+        self.assertEqual(result.diagnostic['expected'], [['people', 15, None]])
+        self.assertEqual(result.diagnostic['actual'], [0, 1, 2, 3, 4, 5])
+        self.assertNotIn('opaque-secret', repr(result.diagnostic))
+        self.assertEqual(result.diagnostic['location'], {'line': 2})
 
 
 if __name__ == '__main__': unittest.main()

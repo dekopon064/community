@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import AiJobError, ValidationError
 from ingest.ai_worker import AiWorkerResult
 from ingest.rpc_errors import RpcAmbiguous, is_timeout_exception, is_lost_response_exception
 
@@ -14,6 +14,7 @@ class NoRetryResult(AiWorkerResult):
     failure_scope: str | None = None
     failure_stage: str | None = None
     diagnostic: dict | None = None
+    termination_confirmed: bool = False
 
 
 def terminal_failure_result(error, stage):
@@ -24,11 +25,16 @@ def terminal_failure_result(error, stage):
             and getattr(error, 'failure_scope', None) != 'batch')
     return NoRetryResult(status='processed', claimed=1, failed=1,
         error_code=error.code if isinstance(error, AiJobError) else 'ai_or_enqueue_failed',
-        failure_scope='item' if item else 'batch', failure_stage=stage)
+        failure_scope='item' if item else 'batch', failure_stage=stage,
+        diagnostic=error.diagnostic if isinstance(error, ValidationError) else None,
+        termination_confirmed=True)
 
 
-def unknown_failure_result(error, stage):
+def unknown_failure_result(error, stage, *, validation_error=None, validation_stage=None):
     diagnostic = getattr(error, 'diagnostic', None)
+    if isinstance(validation_error, ValidationError):
+        diagnostic = {'validation': validation_error.diagnostic, 'validationStage': validation_stage,
+                      'termination': diagnostic}
     return NoRetryResult(status='ai_state_unknown', claimed=1, state_unknown=1,
         failure_scope='batch', failure_stage=stage, diagnostic=diagnostic)
 

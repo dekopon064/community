@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timezone, timedelta
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import ValidationError
 from ingest.ai_worker import KO_SECTION_HEADERS
 from ingest.body_markdown import format_reviewed_block, schedule_tables, read_body, schedule_table_lines, inline_text
 from ingest.myseoul_ai_support import section_body
@@ -29,7 +29,7 @@ PAIRS = {'application': ('RCPTBGNDT', 'RCPTENDDT'),
 def validate_public_body(content: str) -> None:
     read_body(content)
     if re.search(r'(?im)^\s*(?:참고\s*[:：]\s*)?(?:JSON\s*(?:출력|응답|형식|出力|形式|output|response)|출력은\s*JSON|검수\s*평가|수정\s*이유)\s*[:：]', content):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('public_body', 'internal_instruction')
 
 
 def public_date(endpoint: dict) -> str:
@@ -38,7 +38,7 @@ def public_date(endpoint: dict) -> str:
         return value
     parsed = datetime.fromisoformat(value)
     if parsed.utcoffset() is None:
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('reviewed_datetime', 'missing_timezone')
     parsed = parsed.astimezone(KST)
     return parsed.strftime('%Y-%m-%d %H:%M:%S' if parsed.second else '%Y-%m-%d %H:%M')
 
@@ -259,5 +259,5 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     # Source tables are evidence. They are not blindly copied, but every
     # generated table is validated above before a candidate can be created.
     if schedule_tables(facts['description']) and not schedule_tables(content):
-        raise AiJobError('ai_schema_error')
+        raise ValidationError('schedule_table', 'missing')
     return content

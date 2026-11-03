@@ -6,7 +6,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from ingest.ai_errors import AI_OR_ENQUEUE_FAILED, AiJobError
+from ingest.ai_errors import AI_OR_ENQUEUE_FAILED, AiJobError, ValidationError, validation_location
 from ingest.models import ClaimedJob
 from ingest.rpc_errors import RpcAmbiguous, RpcTimeout, RpcFailure
 from ingest.source_identity import (
@@ -354,7 +354,7 @@ def extract_summary_section(
     over-long section uses the existing AI schema failure.
     """
     if not isinstance(content, str):
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('one_line_summary', 'invalid_body')
     if headers == KO_SECTION_HEADERS or headers == JA_SECTION_HEADERS:
         locale = 'ko' if headers == KO_SECTION_HEADERS else 'ja'
         content = normalize_schedule_heading(content, locale)
@@ -378,12 +378,13 @@ def extract_summary_section(
         if collecting:
             parts.append(line)
     if not found:
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('one_line_summary', 'missing')
     body = "\n".join(parts).strip()
     from ingest.body_markdown import require_plain_summary
-    require_plain_summary(body)
+    with validation_location(field='one_line_summary'):
+        require_plain_summary(body)
     if not body or len(body) > SUMMARY_MAX_CHARS:
-        raise AiJobError("ai_schema_error")
+        raise ValidationError('one_line_summary', 'empty_or_too_long', expected=SUMMARY_MAX_CHARS, actual=len(body))
     return body
 
 
