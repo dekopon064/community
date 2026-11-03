@@ -1,5 +1,5 @@
 "use client";
-import {reviewOverview,ReviewStatus,ReviewValueRow} from './ReviewStates';
+import {ReviewStatus,ReviewValueRow} from './ReviewStates';
 
 import { FilterInputs, filterSaveBody, saveFilterRequest, filterValueLabel, reviewFilterLabel, filterCategoryLabels, SavedFilterValues, confirmedFilterFields, changedFilterFields } from './FilterReviewPanel';
 import { filterLabels, parseContentFilters } from '@/app/lib/contentFilters';
@@ -12,10 +12,11 @@ import { myseoulReasonFields, myseoulGuidance, myseoulCommand } from '@/app/lib/
 import type { MySeoulCommand, MySeoulFacts, MySeoulIssue, MySeoulPeriod } from '@/app/lib/review/myseoul-contract';
 import { buildMySeoulSave, mergeMySeoulDraft, myseoulArrayFields, myseoulChoices, myseoulFeeLabels, myseoulLabels, myseoulPatch, displayMySeoulValue, reviewPeriodAxes, visibleMySeoulFields } from '@/app/lib/review/myseoul-ui';
 import type { MySeoulFee, MySeoulPeriods } from '@/app/lib/review/myseoul-ui';
-import { failureText, sourceLink, statusText } from '@/app/lib/review/presentation';
+import { failureText, statusText } from '@/app/lib/review/presentation';
 import { myseoulErrorMessage } from '@/app/lib/review/myseoul-errors';
 import { OptionalReviewText, fieldClass, primaryButton, secondaryButton } from './ReviewEditors';
 import ClassificationPanel from './ClassificationPanel';
+import { ReviewReasonList, ReviewSourceReference } from './FactReviewContext';
 import { RestoredMySeoulFacts } from './RestoredMySeoulFacts';
 import MySeoulResidenceReview from './MySeoulResidenceReview';
 import {quickReasons} from '@/app/lib/review/trash';
@@ -260,13 +261,52 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
       setFilterError(`${filtersSaved ? '공개 필터 저장은 완료됐지만 이후 조회에 실패했습니다.' : factsSaved ? '사실 저장은 완료됐지만 공개 필터 저장을 완료 확인하지 못했습니다.' : '저장 완료를 확인하지 못했습니다.'} ${e instanceof Failure ? myseoulErrorMessage(e) : e instanceof Error ? e.message : ''} 입력은 유지하며 자동 재시도하지 않습니다.`);
     } finally { sending.current = false; setBusy(false); }
   }
-  const link = item ? sourceLink(item.source.url) : null;
   return <section aria-label="마이서울플러스 사실 검토" aria-busy={busy}>
     {(error || notice) && <div ref={message} tabIndex={-1} role={error ? 'alert' : 'status'} className="mb-6 scroll-mt-36 border-y border-info-rule py-4 leading-7"><p className={error ? 'text-info-status' : 'text-info-body'}>{error ? errorDetail || failureText.unavailable : notice}</p>
       {error && <div className="mt-3 flex flex-wrap gap-3"><button type="button" className={secondaryButton} disabled={busy} onClick={() => void reload()}>{unsaved ? '입력을 버리고 최신 내용 불러오기' : '최신 내용 다시 확인'}</button>{['signed_out', 'forbidden'].includes(error) && <Link prefetch={false} href="/ko/login?next=%2Fko%2Fadmin" className={secondaryButton}>로그인 상태 확인</Link>}</div>}</div>}
     {!item || !draft ? <p role="status" className="py-6 text-info-muted">{busy ? '마이서울플러스 항목을 불러오는 중입니다.' : '항목을 불러오지 못했습니다.'}</p> : <>
       <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">마이서울플러스 · {statusText[item.status]}</p></header>
-      <ClassificationPanel key={id+item.version} id={id} disabled={operationBusy||unsaved||confirm} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const next=await request(id);accept(next);onResult(next);}} overview={<section className={reviewOverview} aria-label="이번에 확인할 사항"><h3 className="font-bold">이번에 확인할 사항 · {myseoulReviewReasons(item).length}개</h3><ul className="mt-3 space-y-2">{myseoulReviewReasons(item).map(r=>{const filterKey=r.code.startsWith('content_filter:')?r.code.slice(15):r.code==='activity_region_unknown'?'location':r.code==='delivery_mode_unknown'?'delivery':null;return <li key={r.code}><button type="button" data-classification-open={r.code==='category_unresolved'?true:undefined} className="min-h-11 py-2 text-left font-semibold underline underline-offset-4" onClick={()=>{const node=filterKey?document.querySelector<HTMLElement>(`[data-filter-key="${filterKey}"]`):document.getElementById(`myseoul-issue-${r.code}`);(node?.querySelector<HTMLElement>('input,select,textarea')??node?.closest('section')?.querySelector<HTMLElement>('input,select,textarea')??node)?.focus();node?.scrollIntoView({block:'center'});}}>{r.code==='activity_region_unknown'?'개최지의 수도권 여부':filterKey&&filterDraft?reviewFilterLabel(filterDraft,filterKey as keyof typeof filterLabels):r.text} · 확인 필요</button></li>;})}</ul></section>} reference={<details className="my-6 border-b border-info-rule pb-5"><summary className="cursor-pointer py-3 font-semibold">원문 확인 · 읽기 전용</summary>{link && <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a>}<p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || '저장된 본문이 없습니다.'}</p></details>}/>
+      <ClassificationPanel
+        key={id+item.version}
+        id={id}
+        disabled={operationBusy||unsaved||confirm}
+        onBlocked={setClassificationBlocked}
+        onActive={setClassificationActive}
+        onSaved={async()=>{const next=await request(id);accept(next);onResult(next);}}
+        overview={
+          <ReviewReasonList>
+            {myseoulReviewReasons(item).map(reason => {
+              const filterKey = reason.code.startsWith('content_filter:')
+                ? reason.code.slice(15)
+                : reason.code === 'activity_region_unknown' ? 'location'
+                : reason.code === 'delivery_mode_unknown' ? 'delivery' : null;
+              const label = reason.code === 'activity_region_unknown'
+                ? '개최지의 수도권 여부'
+                : filterKey && filterDraft ? reviewFilterLabel(filterDraft, filterKey as keyof typeof filterLabels) : reason.text;
+              return (
+                <li key={reason.code}>
+                  <button
+                    type="button"
+                    data-classification-open={reason.code === 'category_unresolved' ? true : undefined}
+                    className="min-h-11 py-3 text-left font-semibold underline underline-offset-4"
+                    onClick={() => {
+                      const node = filterKey
+                        ? document.querySelector<HTMLElement>(`[data-filter-key="${filterKey}"]`)
+                        : document.getElementById(`myseoul-issue-${reason.code}`);
+                      (node?.querySelector<HTMLElement>('input,select,textarea')
+                        ?? node?.closest('section')?.querySelector<HTMLElement>('input,select,textarea') ?? node)?.focus();
+                      node?.scrollIntoView({block:'center'});
+                    }}
+                  >
+                    {label} · 확인 필요
+                  </button>
+                </li>
+              );
+            })}
+          </ReviewReasonList>
+        }
+        reference={<ReviewSourceReference url={item.source.url} body={item.source.body} />}
+      />
 
       {item.restoredReviewPending && !processed && <section className="my-6 border-b border-info-rule pb-5" aria-label="복원한 사실 확인"><h3 className="font-semibold">휴지통에서 복원한 항목입니다.</h3><p className="mt-2 text-info-body">현재 사실과 원문을 확인해 주세요. 복원만으로 AI를 실행하거나 게시하지 않습니다.</p><RestoredMySeoulFacts facts={item.facts}/><button type="button" className={`${secondaryButton} mt-3`} disabled={busy || confirm || unsaved} onClick={() => void submit({ action: 'save_facts', revision: item.revision, version: item.version, patch: {}, confirmRestored: true })}>저장된 사실로 확인·저장</button></section>}
 

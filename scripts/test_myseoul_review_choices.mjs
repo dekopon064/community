@@ -38,7 +38,7 @@ const { myseoulReasonFields } = load('app/lib/review/myseoul-contract.ts');
 const { filterSaveBody, saveFilterRequest, FilterInputs, filterReviewFields, reviewFilterLabel } = load('app/components/admin/FilterReviewPanel.tsx');
 const Panel = load('app/components/admin/MySeoulReviewPanel.tsx').default;
 const unknown = { status: 'unknown', value: null }, na = { status: 'not_applicable', value: null }, known = value => ({ status: 'known', value });
-const data = { schema: contentFilterSchema, category: 'program', topic: unknown, location: unknown, delivery: known('onsite'), audience: unknown, spaceKind: na, application: known({ deadlineKind: 'fixed', start: {value:'2020-01-01T10:00:00+09:00',precision:'minute'}, end: {value:'2099-10-15T18:00:00+09:00',precision:'minute'}, sourceStatus: 'unknown' }), schedule: na };
+const data = { schema: contentFilterSchema, category: 'program', topic: unknown, location: unknown, delivery: known('onsite'), audience: unknown, foreignerProgram: unknown, spaceKind: na, application: known({ deadlineKind: 'fixed', start: {value:'2020-01-01T10:00:00+09:00',precision:'minute'}, end: {value:'2099-10-15T18:00:00+09:00',precision:'minute'}, sourceStatus: 'unknown' }), schedule: na };
 const selected = structuredClone(data); selected.topic = known('culture_experience'); selected.audience = known('other'); selected.location = known({ scope: 'specific', venues: [{ province: '41', district: '성남시', facility: '합성 교육장', address: '' }] });
 eq(parseContentFilters(selected), selected);
 const facts = { delivery_mode: 'offline', activity_region: 'unknown', venue: '원문 장소 안내', activity_evidence: ['원문 실제 근거'], residence: '성남시 주민', residence_scope: 'capital', residence_evidence: ['원문 참가 자격'] };
@@ -59,7 +59,7 @@ eq(factsFromFilterSelection(facts, data, { ...data, delivery: unknown }, ['deliv
 const info = { schema: contentFilterSchema, revision: 'a'.repeat(64), filterVersion: 1, data, missing: ['topic', 'location', 'audience'], origins: {} };
 eq(myseoulFilterFields(info, ['activity_region']), ['topic', 'audience', 'location']);
 eq(myseoulFilterFields(info, ['delivery_mode']), ['topic', 'delivery', 'audience', 'location']);
-const event = { ...data, category: 'event', delivery: na, audience: na, application: na, schedule: unknown };
+const event = { ...data, category: 'event', delivery: na, audience: na, foreignerProgram: na, application: na, schedule: unknown };
 eq(myseoulFilterFields({ ...info, data: event, missing: ['topic', 'location', 'schedule'] }, []), ['topic', 'location', 'schedule']);
 const derived = { ...data, delivery: known('mixed') };
 eq(mergeMySeoulFilters(data, selected, derived).delivery, known('mixed'));
@@ -228,8 +228,25 @@ try {
   await assert.rejects(saveFilterRequest(id, body, async () => response({ item: { ...initial.filterInfo, id, version: initial.version, editable: true } }))); checks++;
   eq(calls.filter(c => /ai|candidate|claim|publish/.test(c.url)).length, 0);
   // The actual parent supplies one stable source slot before either editor flow.
-  reset();const categoryPanel=nodes(render()).find(n=>n?.type?.name==='ClassificationPanel');
-  ok(text(categoryPanel.props.reference).includes(initial.source.body));ok(text(categoryPanel.props.overview).includes('이번에 확인할 사항'));
+  const renderSlot = slot => slot.type(slot.props);
+  const categorySlot = () => nodes(render()).find(n=>n?.type?.name==='ClassificationPanel').props;
+  reset();const categoryPanel=categorySlot();
+  const reference=renderSlot(categoryPanel.reference);
+  const overview=renderSlot(categoryPanel.overview);
+  ok(text(reference).includes(initial.source.body));ok(text(overview).includes('이번에 확인할 사항'));
+  ok(text(overview).includes('개최지의 수도권 여부'));
+  ok(text(overview).includes('대표 분야'));
+  const details=nodes(reference).find(n=>n?.type==='details');
+  ok(!details.props.open);
+  ok(!nodes(details).some(n=>n?.type==='a'));
+  const originalLink=nodes(reference).find(n=>n?.type==='a');
+  eq(originalLink.props.href,initial.source.url);
+  eq(originalLink.props.target,'_blank');eq(originalLink.props.rel,'noopener noreferrer');
+  ok(text(originalLink).includes('수집된 원문 열기'));
+  states[0]={...states[0],reasonGuidance:[],result:{...states[0].result,reasons:[]},filterInfo:{...states[0].filterInfo,missing:[]},
+    source:{...states[0].source,url:'javascript:void(0)'}};
+  eq(renderSlot(categorySlot().overview),null);
+  ok(!nodes(renderSlot(categorySlot().reference)).some(n=>n?.type==='a'));
   eq(nodes(render()).filter(n=>n?.type==='details'&&text(n).includes('원문 확인 · 읽기 전용')).length,0);
   // Only the affected reservation UI composition is exercised; its server suite is unchanged.
   const programSamples=JSON.parse(execFileSync(python,['-X','utf8','test_program_db.py','--fixtures'],{cwd:path.join(root,'scripts'),encoding:'utf8'}));
@@ -240,7 +257,9 @@ try {
   states=[reservation,structuredClone(reservation.facts)];refs=[];cursor=0;refCursor=0;
   const reservationTree=ReservationPanel({id,onBlocked(){},onResult(){}});
   const reservationCategory=nodes(reservationTree).find(n=>n?.type?.name==='ClassificationPanel');
-  ok(text(reservationCategory.props.reference).includes('합성 예약 원문'));ok(text(reservationCategory.props.overview).includes('이번에 확인할 사항'));
+  eq(reservationCategory.props.reference.type,categoryPanel.reference.type);
+  eq(reservationCategory.props.overview.type,categoryPanel.overview.type);
+  ok(text(renderSlot(reservationCategory.props.reference)).includes('합성 예약 원문'));ok(text(renderSlot(reservationCategory.props.overview)).includes('이번에 확인할 사항'));
   eq(nodes(reservationTree).filter(n=>n?.type==='details'&&text(n).includes('원문 확인 · 읽기 전용')).length,0);
   console.log(JSON.stringify({ syntheticOnly: true, actualPostgreSQL: false, checks, result: 'passed', externalConnections: 0 }));
 } finally { globalThis.fetch = originalFetch; }
