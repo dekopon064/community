@@ -105,6 +105,7 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  {!item?<p role="status" className="py-6 text-info-muted">{busy?"서울 예약 항목을 불러오는 중입니다.":"항목을 불러오지 못했습니다."}</p>:<>
  <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">서울 공공서비스예약 · {statusText[item.status]}</p></header>
  <ClassificationPanel
+  compactReference
   sourceReasonLabel={code=>programReasonText[code]??item.reasonGuidance.find(r=>r.code===code)?.text??"추가 확인이 필요한 항목입니다"}
   key={id+item.version}
   id={id}
@@ -141,7 +142,7 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  />
 
 
- {item.filterInfo&&!processed&&!classificationActive&&<FilterReviewPanel key={item.filterInfo.filterVersion} id={id} version={item.version} info={item.filterInfo} reviewFields={activityFilters?['delivery','location']:[]} disabled={operationBusy||unsaved||confirm} onBlocked={setFilterBlocked} onSaved={async()=>{const next=await request(id);accept(next);onResult(next);setNotice("필터를 저장하고 사실 판정을 갱신했습니다. 남은 확인사항은 아래 결과에서 확인해 주세요.");}}/>}
+ {item.filterInfo&&!processed&&!classificationActive&&<FilterReviewPanel compactTop key={item.filterInfo.filterVersion} id={id} version={item.version} info={item.filterInfo} reviewFields={activityFilters?['delivery','location']:[]} disabled={operationBusy||unsaved||confirm} onBlocked={setFilterBlocked} onSaved={async()=>{const next=await request(id);accept(next);onResult(next);setNotice("필터를 저장하고 사실 판정을 갱신했습니다. 남은 확인사항은 아래 결과에서 확인해 주세요.");}}/>}
  {!classificationActive&&draft&&<SavedProgramFacts item={item} draft={draft} onChange={setDraft} disabled={busy||confirm||processed} onEditing={setFactEditing}/>}
 
  {!processed&&!classificationActive&&draft&&(item.restoredReviewPending||inputFields.length>0||dirty||Boolean(note)||resolve.length>0)&&<form onSubmit={e=>{e.preventDefault();if(busy||confirm||factEditing)return;try{void submit(buildProgramSave(item,draft,note,resolve));}catch(error){setError(error instanceof ReviewFailure?Object.values(error.fields)[0]??"invalid_input":"invalid_input");}}}>

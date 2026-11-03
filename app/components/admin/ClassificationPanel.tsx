@@ -22,7 +22,7 @@ async function request(id:string,body?:unknown,signal?:AbortSignal) {
 function initialDraft(item:ClassificationDetail) {
   return !item.active&&item.category?classificationSelection(item,item.facts,item.filters,item.category):{facts:item.facts,filters:item.filters};
 }
-export default function ClassificationPanel({id,disabled,onBlocked,onActive,onSaved,reference,overview,sourceReasonLabel}:{id:string;disabled:boolean;onBlocked:(v:boolean)=>void;onActive:(v:boolean)=>void;onSaved?:()=>Promise<void>;reference?:ReactNode;overview?:ReactNode;sourceReasonLabel?:(code:string)=>string}) {
+export default function ClassificationPanel({id,disabled,onBlocked,onActive,onSaved,reference,overview,sourceReasonLabel,compactReference=false}:{id:string;disabled:boolean;onBlocked:(v:boolean)=>void;onActive:(v:boolean)=>void;onSaved?:()=>Promise<void>;reference?:ReactNode;overview?:ReactNode;sourceReasonLabel?:(code:string)=>string;compactReference?:boolean}) {
   const[item,setItem]=useState<ClassificationDetail|null>(null),[facts,setFacts]=useState<Facts|null>(null),[filters,setFilters]=useState<ContentFilters|null>(null);
   const[opened,setOpened]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[note,setNote]=useState('');
   const[errors,setErrors]=useState<Record<string,string>>({}),[pending,setPending]=useState(false),[uncertain,setUncertain]=useState(false);
@@ -48,7 +48,10 @@ export default function ClassificationPanel({id,disabled,onBlocked,onActive,onSa
     else if(uncertain&&sent&&classificationMatches(next,sent)){accept(next);setOpened(false);setError('');setNotice('읽기 확인으로 이전 분류 저장 완료를 확인했습니다. 새 저장·AI 실행은 하지 않았습니다.');if(onSaved){try{await onSaved();}catch{setNotice('읽기 확인으로 저장 완료를 확인했지만 기존 검토 화면을 갱신하지 못했습니다. 화면을 다시 확인해 주세요.');}}}
     else{setItem(next);onActive(next.active);setPublicChecked(false);setNotice('현재 저장 상태를 확인했습니다. 입력은 유지했습니다. 최신 저장값과 보존한 입력을 다시 대조하세요. 최신 저장값을 사용하려면 입력 취소를 선택하세요.');}
   }catch(e){setError(e instanceof ReviewFailure?failureText[e.code]??'상태 확인 실패':'상태 확인 실패');}finally{setBusy(false);}}
-  if(!item||!facts)return <section className="my-5" aria-label="분류 변경">{error&&<p role="alert" className="text-info-status">{error}</p>}{overview}{reference}</section>;
+  const compactLayout = compactReference && !opened && !publicOpened
+    ? "mt-6 mb-4 [&_[data-review-source-reference]]:mb-0 [&_[data-review-source-reference]]:border-b-0 [&_[data-review-source-reference]]:pb-0"
+    : null;
+  if(!item||!facts)return <section className={compactLayout ?? "my-5"} aria-label="분류 변경">{error&&<p role="alert" className="text-info-status">{error}</p>}{overview}{reference}</section>;
   const mode=classificationMode(item,facts.category);
   // Resolve the participation mode before asking for eligibility: unknown mode
   // cannot be saved, but is not evidence of an online residence restriction.
@@ -67,7 +70,7 @@ export default function ClassificationPanel({id,disabled,onBlocked,onActive,onSa
     {stale&&<p role="alert" className="text-info-status">저장 버전이 변경됐습니다. 입력은 보존했습니다. 취소 후 최신 값을 확인해 주세요.</p>}{rowEdit.error&&<p role="alert" className="text-info-status">{rowEdit.error}</p>}
     <div className="flex flex-wrap gap-3"><button type="button" className={primaryButton} disabled={locked||rowEdit.pending} onClick={()=>{try{const invalid=region.current?.querySelector<HTMLElement>(`[data-classification-row="${key}"]`)?.querySelector<HTMLInputElement>('input:invalid,select:invalid');if(invalid){invalid.reportValidity();throw Error('invalid');}const next=rowEdit.filters?parseContentFilters(rowEdit.filters):null;setFacts(rowEdit.facts);setFilters(next);setEditing(keys=>[...new Set([...keys,key])]);closeRow(key);}catch{setRowEdit({...rowEdit,error:'선택값·지역·날짜 형식을 확인해 주세요. 입력은 유지합니다.'});}}}>초안에 적용</button><button type="button" className={secondaryButton} disabled={busy} onClick={()=>closeRow(key)}>취소</button></div><p className="text-sm text-info-muted">아직 저장하지 않습니다. 취소하면 이번 행의 편집만 취소합니다.</p>
   </div>;}
-  return <section ref={region} className="my-6 border-b border-info-rule pb-6" aria-label="공통 카테고리 검토" aria-busy={busy} onClick={e=>{if((e.target as HTMLElement).closest('[data-classification-open]')&&!disabled&&!busy&&!rowEditing&&!publicOpened&&!uncertain&&item.editable){setOpened(true);requestAnimationFrame(()=>region.current?.querySelector<HTMLSelectElement>('#classification-category')?.focus());}}}>
+  return <section ref={region} className={compactLayout ?? "my-6 border-b border-info-rule pb-6"} aria-label="공통 카테고리 검토" aria-busy={busy} onClick={e=>{if((e.target as HTMLElement).closest('[data-classification-open]')&&!disabled&&!busy&&!rowEditing&&!publicOpened&&!uncertain&&item.editable){setOpened(true);requestAnimationFrame(()=>region.current?.querySelector<HTMLSelectElement>('#classification-category')?.focus());}}}>
     <div className="flex flex-wrap items-center justify-between gap-3"><p className="font-semibold">카테고리: {item.category?categories[item.category]:'분류 확인 필요'}</p><button type="button" className={secondaryButton} disabled={disabled||busy||publicOpened||rowEditing||!item.editable||opened&&dirty} onClick={()=>{setOpened(v=>!v);setError('');appliedAttempt.current=null;}}>{opened?'분류 변경 닫기':item.active?'분류·필수값 다시 확인':'분류 변경'}</button></div>
     {!item.editable&&<p className="mt-2 text-sm text-info-muted">처리 중이거나 제외된 항목입니다. 기존 처리 상태를 먼저 확인해 주세요.</p>}
     {item.active&&!opened&&<p className="mt-3 leading-7 text-info-body">{item.ready?'새 분류의 사실·필터 확인을 마쳤습니다. 후보 처리는 별도 실행입니다.':'새 분류에 남은 확인사항이 있습니다. 분류·필수값을 다시 확인해 주세요.'}</p>}

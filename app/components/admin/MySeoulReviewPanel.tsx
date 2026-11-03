@@ -267,6 +267,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
     {!item || !draft ? <p role="status" className="py-6 text-info-muted">{busy ? '마이서울플러스 항목을 불러오는 중입니다.' : '항목을 불러오지 못했습니다.'}</p> : <>
       <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">마이서울플러스 · {statusText[item.status]}</p></header>
       <ClassificationPanel
+        compactReference
         key={id+item.version}
         id={id}
         disabled={operationBusy||unsaved||confirm}
@@ -311,7 +312,7 @@ export default function MySeoulReviewPanel({ id, onBlocked, onResult }: { id: st
       {item.restoredReviewPending && !processed && <section className="my-6 border-b border-info-rule pb-5" aria-label="복원한 사실 확인"><h3 className="font-semibold">휴지통에서 복원한 항목입니다.</h3><p className="mt-2 text-info-body">현재 사실과 원문을 확인해 주세요. 복원만으로 AI를 실행하거나 게시하지 않습니다.</p><RestoredMySeoulFacts facts={item.facts}/><button type="button" className={`${secondaryButton} mt-3`} disabled={busy || confirm || unsaved} onClick={() => void submit({ action: 'save_facts', revision: item.revision, version: item.version, patch: {}, confirmRestored: true })}>저장된 사실로 확인·저장</button></section>}
 
       {['closed', 'ended', 'not_started'].includes(item.result.application) && <p className="mb-6 text-info-status">{item.result.application === 'not_started' ? '아직 접수 전입니다.' : '접수 또는 운영이 종료된 항목입니다.'}</p>}
-      {item.filterInfo && filterDraft && !processed && !classificationActive && <section ref={filterRegion} className="my-6 border-y border-info-rule py-6" aria-label="공개 필터 확인">
+      {item.filterInfo && filterDraft && !processed && !classificationActive && <section ref={filterRegion} className="mt-4 mb-6 border-y border-info-rule py-6" aria-label="공개 필터 확인">
         <h3 className="text-lg font-bold">{filterCategoryLabels[item.filterInfo.data.category]} 필터 확인</h3>
         <p className="my-3 text-sm leading-6 text-info-muted">원문을 확인하고 공개 필터와 같은 선택값으로 입력합니다. 진행 방식·개최지 선택은 수정 가능한 사실의 수도권 판정에도 연결합니다. 참가 거주 조건은 아래 사실·근거에서 확인합니다.</p>
         {filterDraft.delivery.status === 'known' && !filterFields.includes('delivery') && <p className="mb-3 text-sm text-info-body">확인된 진행 방식: {filterValueLabel(filterDraft, 'delivery')} · 현재 사실 확인 대상이 아니므로 변경하지 않습니다.</p>}
