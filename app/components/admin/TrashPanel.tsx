@@ -77,8 +77,15 @@ export default function TrashPanel({ active, onBusy, onRestored }: { active: boo
       const r = await fetch("/api/admin/review-trash", { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "restore", episodeId: e.id, revision: e.revision, version: e.version, requestId }) });
       const data = await r.json().catch(() => null);
       if (!r.ok) throw new Error(data?.code ?? "unavailable");
-      if (data?.mode !== "database" || data.episodeId !== e.id || data.sourceItemId !== e.sourceItemId || data.item?.status !== "open") throw new Error("unavailable");
-      setItems(old => old.filter(x => x.id !== e.id)); setNotice("사람 사실 review로 복구했습니다. 돌아가서 기존 사실과 근거를 다시 확인해 주세요."); onRestored();
+      const item = data?.item;
+      if (data?.mode !== "database" || data.episodeId !== e.id || data.sourceItemId !== e.sourceItemId ||
+          !["open", "resolved", "excluded"].includes(item?.status)) throw new Error("unavailable");
+      const message = item.restoredReviewPending ? "복구했습니다. 사람 사실 검토에서 남은 확인을 진행해 주세요."
+        : item.status === "open" ? "복구했습니다. 사람 사실 검토에서 남은 항목을 바로 확인할 수 있습니다."
+        : item.status === "excluded" ? "수동 제외를 취소했습니다. 현재 판정 기준에 따라 제외 상태입니다."
+        : item.aiStatus === "queued" ? "복구하고 재평가했습니다. AI 작업 대기 목록에서 확인할 수 있습니다."
+        : "복구하고 현재 기준으로 재평가했습니다.";
+      setItems(old => old.filter(x => x.id !== e.id)); setNotice(message); onRestored();
     } catch (err) { setError(err instanceof Error ? err.message : "unavailable"); }
     finally { sending.current = false; setBusy(null); }
   }, [clock, loading, onRestored]);
