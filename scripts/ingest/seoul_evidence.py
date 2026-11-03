@@ -174,6 +174,46 @@ def activity_text(text: str) -> str:
     return '\n'.join(sections).strip()
 
 
+def group_itinerary(text: str) -> bool:
+    """A program's gathering point and a route between distinct physical stops."""
+    meeting_labels = ('집결장소', '집합장소', '만나는장소', '모이는장소', '출발장소', '출발지')
+    route_labels = ('운영구간', '이동구간', '이동경로', '도보경로', '탐방경로')
+    unsuitable = re.compile(r'온라인|비대면|화상|가상|영상|예시|다른\s*프로그램|사용하지|진행하지|이동하지')
+    lines = []
+    for line in text.splitlines():
+        if label_match(line, ('오시는길', '가는길', '교통편', '주차안내')):
+            break
+        lines.append(line)
+    main = activity_text('\n'.join(lines))
+
+    def named_stop(value):
+        value = _clean(value)
+        return bool(re.search(r'[가-힣A-Za-z]{2}', value)) and not re.fullmatch(
+            r'시작|종료|출발|도착|제?\s*\d+\s*(?:구간|회차|코스|단계)', value
+        )
+
+    meetings = label_values(main, meeting_labels)
+    if not any(named_stop(value) and not unsuitable.search(value) and not _VENUE_UNCERTAIN.search(value)
+               for value in meetings):
+        return False
+    lines = [line for line in main.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        route = label_match(line, route_labels)
+        if not route:
+            continue
+        value = route[1]
+        if (not value or re.fullmatch(r'(?:주요\s*)?(?:설명|해설|경유)\s*지점\s*\d+\s*곳', value)) and index + 1 < len(lines):
+            value = _clean(lines[index + 1])
+        if (_UNCLEAR.search(value) or _VENUE_UNCERTAIN.search(value) or unsuitable.search(value)
+                or re.search(r'\d{1,2}\s*시(?:\s|$)|\d{1,2}:\d{2}', value)):
+            continue
+        stops = re.split(r'\s*(?:[~∼～→➜⇒]|->)\s*|\s+[-–—]\s+', value)
+        distinct_stops = {re.sub(r'\s+', '', _clean(stop)) for stop in stops}
+        if len(distinct_stops) > 1 and all(named_stop(stop) for stop in distinct_stops):
+            return True
+    return False
+
+
 def physical_activity(text: str) -> bool:
     """Physical activity evidence, independent of whether its district is known."""
     main = activity_text(text)

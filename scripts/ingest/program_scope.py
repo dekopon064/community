@@ -13,7 +13,7 @@ from typing import Any
 from ingest.connectors.seoul_reservation import KST
 from ingest.evaluate_gates import EvaluationResult
 from ingest.models import JobPlan, ObservationRecord
-from ingest.seoul_evidence import activity_locations, activity_text, activity_topic, physical_activity, venue_filter, label_values, matching_place, period_proof, uncertain_activity
+from ingest.seoul_evidence import activity_locations, activity_text, activity_topic, physical_activity, group_itinerary, venue_filter, label_values, matching_place, period_proof, uncertain_activity
 
 PROGRAM_SCHEMA = "program-scope-v1-local"
 PROGRAM_PROFILE = "program_capital_v1_local"
@@ -65,7 +65,7 @@ class ProgramAssessment:
     db_connected: bool = False
 
 
-def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
+def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "") -> ProgramFacts:
     payload = record.normalized_payload or {}
     raw = payload.get("provider_fields", {})
     body = str(payload.get("program_text") or "")
@@ -107,11 +107,34 @@ def extract_program_facts(record: ObservationRecord) -> ProgramFacts:
         conflicts.append("application_actor_conflict")
 
     locations = activity_locations(body, payload.get('tables', ()))
+    itinerary = group_itinerary(body)
+    delivery_context = context
     online_pattern = r"온라인\s*(?:교육|프로그램|수업|참여)|비대면\s*(?:교육|수업|참여)|원격\s*(?:화상)?\s*(?:교육|수업)|ZOOM|줌\s*(?:수업|화상)"
-    online = any(not re.match(r"\s*(?:은|는|이|가)?\s*(?:불가|불가능|없음|아님|진행하지)", context[match.end():])
-                 for match in re.finditer(online_pattern, context, re.I))
-    hybrid = bool(re.search(r"온\s*[/·+]?\s*오프라인|온라인.*오프라인|오프라인.*온라인|혼합\s*(?:교육|수업|진행)", context))
-    mode = "hybrid" if hybrid else "online" if online else "offline" if locations or physical_activity(body) else "unknown"
+    negation = r"불가|불가능|없음|아님|진행하지"
+    if itinerary:
+        # Online booking does not describe how the program takes place.
+        delivery_context = re.sub(
+            r"(?:온\s*[/·+]?\s*오프라인|온라인|오프라인|비대면)\s*(?:으로|에서)?\s*(?:사전\s*)?(?:(?:참여|참가)\s*)?(?:신청|예약|접수)",
+            "", f"{itinerary_title}\n{context}",
+        )
+        online_pattern += (
+            r"|(?:온라인|비대면|화상)\s*(?:으로|에서)?\s*만?\s*(?:진행|운영|개최)"
+            r"|(?:비대면\s*)?화상\s*(?:수업|교육|강의)|비대면\s*프로그램"
+        )
+        negation += r"|(?:하지|되지)\s*않"
+    online = any(not re.match(rf"\s*(?:은|는|이|가)?\s*(?:{negation})", delivery_context[match.end():])
+                 for match in re.finditer(online_pattern, delivery_context, re.I))
+    hybrid = bool(re.search(r"온\s*[/·+]?\s*오프라인|온라인.*오프라인|오프라인.*온라인|혼합\s*(?:교육|수업|진행)", delivery_context))
+    mode = "hybrid" if hybrid else "online" if online else "offline" if itinerary or locations or physical_activity(body) else "unknown"
+    if itinerary:
+        declared_modes = _label_values(body, ("진행방식", "교육방식", "운영방식"))
+        mixed_with_onsite = r"(?:온라인|비대면)\s*(?:[/·+&]|과|와|및)\s*(?:현장|대면)"
+        if (online or hybrid or re.search(mixed_with_onsite + r"\s*(?:혼합|병행)", delivery_context)
+                or any(re.fullmatch(r"온라인|비대면|화상|혼합|" + mixed_with_onsite + r"(?:\s*(?:혼합|병행))?", value)
+                       for value in declared_modes)):
+            # Keep the existing review reason and block filter-only inference.
+            missing.append("delivery_mode_unknown")
+            mode = "unknown"
     activity = "not_applicable" if mode == "online" else "unknown"
     if mode in {"offline", "hybrid"}:
         joined = "\n".join(locations)
