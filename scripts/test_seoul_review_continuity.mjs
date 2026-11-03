@@ -46,7 +46,16 @@ try{
  eq(displayProgramDate({status:'ok',value:'2099-10-01',precision:'day'}),'2099.10.01');
  eq(displayProgramDate({status:'ok',value:'2099-10-01T01:02:03Z',precision:'second'}),'2099.10.01 10:02:03');
  eq(programDateInput({status:'ok',value:'2099-10-01T01:02:03Z',precision:'second'}),'2099-10-01T10:02:03');
- reset();let tree=render();const category=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel');ok(text(category.props.reference).includes('합성 원문'));ok(text(category.props.overview).includes('이번에 확인할 사항'));
+ const renderSlot=slot=>slot.type(slot.props);
+ reset();let tree=render();const category=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel');
+ const sourceReference=renderSlot(category.props.reference);
+ ok(text(sourceReference).includes('합성 원문'));ok(text(renderSlot(category.props.overview)).includes('이번에 확인할 사항'));
+ const sourceDetails=nodes(sourceReference).find(n=>n?.type==='details');
+ ok(!sourceDetails.props.open);ok(text(sourceDetails).includes('합성 원문'));
+ const sourceAnchor=nodes(sourceReference).find(n=>n?.type==='a'&&text(n).includes('수집된 원문 열기'));
+ ok(sourceAnchor);eq(sourceAnchor.props.href,item.source.url);eq(sourceAnchor.props.target,'_blank');
+ eq(sourceAnchor.props.rel,'noopener noreferrer');
+ ok(!nodes(sourceDetails).some(n=>n?.type==='a'&&n.props.href===sourceAnchor.props.href));
  const primary=nodes(tree).find(n=>n?.type?.name==='FactFields');eq(primary.props.editable,['activity_evidence']);
  const optionalField=nodes(primary.type(primary.props)).find(n=>n?.type?.name==='OptionalReviewText');ok(optionalField);eq(optionalField.props.value,'');
  optionalField.props.onChange('인용 한 줄');eq(states[1].activity_evidence,['인용 한 줄']);states[1]=structuredClone(item.facts);
@@ -78,15 +87,25 @@ try{
  const activityData={schema:'content-filters-v1',category:'program',topic:{status:'known',value:'culture_experience'},audience:{status:'known',value:'other'},foreignerProgram:{status:'unknown',value:null},application:{status:'known',value:{deadlineKind:'fixed',start:{value:facts.periods.RCPTBGNDT.value,precision:facts.periods.RCPTBGNDT.precision},end:{value:facts.periods.RCPTENDDT.value,precision:facts.periods.RCPTENDDT.precision},sourceStatus:'open'}},spaceKind:{status:'not_applicable',value:null},schedule:{status:'not_applicable',value:null},location:{status:'known',value:{scope:'specific',venues:[{province:'11',district:null,facility:'',address:''}]}},delivery:{status:'known',value:'onsite'}};
  const capable={...item,activityReview:{supported:true,pending:true,confirmed:false},filterInfo:{schema:'content-filters-v1',revision:item.revision,filterVersion:1,data:activityData,missing:[],origins:{delivery:'operator',location:'operator'}}};
  reset();states[0]=capable;tree=render();
- let overview=nodes(tree).find(n=>n?.type?.name==='ClassificationPanel').props.overview;
- ok(text(overview).includes('아래 필터 저장값으로 판정'));ok(!text(overview).includes('확인 근거'));
- let jump=nodes(overview).find(n=>n?.props?.href==='#review-filter-delivery');ok(jump);
- globalThis.document={getElementById:()=>({querySelector:()=>({closest(){return null;},focus(){focuses.push('filter');},scrollIntoView(){}})})};
- jump.props.onClick({preventDefault(){}});ok(focuses.includes('filter'));
+ const overview=tree=>renderSlot(nodes(tree).find(n=>n?.type?.name==='ClassificationPanel').props.overview);
+ eq(overview(tree),null);
  ok(!nodes(tree).some(n=>n?.type?.name==='ProgramActivityConfirmation'));ok(!nodes(tree).some(n=>n?.type?.name==='FactFields'));
  let filter=nodes(tree).find(n=>n?.type?.name==='FilterReviewPanel');eq(filter.props.reviewFields,['delivery','location']);eq(filter.props.info.data,activityData);
- states[0]={...capable,facts:{...facts,delivery_mode:'unknown',activity_region:'unknown'},result:{...item.result,reasons:['delivery_mode_unknown']}};
+ states[0]={...capable,filterInfo:{...capable.filterInfo,missing:['delivery']},
+  reasonGuidance:[{code:'delivery_mode_unknown',text:'실제 진행 방식 확인 필요'}],
+  facts:{...facts,delivery_mode:'unknown',activity_region:'unknown'},result:{...item.result,reasons:['delivery_mode_unknown']}};
  states[1]=structuredClone(states[0].facts);tree=render();
+ ok(text(overview(tree)).includes('실제 진행 방식 확인 필요'));
+ ok(!text(overview(tree)).includes('필터 저장값으로 판정'));
+ ok(!nodes(overview(tree)).some(n=>n?.props?.href==='#review-filter-delivery'));
+ states[0]={...states[0],filterInfo:{...capable.filterInfo,missing:['location']},
+  result:{...item.result,reasons:['activity_location_unknown']},
+  reasonGuidance:[{code:'activity_location_unknown',text:'실제 개최 지역 확인 필요'}]};
+ ok(text(overview(render())).includes('실제 개최 지역 확인 필요'));
+ states[0]={...states[0],filterInfo:capable.filterInfo,
+  reasonGuidance:[...states[0].reasonGuidance,{code:'residence_scope_unknown',text:'온라인 참여 대상 확인 필요'}]};
+ ok(text(overview(render())).includes('온라인 참여 대상 확인 필요'));
+ ok(!text(overview(render())).includes('실제 개최 지역 확인 필요'));
  filter=nodes(tree).find(n=>n?.type?.name==='FilterReviewPanel');eq(filter.props.reviewFields,['delivery','location']);
  ok(!nodes(tree).some(n=>n?.type?.name==='FactFields'));ok(!text(tree).includes('진행 방식·개최 지역 확인 근거'));
  // Other unresolved facts are still editable; only the duplicated venue inputs disappear.
@@ -214,7 +233,7 @@ try{
   seedHeld(externalHeld);globalThis.fetch=routed;
   const response=await programRequest(new Request(`https://example.test/api/admin/program-review/${id}`),id,deps);
   eq(response.status,200);const loaded=programItem((await response.json()).item,id);states[0]=loaded;states[1]=structuredClone(loaded.facts);
-  const reference=nodes(render()).find(n=>n?.type?.name==='ClassificationPanel').props.reference;
+  const reference=renderSlot(nodes(render()).find(n=>n?.type?.name==='ClassificationPanel').props.reference);
   const links=nodes(reference).filter(n=>n?.type==='a'&&n.props.href===link.url);ok(links.length>=1);
   const originalSource=structuredClone(loaded.source),originalObserved=structuredClone(loaded.observedFacts);
   button(saved(),'확인한 프로그램 설명 수정').props.onClick();eq(states[3],true);

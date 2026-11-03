@@ -1,6 +1,7 @@
 "use client";
 import FilterReviewPanel from './FilterReviewPanel';
 import ClassificationPanel from './ClassificationPanel';
+import { ReviewReasonList, ReviewSourceReference } from './FactReviewContext';
 import {useEffect,useRef,useState} from "react";
 import Link from "next/link";
 import type {ProgramFacts,ProgramField,Period,ProgramCommand} from "@/app/lib/review/program-contract";
@@ -9,7 +10,7 @@ import {programReasonText} from "@/app/lib/review/program-contract";
 import {canReconfirmProgramPeriods,buildProgramSave,displayProgramValue,displayProgramDate,programDateInput,periodLabels,programChoices,programLabels,programPatch,programInputFields,programValueMissing,preserveProgramDraft,reasonPatchFields} from "@/app/lib/review/program-ui";
 import {ReviewStatus,ReviewValueRow} from './ReviewStates';
 import {ReviewFailure} from "@/app/lib/review/contracts";
-import {failureText,sourceLink,statusText} from "@/app/lib/review/presentation";
+import {failureText,statusText} from "@/app/lib/review/presentation";
 import {quickReasons} from "@/app/lib/review/trash";
 import type {QuickReason} from "@/app/lib/review/trash";
 import {OptionalReviewText,fieldClass,primaryButton,secondaryButton} from "./ReviewEditors";
@@ -72,6 +73,13 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  const heading=useRef<HTMLHeadingElement>(null),message=useRef<HTMLDivElement>(null),sending=useRef(false),pendingRequest=useRef<{key:string;id:string}|null>(null);
  const [classificationBlocked,setClassificationBlocked]=useState(false),[classificationActive,setClassificationActive]=useState(false);
  const activityFilters=Boolean(item?.filterInfo&&item.result.reasons.some(code=>['activity_location_unknown','delivery_mode_unknown'].includes(code)));
+ // Reasons represented by an already saved filter only need the filter panel.
+ const reviewReasons = item?.reasonGuidance.filter(({ code }) => {
+  if (!activityFilters || !item.filterInfo) return true;
+  if (code === "delivery_mode_unknown") return item.filterInfo.missing.includes("delivery");
+  if (code === "activity_location_unknown") return item.filterInfo.missing.includes("location");
+  return true;
+ }) ?? [];
  const inputFields=item?programInputFields(item).filter(k=>!activityFilters||!['delivery_mode','activity_region','activity_evidence'].includes(k)):[];
  const dirty=Boolean(item&&draft&&Object.keys(programPatch(item.facts,draft,item.editableFields)).length);
  const busy=operationBusy||filterBlocked||classificationBlocked;
@@ -90,15 +98,47 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  const next=await request(id,command);accept(next);onResult(next);setNotice(command.action==="exclude"?"제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다.":"사실을 저장하고 다시 평가했습니다.");}
  catch(e){setError(e instanceof Failure?e.message:"unavailable");setConfirm(false);}finally{sending.current=false;setBusy(false);}}
  async function reload(preserve=false){if(sending.current)return;setBusy(true);setError("");try{const next=await request(id);if(preserve&&item&&draft){if(next.revision!==item.revision){setError("conflict");setNotice("원문 버전이 달라 입력을 유지했습니다. 최신 내용으로 교체하기 전에 입력을 확인해 주세요.");return;}setDraft(preserveProgramDraft(item.facts,draft,next.facts,item.editableFields));setItem(next);setNotice("최신 상태를 읽기로 확인했습니다. 입력은 유지하며 저장 요청은 보내지 않았습니다.");}else{accept(next);setNotice("");}}catch(e){setError(e instanceof Failure?e.message:"unavailable");}finally{setBusy(false);}}
- const link=item?.source.url?sourceLink(item.source.url):null;
- const confirmedLink=item&&typeof item.facts.official_url==="string"?sourceLink(item.facts.official_url):null;
  const flagReasons=item?[...new Set([...item.facts.missing as string[],...item.facts.conflicts as string[]])].filter(code=>reasonPatchFields[code]?.some(k=>item.editableFields.includes(k))):[];
  return <section aria-label="서울 예약 사실 검토" aria-busy={busy}>
  {(error||notice)&&<div ref={message} role={error?"alert":"status"} tabIndex={-1} className="mb-6 scroll-mt-36 border-y border-info-rule py-4 leading-7"><p className={error?"text-info-status":"text-info-body"}>{error?failureText[error]??error:notice}</p>
  {error&&<div className="mt-3 flex flex-wrap gap-3">{(unsaved)&&<button type="button" className={secondaryButton} disabled={operationBusy||filterBlocked||classificationBlocked||factEditing} onClick={()=>void reload(true)}>입력을 유지하고 저장 상태 확인</button>}<button type="button" className={secondaryButton} disabled={operationBusy||filterBlocked||classificationBlocked||factEditing} onClick={()=>void reload()}>{(unsaved)?"입력을 버리고 최신 내용 불러오기":"최신 내용 다시 확인"}</button>{["signed_out","forbidden"].includes(error)&&<Link prefetch={false} href="/ko/login?next=%2Fko%2Fadmin" className={secondaryButton}>로그인 상태 확인</Link>}</div>}</div>}
  {!item?<p role="status" className="py-6 text-info-muted">{busy?"서울 예약 항목을 불러오는 중입니다.":"항목을 불러오지 못했습니다."}</p>:<>
  <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">서울 공공서비스예약 · {statusText[item.status]}</p></header>
- <ClassificationPanel sourceReasonLabel={code=>(activityFilters&&["activity_location_unknown","delivery_mode_unknown"].includes(code)?"진행 방식·개최 지역은 아래 필터 저장값으로 판정합니다.":programReasonText[code])??item.reasonGuidance.find(r=>r.code===code)?.text??"추가 확인이 필요한 항목입니다"} key={id+item.version} id={id} disabled={operationBusy||unsaved||confirm} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const next=await request(id);accept(next);onResult(next);}} overview={<section className="my-6" aria-label="이번에 확인할 사항"><h3 className="text-lg font-bold">이번에 확인할 사항</h3><ul className="mt-3 divide-y divide-info-rule border-y border-info-rule">{item.reasonGuidance.map(({code,text})=>{const fields=(reasonPatchFields[code]??[]).filter(k=>item.editableFields.includes(k));return <li key={code} className="py-4"><p className="font-semibold leading-7">{activityFilters&&["activity_location_unknown","delivery_mode_unknown"].includes(code)?"진행 방식·개최 지역은 아래 필터 저장값으로 판정합니다.":text}</p>{activityFilters&&["activity_location_unknown","delivery_mode_unknown"].includes(code)?<a href="#review-filter-delivery" className="mt-2 inline-flex min-h-11 items-center text-sm underline underline-offset-4" onClick={e=>{e.preventDefault();moveToField("activity_region");}}>진행 방식·개최 지역 필터로 이동</a>:fields.length?<p className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-sm leading-6">{fields.map(k=><a key={k} href={k==="periods"?"#program-periods":"#program-"+k} onClick={e=>{e.preventDefault();moveToField(k);}} className="min-h-11 py-2 underline underline-offset-4">{k==="periods"?"신청·운영 기간":programLabels[k as ProgramField]} 입력</a>)}</p>:code!=="restored_review_pending"&&code!=="ai_recheck_requested"&&<p className="mt-2 text-sm leading-6 text-info-muted">현재 입력으로 해결할 수 없는 사유입니다. 원문과 별도 확인이 필요합니다.</p>}</li>;})}</ul></section>} reference={<details className="my-6 border-b border-info-rule pb-5"><summary className="cursor-pointer py-3 font-semibold">원문 확인 · 읽기 전용</summary>{link&&<a className="inline-flex min-h-11 items-center underline underline-offset-4" href={link} target="_blank" rel="noopener noreferrer">수집된 원문 열기 (새 창)</a>}{confirmedLink&&confirmedLink!==link&&<a className="ml-4 inline-flex min-h-11 items-center underline underline-offset-4" href={confirmedLink} target="_blank" rel="noopener noreferrer">확인한 공식 상세 링크 (새 창)</a>}<p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body||"저장된 본문이 없습니다. 공식 원문을 확인해 주세요."}</p></details>}/>
+ <ClassificationPanel
+  sourceReasonLabel={code=>programReasonText[code]??item.reasonGuidance.find(r=>r.code===code)?.text??"추가 확인이 필요한 항목입니다"}
+  key={id+item.version}
+  id={id}
+  disabled={operationBusy||unsaved||confirm}
+  onBlocked={setClassificationBlocked}
+  onActive={setClassificationActive}
+  onSaved={async()=>{const next=await request(id);accept(next);onResult(next);}}
+  overview={
+   <ReviewReasonList>
+     {reviewReasons.map(({code,text})=>{
+      const shownInFilters=activityFilters&&["activity_location_unknown","delivery_mode_unknown"].includes(code);
+      const fields=(reasonPatchFields[code]??[]).filter(k=>item.editableFields.includes(k));
+      return <li key={code} className="py-4">
+       <p className="font-semibold leading-7">{text}</p>
+       {!shownInFilters && (fields.length ? (
+        <p className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-sm leading-6">
+         {fields.map(k=><a key={k} href={k==="periods"?"#program-periods":"#program-"+k} onClick={e=>{e.preventDefault();moveToField(k);}} className="min-h-11 py-2 underline underline-offset-4">{k==="periods"?"신청·운영 기간":programLabels[k as ProgramField]} 입력</a>)}
+        </p>
+       ) : code!=="restored_review_pending"&&code!=="ai_recheck_requested"&&(
+        <p className="mt-2 text-sm leading-6 text-info-muted">현재 입력으로 해결할 수 없는 사유입니다. 원문과 별도 확인이 필요합니다.</p>
+       ))}
+      </li>;
+     })}
+   </ReviewReasonList>
+  }
+  reference={
+   <ReviewSourceReference
+    url={item.source.url}
+    body={item.source.body}
+    confirmedUrl={typeof item.facts.official_url==="string"?item.facts.official_url:null}
+    emptyBody="저장된 본문이 없습니다. 공식 원문을 확인해 주세요."
+   />
+  }
+ />
 
 
  {item.filterInfo&&!processed&&!classificationActive&&<FilterReviewPanel key={item.filterInfo.filterVersion} id={id} version={item.version} info={item.filterInfo} reviewFields={activityFilters?['delivery','location']:[]} disabled={operationBusy||unsaved||confirm} onBlocked={setFilterBlocked} onSaved={async()=>{const next=await request(id);accept(next);onResult(next);setNotice("필터를 저장하고 사실 판정을 갱신했습니다. 남은 확인사항은 아래 결과에서 확인해 주세요.");}}/>}
