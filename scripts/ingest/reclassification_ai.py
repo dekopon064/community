@@ -218,7 +218,7 @@ def protected_sections(c:dict)->dict[str,str]:
             sections[header]=[value] if header!='[일정 안내]' else [format_reviewed_block('\n'.join(dates)),value]
     return {h:'\n'.join(lines) for h,lines in sections.items()}
 
-def assemble_reclassified_seoul(content, context):
+def assemble_reclassified_seoul(content, context, *, review=None):
     from ingest.seoul_content import assemble_seoul_body
 
     facts = context['facts']
@@ -230,7 +230,7 @@ def assemble_reclassified_seoul(content, context):
         periods['operation'] = [{'status':'ok','endpoints':[
             {'value':facts[key],'precision':'day'} for key in ('eventStart','eventEnd')]}]
     return assemble_seoul_body(content, context['nativeConfirmedFacts']['programFacts'],
-                               reviewed=protected_sections(context), periods=periods)
+                               reviewed=protected_sections(context), periods=periods, review=review)
 
 
 def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revision:str,classification_version:int,
@@ -249,6 +249,8 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
     except Exception:return AiWorkerResult(status='ai_state_unknown',state_unknown=1)
     fence={'p_job_id':c['jobId'],'p_revision':revision,'p_classification_version':classification_version,'p_claimed_at':c['claimedAt'],'p_lease_until':c['leaseUntil'],'p_worker_id':worker_id}
     from ingest.seoul_ai_correction import current_output, retained_output
+    from ingest.seoul_candidate_review import SeoulCandidateReview
+    review = SeoulCandidateReview.for_translation(translate_ja) if no_retry and c['source'] == 'seoul_reservation' else None
     draft = {}
     capture_token = current_output.set(draft if no_retry else None)
     stage='summary'
@@ -280,7 +282,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
                 lambda match:match[1]+'\n'+main+'\n',content,count=1)
         from ingest.myseoul_content import merge_reviewed_sections
         if native.get('schema_version')=='program-scope-v1-local':
-            content=assemble_reclassified_seoul(content,c)
+            content=assemble_reclassified_seoul(content,c,review=review)
         else:
             content=merge_reviewed_sections(content,protected_sections(c))
         if native.get('schema_version')=='myseoul-program-facts-v1-local':
@@ -288,7 +290,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             fee_block=format_reviewed_block('비용: '+_public_fees(native['fees'])) if native['fees'] else ''
             validate_assembled_fees(content,fact_sections(native)['activity'],canonical_block=fee_block)
         stage='translation'
-        title_ja,content_ja,status_ja,_=translate_ja(c['title'],content)
+        title_ja,content_ja,status_ja,_=translate_ja(c['title'],content,**({'review': review} if review else {}))
         if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise ValidationError('translation_result', 'missing_or_invalid')
         draft.update(jaTitle=title_ja, ja=content_ja)
         stage='japanese_validation'
@@ -297,18 +299,26 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             from ingest.seoul_content import validate_public_body
             validate_public_body(content_ja)
             from ingest.seoul_public_guidance import validate_public_guidance
-            validate_public_guidance(content_ja,'ja')
+            if review is None:
+                validate_public_guidance(content_ja,'ja')
         summary_ja=extract_summary_section(content_ja,JA_SUMMARY_HEADER,JA_SECTION_HEADERS)
-        validate_japanese_output(title_ja,content_ja,korean_source=c['title']+'\n'+content)
+        if review:
+            review.check_japanese(c['title'], content, title_ja, content_ja)
+        else:
+            validate_japanese_output(title_ja,content_ja,korean_source=c['title']+'\n'+content)
         if native.get('schema_version')=='program-scope-v1-local':
-            from ingest.translation_validation import validate_translation_fidelity
-            validate_translation_fidelity(c['title'],content,title_ja,content_ja)
+            if review is None:
+                from ingest.translation_validation import validate_translation_fidelity
+                validate_translation_fidelity(c['title'],content,title_ja,content_ja)
         else:
             numbers=lambda v:{int(x.replace(',','')) for x in re.findall(r'\d[\d,]*',v)}
             if not numbers(verified).issubset(numbers(content_ja)):raise ValueError()
         output={'titleKo':c['title'],'summaryKo':summary,'contentKo':content,'titleJa':title_ja,'summaryJa':summary_ja,'contentJa':content_ja,'aiModel':model}
+        stage = 'correction'
+        metadata = review.prepare(output, native) if review else None
         stage='candidate_completion'
-        result=adapter.invoke('finish_reclassified_content_ai',{**fence,'p_output':output})
+        result = SeoulCandidateReview.finish(adapter, {k: v for k, v in fence.items() if k != 'p_classification_version'},
+            output, metadata, mode='classification', input_version=classification_version)
         if not isinstance(result,dict) or result.get('outcome') not in {'inserted','duplicate'}:raise RpcAmbiguous()
         try:UUID(result['candidateId'])
         except (KeyError,TypeError,ValueError,AttributeError):raise RpcAmbiguous() from None
@@ -325,6 +335,8 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
                 except Exception as finish_exc:
                     return unknown_failure_result(finish_exc, 'failure_termination',
                                                   validation_error=exc, validation_stage=stage)
+        if review:
+            return unknown_failure_result(exc, stage)
         # No new write/provider retry. A separate fenced status read can establish
         # completion; expired attempts require an explicit close before any new job.
         try:

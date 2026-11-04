@@ -187,6 +187,8 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         return AiWorkerResult(status="ai_state_unknown", state_unknown=1)
     fence = {"p_job_id": c["jobId"], "p_claimed_at": c["claimedAt"], "p_lease_until": c["leaseUntil"], "p_worker_id": worker_id}
     from ingest.seoul_ai_correction import current_output, retained_output
+    from ingest.seoul_candidate_review import SeoulCandidateReview
+    review = SeoulCandidateReview.for_translation(translate_ja) if no_retry else None
     draft = {}
     capture_token = current_output.set(draft if no_retry else None)
     stage = 'summary'
@@ -204,9 +206,9 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         # This block is deterministic current-facts content, not AI-invented facts.
         from ingest.seoul_content import assemble_seoul_body, validate_public_body
         from ingest.translation_validation import validate_translation_fidelity
-        content_ko = assemble_seoul_body(content_ko, c['facts'])
+        content_ko = assemble_seoul_body(content_ko, c['facts'], review=review)
         stage = 'translation'
-        title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content_ko)
+        title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content_ko, **({"review": review} if review else {}))
         if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
             raise ValidationError('translation_result', 'missing_or_invalid')
         draft.update(jaTitle=title_ja, ja=content_ja)
@@ -214,15 +216,20 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         content_ja = normalize_schedule_heading(content_ja, 'ja')
         validate_public_body(content_ja)
         from ingest.seoul_public_guidance import validate_public_guidance
-        validate_public_guidance(content_ja, 'ja')
         summary_ja = extract_summary_section(content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
-        validate_japanese_output(title_ja, content_ja, korean_source=c["title"] + "\n" + content_ko)
-        validate_translation_fidelity(c['title'], content_ko, title_ja, content_ja)
+        if review:
+            review.check_japanese(c['title'], content_ko, title_ja, content_ja)
+        else:
+            validate_public_guidance(content_ja, 'ja')
+            validate_japanese_output(title_ja, content_ja, korean_source=c["title"] + "\n" + content_ko)
+            validate_translation_fidelity(c['title'], content_ko, title_ja, content_ja)
         output = {"titleKo": c["title"], "summaryKo": summary_ko, "contentKo": content_ko,
             "titleJa": title_ja, "summaryJa": summary_ja, "contentJa": content_ja, "aiModel": model}
+        stage = 'correction'
+        metadata = review.prepare(output, c['facts']) if review else None
         stage = 'candidate_completion'
-        result = adapter.invoke("finish_seoul_program_ai", {**fence, "p_revision": revision,
-            "p_facts_version": c["factsVersion"], "p_output": output})
+        result = SeoulCandidateReview.finish(adapter, {**fence, "p_revision": revision}, output, metadata,
+            mode='program', input_version=c['factsVersion'])
         if not isinstance(result, dict) or result.get("outcome") not in {"inserted", "duplicate"}:
             raise RpcAmbiguous()
         try:

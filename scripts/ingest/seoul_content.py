@@ -227,7 +227,7 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
         ('[대상]', target), ('[일정 안내]', dates), ('[주요 내용]', activity), ('[신청 방법]', method))}
 
 
-def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = None, periods: dict | None = None) -> str:
+def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = None, periods: dict | None = None, review=None) -> str:
     from ingest.body_sections import normalize_schedule_heading
     from ingest.seoul_public_guidance import without_reception_status, ensure_application_guidance, validate_public_guidance
     from ingest.seoul_schedule_display import normalize_period_labels, clean_schedule_display, validate_checkin
@@ -243,14 +243,18 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     # A model-contract explanation is not a program instruction. Reject only
     # recognized standalone output directives; a class teaching JSON stays data.
     validate_public_body(content)
-    validate_weekly_schedule(content, facts['description'])
+    def strict(validate, *args, **kwargs):
+        validate(*args, **kwargs)
+
+    check = review.check if review else strict
+    check(validate_weekly_schedule, content, facts['description'])
     from ingest.seoul_calendar_sessions import validate_calendar_sessions
-    validate_calendar_sessions(content, view)
+    check(validate_calendar_sessions, content, view)
     # These same checks run before cleanup, so conflicting AI facts cannot be
     # hidden by removal/replacement of a generated row.
-    validate_summary_period(content, canonical, view)
-    validate_checkin(content, view)
-    validate_participant_quantities(view, content+'\n'+canonical)
+    check(validate_summary_period, content, canonical, view)
+    check(validate_checkin, content, view)
+    check(validate_participant_quantities, view, content+'\n'+canonical)
     content = without_reception_status(content)
     content, sections = clean_schedule_display(content, sections, view)
     content = normalize_summary_schedule(content, view)
@@ -275,12 +279,15 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
             sections['[신청 방법]'] += '\n- **예약 절차:** ' + plain(value)
     content = merge_reviewed_sections(content, sections)
     content = ensure_application_guidance(content, facts)
-    validate_public_guidance(content, 'ko')
-    validate_participant_quantities(view, content)
-    validate_assembled_fees(content, fee_block, canonical_block=fee_block)
-    validate_weekly_schedule(content, facts['description'])
+    check(validate_public_guidance, content, 'ko')
+    check(validate_participant_quantities, view, content)
+    check(validate_assembled_fees, content, fee_block, canonical_block=fee_block)
+    check(validate_weekly_schedule, content, facts['description'])
     # Source tables are evidence. They are not blindly copied, but every
     # generated table is validated above before a candidate can be created.
     if schedule_tables(facts['description']) and not schedule_tables(content):
-        raise ValidationError('schedule_table', 'missing')
+        error = ValidationError('schedule_table', 'missing')
+        if review is None:
+            raise error
+        review.record(error)
     return content
