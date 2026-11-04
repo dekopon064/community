@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timezone, timedelta
-from ingest.ai_errors import ValidationError
+from ingest.ai_errors import ValidationError, validation_location
 from ingest.ai_worker import KO_SECTION_HEADERS
 from ingest.body_markdown import format_reviewed_block, schedule_tables, read_body, schedule_table_lines, inline_text
 from ingest.myseoul_ai_support import section_body
@@ -247,6 +247,19 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
         validate(*args, **kwargs)
 
     check = review.check if review else strict
+    def clean(transform, *args, fallback, rules):
+        # Cleanup must not turn an advisory content finding into a terminal
+        # failure. Keep the entire pre-cleanup text when equivalence cannot be
+        # proved. Structural errors and unexpected failures remain terminal.
+        try:
+            with validation_location(field='content_ko'):
+                return transform(*args)
+        except ValidationError as error:
+            if (review is None or error.diagnostic['rule'] not in rules
+                    or getattr(error, 'failure_scope', None) == 'batch'):
+                raise
+            review.record(error)
+            return fallback
     check(validate_weekly_schedule, content, facts['description'])
     from ingest.seoul_calendar_sessions import validate_calendar_sessions
     check(validate_calendar_sessions, content, view)
@@ -256,13 +269,16 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     check(validate_checkin, content, view)
     check(validate_participant_quantities, view, content+'\n'+canonical)
     content = without_reception_status(content)
-    content, sections = clean_schedule_display(content, sections, view)
-    content = normalize_summary_schedule(content, view)
+    content, sections = clean(clean_schedule_display, content, sections, view,
+                              fallback=(content, sections), rules={'clock'})
+    content = clean(normalize_summary_schedule, content, view,
+                    fallback=content, rules={'clock'})
     content = without_replaced_announcements(content, view)
     main = section_body(content, '[주요 내용]', KO_SECTION_HEADERS)
     fee_block = '\n'.join(line for line in sections['[주요 내용]'].splitlines()
                           if re.search(r'\*\*비용:', line))
-    main = deduplicate_summary_fees(main, fee_block)
+    main = clean(deduplicate_summary_fees, main, fee_block,
+                 fallback=main, rules={'reviewed_fee'})
     boundary = '|'.join(re.escape(h) for h in KO_SECTION_HEADERS)
     content = re.sub(r'(?ms)(^\s*\[주요 내용\][ \t]*)(.*?)(?=^\s*(?:'+boundary+r')|\Z)',
                      lambda match: match[1]+'\n'+(main or '공식 안내의 프로그램 내용')+'\n', content, count=1)
