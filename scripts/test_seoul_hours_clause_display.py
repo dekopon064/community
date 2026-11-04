@@ -203,7 +203,7 @@ class HoursClauseDisplayTests(unittest.TestCase):
                                                       '프로그램은 매일 09:00~17:00 진행합니다.'))):
                 r,e,out,calls=self.replay(index,classified,bad_ko=change)
                 self.assertEqual((r.completed,r.failed),(0,1));self.assertEqual(len(calls),1)
-                self.assertFalse(out);self.assertEqual(e[-1][0],'fail_seoul_ai_no_retry')
+                self.assertFalse(out);self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft')
 
     def test_existing_candidate_stale_and_unknown_results_have_no_retry(self):
         for classified in (False,True):

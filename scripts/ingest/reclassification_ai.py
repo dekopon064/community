@@ -66,9 +66,13 @@ def classification_input(c:dict)->str:
     schedule = {}
     if program and program.get('schema_version') == 'program-scope-v1-local':
         from ingest.seoul_fact_roles import weekly_input_evidence
+        from ingest.seoul_content import source_description, validation_view
+        program = {**program, 'description': source_description(program['description'])}
+        display = {**display, 'programFacts': program}
+        view = validation_view(program)
         schedule['weeklyScheduleEvidence'] = weekly_input_evidence(program['description'])
-        from ingest.seoul_operating_hours import facility_hours_evidence
-        schedule['facilityHoursEvidence'] = facility_hours_evidence(program['description'])
+        schedule['facilityHoursEvidence'] = view['facility_hours_evidence']
+        schedule['operatingDayEvidence'] = view.get('operating_day_evidence', [])
     return json.dumps({'inputContract':c['schema'],'classificationVersion':c['classificationVersion'],
         **schedule,
         'currentClassificationFacts':c['facts'],'currentFilters':c['filters'],
@@ -214,6 +218,21 @@ def protected_sections(c:dict)->dict[str,str]:
             sections[header]=[value] if header!='[일정 안내]' else [format_reviewed_block('\n'.join(dates)),value]
     return {h:'\n'.join(lines) for h,lines in sections.items()}
 
+def assemble_reclassified_seoul(content, context):
+    from ingest.seoul_content import assemble_seoul_body
+
+    facts = context['facts']
+    periods = {}
+    if facts['category'] == 'program':
+        application = context['filters']['application']['value']
+        periods['application'] = [{'status':'ok','endpoints':[application['start'],application['end']]}]
+    elif facts['category'] == 'event':
+        periods['operation'] = [{'status':'ok','endpoints':[
+            {'value':facts[key],'precision':'day'} for key in ('eventStart','eventEnd')]}]
+    return assemble_seoul_body(content, context['nativeConfirmedFacts']['programFacts'],
+                               reviewed=protected_sections(context), periods=periods)
+
+
 def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revision:str,classification_version:int,
         summarize_ko:Callable,translate_ja:Callable,worker_id:str,lease_seconds:int=300,no_retry:bool=False)->AiWorkerResult:
     try:
@@ -229,10 +248,14 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
             if c['source']!='seoul_reservation':raise RpcAmbiguous()
     except Exception:return AiWorkerResult(status='ai_state_unknown',state_unknown=1)
     fence={'p_job_id':c['jobId'],'p_revision':revision,'p_classification_version':classification_version,'p_claimed_at':c['claimedAt'],'p_lease_until':c['leaseUntil'],'p_worker_id':worker_id}
+    from ingest.seoul_ai_correction import current_output, retained_output
+    draft = {}
+    capture_token = current_output.set(draft if no_retry else None)
     stage='summary'
     try:
         content,status,model=summarize_ko(classification_input(c),c['sourceUrl'],title=c['title'])
         if status!='success' or not isinstance(content,str):raise ValidationError('summary_result', 'missing_or_invalid')
+        draft.update(ko=content, model=model)
         stage='korean_validation'
         native=c['nativeConfirmedFacts']['programFacts'] or {}
         links=native.get('application_links',[]) if c['source']=='myseoul_program' else []
@@ -257,15 +280,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
                 lambda match:match[1]+'\n'+main+'\n',content,count=1)
         from ingest.myseoul_content import merge_reviewed_sections
         if native.get('schema_version')=='program-scope-v1-local':
-            from ingest.seoul_content import assemble_seoul_body
-            periods={}
-            if c['facts']['category']=='program':
-                application=c['filters']['application']['value']
-                periods['application']=[{'status':'ok','endpoints':[application['start'],application['end']]}]
-            elif c['facts']['category']=='event':
-                periods['operation']=[{'status':'ok','endpoints':[{'value':c['facts'][key],'precision':'day'}
-                    for key in ('eventStart','eventEnd')]}]
-            content=assemble_seoul_body(content,native,reviewed=protected_sections(c),periods=periods)
+            content=assemble_reclassified_seoul(content,c)
         else:
             content=merge_reviewed_sections(content,protected_sections(c))
         if native.get('schema_version')=='myseoul-program-facts-v1-local':
@@ -275,6 +290,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         stage='translation'
         title_ja,content_ja,status_ja,_=translate_ja(c['title'],content)
         if status_ja!='success' or not isinstance(title_ja,str) or not isinstance(content_ja,str):raise ValidationError('translation_result', 'missing_or_invalid')
+        draft.update(jaTitle=title_ja, ja=content_ja)
         stage='japanese_validation'
         content_ja=normalize_schedule_heading(content_ja,'ja')
         if native.get('schema_version')=='program-scope-v1-local':
@@ -303,7 +319,8 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
                 terminal_failure_result,unknown_failure_result)
             if not uncertain_failure(exc):
                 try:
-                    terminate_no_retry(adapter,c,exc)
+                    retained = retained_output(draft) if isinstance(exc, ValidationError) else None
+                    terminate_no_retry(adapter,c,exc,draft=retained,stage=stage)
                     return terminal_failure_result(exc,stage)
                 except Exception as finish_exc:
                     return unknown_failure_result(finish_exc, 'failure_termination',
@@ -319,3 +336,5 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         if no_retry:
             return unknown_failure_result(exc,stage)
         return AiWorkerResult(status='ai_state_unknown',claimed=1,state_unknown=1)
+    finally:
+        current_output.reset(capture_token)

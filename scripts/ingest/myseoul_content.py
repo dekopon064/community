@@ -535,7 +535,7 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
             if actual_values and not compatible:
                 raise ValidationError('reviewed_period', 'mismatch', location={'period_role': role},
                                       expected=expected_values, actual=actual_values)
-    evidence = schedule_lines(f) + f.get('meeting_evidence', [])
+    evidence = schedule_lines(f) + f.get('meeting_evidence', []) + f.get('operating_day_evidence', [])
     expected = schedule_values('\n'.join(evidence))
     expected_durations = _durations('\n'.join(evidence))
     for line in clauses:

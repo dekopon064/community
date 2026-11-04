@@ -120,11 +120,11 @@ class DateHoursReplayTests(unittest.TestCase):
             if name.startswith('claim_'):
                 if skip: return None if classified else []
                 return c if classified else [c]
-            if name.startswith('finish_') or name == 'fail_seoul_ai_no_retry':
+            if name.startswith('finish_') or name in {'fail_seoul_ai_no_retry','fail_seoul_ai_with_draft'}:
                 for key, param in [('jobId','p_job_id'),('revision','p_revision'),
                                    ('workerId','p_worker_id'),('claimedAt','p_claimed_at'),('leaseUntil','p_lease_until')]:
                     self.assertEqual(args[param],c[key])
-                if name == 'fail_seoul_ai_no_retry':
+                if name in {'fail_seoul_ai_no_retry','fail_seoul_ai_with_draft'}:
                     self.assertEqual(args['p_attempt'],c['failurePolicy']['attempt'])
                     if unknown == 'failure': raise RpcTimeout()
                     return 'failed'
@@ -144,7 +144,7 @@ class DateHoursReplayTests(unittest.TestCase):
         self.assertEqual(result.retried,0)
         self.assertLessEqual(len(client.calls),2)
         self.assertLessEqual(sum(n.startswith('finish_') for n,_ in events),1)
-        self.assertLessEqual(sum(n=='fail_seoul_ai_no_retry' for n,_ in events),1)
+        self.assertLessEqual(sum(n in {'fail_seoul_ai_no_retry','fail_seoul_ai_with_draft'} for n,_ in events),1)
         self.assertNotIn(c['failurePolicy']['attempt'],json.dumps(client.calls))
         return result,events,outputs,client.calls
 
@@ -185,7 +185,7 @@ class DateHoursReplayTests(unittest.TestCase):
         for classified in (False,True):
             r,e,out,calls = self.replay(0,classified,bad_ja=lambda s:s.replace('19','18'))
             self.assertEqual((r.completed,r.failed),(0,1)); self.assertEqual(len(calls),2)
-            self.assertEqual(e[-1][0],'fail_seoul_ai_no_retry'); self.assertFalse(out)
+            self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft'); self.assertFalse(out)
 
     def test_wrong_hours_fixed_sessions_and_periods_terminate_before_translation(self):
         for classified in (False,True):
@@ -200,7 +200,7 @@ class DateHoursReplayTests(unittest.TestCase):
             ):
                 r,e,out,calls = self.replay(1,classified,bad_ko=change)
                 self.assertEqual((r.failed,r.completed),(1,0));self.assertEqual(len(calls),1)
-                self.assertEqual(e[-1][0],'fail_seoul_ai_no_retry');self.assertFalse(out)
+                self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft');self.assertFalse(out)
 
     def test_korean_date_table_changes_cannot_borrow_source_numbers(self):
         for classified in (False,True):
@@ -211,7 +211,7 @@ class DateHoursReplayTests(unittest.TestCase):
                            lambda s:s.replace('| 2026.10.7.(수) |','| |')):
                 r,e,out,calls=self.replay(0,classified,bad_ko=change)
                 self.assertEqual((r.completed,r.failed),(0,1));self.assertEqual(len(calls),1)
-                self.assertEqual(e[-1][0],'fail_seoul_ai_no_retry');self.assertFalse(out)
+                self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft');self.assertFalse(out)
 
     def test_existing_candidate_stale_claim_and_unknown_writes_do_not_retry(self):
         for classified in (False,True):

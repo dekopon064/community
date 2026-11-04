@@ -9,7 +9,7 @@ from ingest.ai_errors import ValidationError
 from ingest.body_markdown import inline_text
 from ingest.translation_validation import _dates_and_times
 
-_FACILITY = r'(?:센터|시설|도서관|박물관|미술관|전시관|공원)'
+_FACILITY = r'(?:센터|시설|도서관|박물관|미술관|전시관|공원|레이저)'
 _CLOCK = r'(?:오전|오후)?\s*\d{1,2}(?::\d{2}(?::\d{2})?|\s*시(?!간)(?:\s*\d{1,2}\s*분)?)'
 _RANGE = re.compile(rf'({_CLOCK})\s*(?:~|～|〜|–|—|-|부터)\s*({_CLOCK})(?:까지)?')
 
@@ -27,7 +27,7 @@ def _facility_hours(text):
 def _ranges(text):
     result = []
     for match in _RANGE.finditer(text):
-        clocks = [v for v in _dates_and_times(match[0]) if v[0] == 'time']
+        clocks = [v for v in _dates_and_times(match[0], facility_range=_facility_hours(text)) if v[0] == 'time']
         if len(clocks) != 2:
             raise ValidationError('clock_range', 'invalid_shape', expected=2, actual=len(clocks))
         result.append(tuple(tuple(v[1:]) for v in clocks))
