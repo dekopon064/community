@@ -236,7 +236,7 @@ export default function ReviewWorkspace() {
             {source ? <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a> : <p className="mt-3 text-info-muted">원문 링크를 제공할 수 없습니다.</p>}
             <p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || "저장된 원문 본문이 없습니다. 원문 링크에서 확인해 주세요."}</p>
           </details>
-          {item.kind === "candidates" && item.source.name === "seoul_reservation" && confirmation !== "publish" && <SeoulCandidateCorrection key={item.id + item.version} id={item.id} content={content ?? item.content} onChange={setContent} disabled={locked} />}
+          {item.kind === "candidates" && item.source.name === "seoul_reservation" && confirmation !== "publish" && <SeoulCandidateCorrection key={item.id + item.version} id={item.id} content={content ?? item.content} savedContent={item.content} onChange={setContent} disabled={locked} />}
           {item.kind === "candidates" && item.contentNotices && <CandidateContentNotices notices={item.contentNotices} />}
           {item.kind === "candidates" && item.programInfo && <div className="my-5 border-y border-info-rule py-4 text-sm leading-6 text-info-body">
             <p>후보 입력 사실 버전 {item.programInfo.inputFactsVersion} · 현재 사실 버전 {item.programInfo.currentFactsVersion}</p>
