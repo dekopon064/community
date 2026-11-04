@@ -90,8 +90,8 @@ const advisory = await seoulCorrectionRequest(new Request(base + '?view=candidat
 assert.deepEqual((await advisory.json()).review, review);
 assert.equal((await seoulCorrectionRequest(new Request(base + '?view=candidate'), id, blocked)).status, 403);
 const html = renderToStaticMarkup(createElement(SeoulCandidateFindings, { review, content, onChange: () => {} }));
-for (const text of ['AI 오류·수정 검토', '수집된 원문 근거 보기', '표 1', '2행', '3열',
-  '기대값 10:00', '검사값 10:30', 'AI 수정 제안', '수정 전', '수정 후', '수정안 적용', '뜻이 같은 표현', '운영자 확인 필요']) {
+for (const text of ['AI 결과 검토', '수집된 원문 전체 보기', '표 1', '2행', '3열',
+  '기준 10:00', '결과 10:30', 'AI 수정 제안', '수정 전', '수정안 적용', '같은 의미', '근거 확인 필요', '현재 후보 문구', '미적용']) {
   assert.ok(html.includes(text), text);
 }
 assert.ok(html.includes('&lt;script&gt;'));
@@ -103,3 +103,37 @@ assert.equal(applySeoulReviewPatch({ ...content, contentJa: '10:30 10:30' }, iss
 assert.deepEqual(applySeoulReviewPatch({ ...content, summaryJa: '10:30' }, { ...issue, summaryPatch: true }),
   { ...edited, summaryJa: '10:00' });
 console.log('candidate review passed: fake auth/RPC, source, diagnostic, changed and unchanged findings, safe rendering and editor patch');
+
+const { groupReviewIssues, issueExcerpt, reviewSaveState } = await import('../app/components/admin/SeoulCandidateFindings.tsx');
+const equivalent = {stage:'japanese_validation',rule:'per_session',reason:'added',disposition:'equivalent',
+  location:{item:1,field:'body'},expected:[],actual:[[1,1]],evidence:'한 ID당 각 회차 1회 예약'};
+const listContent = {...content,contentJa:'[申込条件]\n- 各回1回のみ予約できます。\n- 各回1回のみ予約できます。'};
+const repeated = {...equivalent,location:{item:2,field:'body'}};
+assert.equal(groupReviewIssues([equivalent,repeated],listContent).length,1);
+assert.equal(groupReviewIssues([equivalent,{...repeated,evidence:'다른 근거'}],listContent).length,2);
+assert.equal(groupReviewIssues([issue,issue],content).length,2,'do not merge independently applied changes');
+assert.equal(issueExcerpt(listContent,equivalent),'各回1回のみ予約できます。');
+assert.equal(issueExcerpt(listContent,{...equivalent,location:{item:9,field:'body'}}),null);
+const tableContent = {...content,contentJa:'| 曜日 | 時間 |\n| --- | --- |\n| 土曜日 | 10:30 |'};
+assert.equal(issueExcerpt(tableContent,{...equivalent,location:{table:1,row:1,column:2,field:'body'}}),'10:30');
+assert.equal(issueExcerpt(tableContent,{...equivalent,location:{table:2,row:1,column:2,field:'body'}}),null);
+assert.equal(reviewSaveState(issue,content,content),'AI 수정 제안 · 미적용');
+assert.equal(reviewSaveState(issue,edited,content,edited),'편집기에 반영됨 · 저장 전');
+assert.equal(reviewSaveState(issue,edited,edited),'후보에 저장됨 · 제안 문구와 일치');
+assert.equal(reviewSaveState(issue,{...content,contentJa:'別の文'},content,edited),'직접 편집 또는 다른 변경 · 저장 전');
+assert.equal(reviewSaveState(issue,content,content,edited),'AI 수정 제안 · 미적용','cancel resets by saved comparison');
+assert.equal(applySeoulReviewPatch(content,{...issue,after:issue.before}),null);
+const summaryIssue = {...issue,summaryPatch:true};
+assert.equal(reviewSaveState(summaryIssue,{...edited,summaryJa:'10:30'},{...edited,summaryJa:'10:30'}),'저장본 · 제안 위치 확인 필요','body alone must not imply summary saved');
+const groupedHtml=renderToStaticMarkup(createElement(SeoulCandidateFindings,{review:{source:'원문',issues:[equivalent,repeated]},content:listContent}));
+assert.equal((groupedHtml.match(/<li /g)||[]).length,1);
+assert.ok(groupedHtml.includes('2곳에서 같은 내용 감지'));
+assert.ok(groupedHtml.includes('AI가 수정한 부분은 없습니다.'));
+assert.ok(!groupedHtml.includes('수정안 적용'));
+const historical=renderToStaticMarkup(createElement(SeoulCandidateFindings,{review:{source:'원문',issues:[{...equivalent,location:{field:'body'}}]},content}));
+assert.ok(historical.includes('해당 문장을 특정할 수 없습니다'));
+assert.ok(historical.includes('현재 필드 전체 보기'));
+assert.ok(!historical.includes('원문에 없는 조건입니다'));
+console.log('review presentation passed: grouping, missing historical excerpts, list/table locations, apply/save/manual/cancel and summary states');
+
+assert.equal(applySeoulReviewPatch({...content,contentJa:'100명'}, {...issue,before:'10',after:'100'}),null,'do not apply a substring patch twice');
