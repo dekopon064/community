@@ -617,15 +617,25 @@ _FEE_VALUE = re.compile(
 
 def validate_summary_fees(main: str, activity: str) -> None:
     main, activity = comparison_text(main), comparison_text(activity)
+    def mismatch(generated, expected):
+        # Parsed amounts/free markers only; never attach source prose or a
+        # model response to an exception. None means no matching fee role.
+        def values(text):
+            return None if text is None else [sorted(_amounts(text, japanese=False).elements()),
+                                               bool(re.search(r'무료|무상', text))]
+        return ValidationError('reviewed_fee', 'missing_or_mismatched',
+            location={'field': 'content_ko'},
+            expected=values(expected), actual=values(generated))
+
     for label in ('수강료', '입장료', '재료비', '기타 비용'):
         generated, expected = _entry(main, label), _entry(activity, label)
         if generated is not None:
             generated = re.split(r'(?:수강료|입장료|재료비|기타\s*비용)\s*(?:[:：]|는|은)',
                 generated, maxsplit=1)[0]
             if expected is None or _amounts(generated, japanese=False) != _amounts(expected, japanese=False):
-                raise ValidationError('reviewed_fee', 'missing_or_mismatched')
+                raise mismatch(generated, expected)
             if bool(re.search(r'무료|무상', generated)) != bool(re.search(r'무료|무상', expected)):
-                raise ValidationError('reviewed_fee', 'missing_or_mismatched')
+                raise mismatch(generated, expected)
     # Natural prose also carries a cost role; validate before removing repeats.
     for match in _FEE_VALUE.finditer(main):
         label = '기타 비용' if match['label'].startswith('기타') else match['label']
@@ -633,7 +643,7 @@ def validate_summary_fees(main: str, activity: str) -> None:
         value = match['value']
         if (expected is None or _amounts(value, japanese=False) != _amounts(expected, japanese=False)
                 or bool(re.search(r'무료|무상', value)) != bool(re.search(r'무료|무상', expected))):
-            raise ValidationError('reviewed_fee', 'missing_or_mismatched')
+            raise mismatch(value, expected)
 
 
 def _fee_sentences(text: str):

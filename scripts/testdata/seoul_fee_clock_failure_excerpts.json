@@ -1,0 +1,29 @@
+{
+  "provenance": "Previously inspected 2026-11-04 failed-run source and Korean response excerpts, not full retained responses. Full response retrieval was unavailable in this local task. All surrounding facts, identities, summaries and Japanese responses in the test are synthetic; these excerpts are not regenerated AI output.",
+  "cases": [
+    {
+      "name": "북촌전통공예체험관 프로그램",
+      "source": "○ 비용 : 유료(현장결제)\n○ 입장료 무료, 지역 주민 및 학생 체험 시 30% 할인율 적용, 코리아투어카드 사용자(외국인 대상) 체험 시 10% 할인율 적용",
+      "response": "요일별로 마련된 한국 전통공예 프로그램을 선택하여 체험합니다. 체험료는 **현장결제**이며, 입장료는 무료입니다. 지역 주민 및 학생은 체험 시 30%, 코리아투어카드 사용자(외국인 대상)는 체험 시 10% 할인이 적용됩니다.",
+      "fee_kind": "unknown", "section": "주요 내용", "rule": "reviewed_fee"
+    },
+    {
+      "name": "종로구 숲해설 창경궁 (일)",
+      "source": "- 교육비 : 무료(입장료 1천원 개인 부담)",
+      "response": "입장료 **1,000원은 개인 부담**입니다. 전용 주차장이 없으므로 가급적 대중교통을 이용해 주세요.",
+      "fee_kind": "free", "section": "주요 내용", "rule": "reviewed_fee"
+    },
+    {
+      "name": "종로구 숲해설 창경궁 (토)",
+      "source": "- 교육비 : 무료(입장료 1천원 개인 부담)",
+      "response": "교육은 무료이나 **입장료 1,000원은 개인 부담**입니다. 만남 장소는 창경궁 매표소입니다. 전용 주차장이 없으므로 가급적 대중교통을 이용해 주세요.",
+      "fee_kind": "free", "section": "주요 내용", "rule": "reviewed_fee"
+    },
+    {
+      "name": "광화문광장 감사의 정원 프리덤 홀",
+      "source": "- 레이저 운영시간 : 20:00~24:00 / 4시간 연속 점등",
+      "response": "- 지상 ‘감사의 빛 23’ 레이저: 20:00~24:00, 4시간 연속 점등",
+      "fee_kind": "free", "section": "일정 안내", "rule": "clock"
+    }
+  ]
+}
