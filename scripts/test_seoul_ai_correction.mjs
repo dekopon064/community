@@ -56,7 +56,7 @@ assert.deepEqual(calls.pop(), ['admin_request_seoul_ai_correction', {
 }]);
 const proof = await seoulCorrectionRequest(new Request(base + '?view=candidate'), id, deps);
 assert.equal(proof.status, 200);
-assert.deepEqual(calls.pop(), ['admin_seoul_ai_correction_evidence', { p_candidate: id }]);
+assert.deepEqual(calls.pop(), ['admin_seoul_ai_candidate_review', { p_candidate: id }]);
 assert.equal((await seoulCorrectionRequest(post(), id, {
   ...deps, invoke: async () => { throw Object.assign(new Error(), { code: 'PT409' }); },
 })).status, 409);
@@ -73,3 +73,33 @@ for (const text of ['AI 수정', '수정 전', '수정 후', '원문 근거', '8
 }
 assert.ok(!proofHtml.includes('<script>'));
 console.log('approval evidence renders both excerpts and source link as safe text');
+
+const { SeoulCandidateFindings, applySeoulReviewPatch } = await import('../app/components/admin/SeoulAiCorrection.tsx');
+const issue = { stage: 'japanese_validation', rule: 'clock', reason: 'mismatch',
+  disposition: 'change', location: { table: 1, row: 2, column: 3 },
+  expected: ['time', 10, 0], actual: ['time', 10, 30], field: 'contentJa',
+  before: '10:30', after: '10:00', evidence: '원문은 오전 10:00' };
+const content = { titleKo: '합성', titleJa: '合成', summaryKo: '안내', summaryJa: '案内',
+  contentKo: '오전 10:00', contentJa: '午前10:30' };
+const review = { source: '원문은 오전 10:00 <script>', issues: [
+  issue, { ...issue, disposition: 'equivalent' }, { ...issue, disposition: 'needs_review' },
+] };
+const advisory = await seoulCorrectionRequest(new Request(base + '?view=candidate'), id, {
+  ...deps, invoke: async () => ({ review, evidence: null }),
+});
+assert.deepEqual((await advisory.json()).review, review);
+assert.equal((await seoulCorrectionRequest(new Request(base + '?view=candidate'), id, blocked)).status, 403);
+const html = renderToStaticMarkup(createElement(SeoulCandidateFindings, { review, content, onChange: () => {} }));
+for (const text of ['AI 오류·수정 검토', '수집된 원문 근거 보기', '표 1', '2행', '3열',
+  '기대값 10:00', '검사값 10:30', 'AI 수정 제안', '수정 전', '수정 후', '수정안 적용', '뜻이 같은 표현', '운영자 확인 필요']) {
+  assert.ok(html.includes(text), text);
+}
+assert.ok(html.includes('&lt;script&gt;'));
+assert.ok(!html.includes('재검증'));
+const edited = applySeoulReviewPatch(content, issue);
+assert.deepEqual(edited, { ...content, contentJa: '午前10:00' });
+assert.equal(applySeoulReviewPatch(edited, issue), null);
+assert.equal(applySeoulReviewPatch({ ...content, contentJa: '10:30 10:30' }, issue), null);
+assert.deepEqual(applySeoulReviewPatch({ ...content, summaryJa: '10:30' }, { ...issue, summaryPatch: true }),
+  { ...edited, summaryJa: '10:00' });
+console.log('candidate review passed: fake auth/RPC, source, diagnostic, changed and unchanged findings, safe rendering and editor patch');

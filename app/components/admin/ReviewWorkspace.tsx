@@ -236,7 +236,7 @@ export default function ReviewWorkspace() {
             {source ? <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a> : <p className="mt-3 text-info-muted">원문 링크를 제공할 수 없습니다.</p>}
             <p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || "저장된 원문 본문이 없습니다. 원문 링크에서 확인해 주세요."}</p>
           </details>
-          {item.kind === "candidates" && item.source.name === "seoul_reservation" && confirmation !== "publish" && <SeoulCandidateCorrection key={item.id + item.version} id={item.id} />}
+          {item.kind === "candidates" && item.source.name === "seoul_reservation" && confirmation !== "publish" && <SeoulCandidateCorrection key={item.id + item.version} id={item.id} content={content ?? item.content} onChange={setContent} disabled={locked} />}
           {item.kind === "candidates" && item.contentNotices && <CandidateContentNotices notices={item.contentNotices} />}
           {item.kind === "candidates" && item.programInfo && <div className="my-5 border-y border-info-rule py-4 text-sm leading-6 text-info-body">
             <p>후보 입력 사실 버전 {item.programInfo.inputFactsVersion} · 현재 사실 버전 {item.programInfo.currentFactsVersion}</p>
@@ -292,7 +292,7 @@ export default function ReviewWorkspace() {
           {confirmation && <section ref={confirmationBox} tabIndex={-1} aria-label="최종 처리 확인" className="mt-8 scroll-mt-36 border-y border-info-rule bg-info-surface px-5 py-6">
             <h3 className="text-xl font-bold">{confirmation === "save_published_body" ? "변경한 본문을 공개 글에 반영할까요?" : confirmation === "publish" ? "저장된 최종 내용으로 게시할까요?" : confirmation === "exclude" ? "이 항목을 제외할까요?" : "이 후보를 반려할까요?"}</h3>
             <p className="mt-3 leading-7 text-info-body">{confirmation === "save_published_body" ? `수정 사유: ${note}. 위 한국어·일본어 본문 변경을 현재 공개 글에 반영하고 이력을 남깁니다.${mode === "local-fixture" ? " 실제 공개 없이 로컬 시험으로 처리됩니다." : ""}` : confirmation === "publish" ? `위에 표시된 한국어·일본어 저장본을 승인하고 게시합니다. 승인자·시각과 게시 이력을 함께 기록합니다.${mode === "local-fixture" ? " 현재는 실제 공개 없이 로컬 시험으로 처리됩니다." : ""}` : `기록할 사유: ${note}`}</p>
-            {confirmation === "publish" && item.source.name === "seoul_reservation" && <SeoulCandidateCorrection key={item.id + item.version} id={item.id} />}
+            {confirmation === "publish" && item.kind === "candidates" && item.source.name === "seoul_reservation" && <SeoulCandidateCorrection key={item.id + item.version} id={item.id} content={item.content} disabled />}
             <div className="mt-5 flex flex-wrap gap-3"><button className={primaryButton} disabled={busy} onClick={confirmAction}>{busy ? "처리 중…" : confirmation === "save_published_body" ? "확인하고 공개 본문 저장" : confirmation === "publish" ? "확인하고 게시" : "확인하고 처리"}</button><button className={secondaryButton} disabled={busy} onClick={() => setConfirmation(null)}>돌아가기</button></div>
           </section>}
           {item.kind === "candidates" && item.publishedAt && <p className="mt-7 text-info-body">{mode === "local-fixture" ? "시험 게시" : "게시"} 시각: {time(item.publishedAt)} (한국 시간)</p>}

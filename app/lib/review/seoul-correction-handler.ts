@@ -41,9 +41,9 @@ export async function seoulCorrectionRequest(request: Request, id: string, deps:
     const query = new URL(request.url).search;
     if (!jobUuid.test(id)) throw new ReviewFailure('invalid_input');
     if (request.method === 'GET') {
-      if (query === '?view=candidate') return privateResponse(Response.json({
-        evidence: await deps.invoke('admin_seoul_ai_correction_evidence', { p_candidate: id }),
-      }));
+      if (query === '?view=candidate') return privateResponse(Response.json(
+        await deps.invoke('admin_seoul_ai_candidate_review', { p_candidate: id }),
+      ));
       if (query) throw new ReviewFailure('invalid_input');
       return privateResponse(Response.json({ draft: await deps.invoke('admin_seoul_ai_draft', { p_job: id }) }));
     }

@@ -126,6 +126,48 @@ def exercise(db, dump):
         assert proof['before']=='3番出口' and proof['after']=='합성出口' and proof['evidence']==c['title']
         assert scalar("(select review_status from machimoa_review.curation_candidates where id="+lit(stored['candidateId'])+")")=='pending'
         assert scalar("(select count(*) from machimoa_review.seoul_ai_no_retry_attempts where job_id="+lit(c['jobId'])+" and closed_at is not null)")==1
+
+    sql((ROOT/'supabase/migrations/20261104031651_seoul_ai_candidate_review.sql').read_text(encoding='utf-8-sig'))
+    deny('set role service_role; select * from machimoa_review.seoul_ai_candidate_reviews;', 'permission denied')
+    for classified in (False, True):
+        c = claim(create(classified))
+        output = dict(titleKo=c['title'], summaryKo='합성 요약', contentKo='오전 10:00',
+                      titleJa='合成体験', summaryJa='合成要約', contentJa='午前10:30', aiModel='gpt-test')
+        review = {'source': '합성 원문 10:00', 'issues': [{'rule': 'clock', 'reason': 'mismatch',
+            'disposition': 'change', 'field': 'contentJa', 'before': '10:30', 'after': '10:00',
+            'evidence': '합성 원문 10:00'}]}
+        mode = 'classification' if classified else 'program'
+        version = c['classificationVersion'] if classified else c['factsVersion']
+        args = [c[k] for k in ('jobId', 'revision', 'claimedAt', 'leaseUntil', 'workerId')]
+        args += [mode, version, output, review]
+        deny(command('finish_seoul_ai_candidate_review', args, 'authenticated'), 'permission denied')
+        stale = args.copy()
+        stale[6] += 1
+        deny(command('finish_seoul_ai_candidate_review', stale), 'stale' if not classified else 'fence_lost')
+        malformed = args.copy()
+        malformed[7] = {**output, 'contentJa': ''}
+        deny(command('finish_seoul_ai_candidate_review', malformed), 'invalid')
+        assert scalar("(select status from machimoa_review.processing_jobs where id="+lit(c['jobId'])+")") == 'claimed'
+        done = rpc('finish_seoul_ai_candidate_review', args)
+        cid = done['candidateId']
+        assert done['outcome'] == 'inserted'
+        assert rpc('finish_seoul_ai_candidate_review', args)['outcome'] == 'duplicate'
+        deny(command('admin_seoul_ai_candidate_review', [cid], 'anon'), 'permission denied')
+        assert rpc('admin_seoul_ai_candidate_review', [cid])['review'] == review
+        assert scalar("(select review_status from machimoa_review.curation_candidates where id="+lit(cid)+")") == 'pending'
+        item = rpc('admin_review_detail', ['candidates', cid])
+        edited = dict(item['content'], contentJa='午前10:00')
+        save = [cid, item['revision'], item['version'], edited, ACTOR]
+        deny(command('admin_review_save_candidate', save, 'authenticated'), 'permission denied')
+        assert rpc('admin_review_save_candidate', save)['content']['contentJa'] == '午前10:00'
+        deny(command('admin_review_save_candidate', save), 'conflict')
+        event = scalar("(select jsonb_build_array(actor,candidate_content_before,candidate_content_after)"
+                       " from machimoa_review.admin_review_events where candidate_id="+lit(cid)
+                       +" and action='save_candidate' order by id desc limit 1)")
+        assert event == [ACTOR, {'contentJa': '午前10:30'}, {'contentJa': '午前10:00'}]
+    print('candidate review SQL passed: both fences, required fields, private pending review, operator edit audit and stale version')
+
+
     print('correction SQL passed: atomic draft, access, approval block, scope, dedup, stale facts, pending candidate and evidence')
 
 

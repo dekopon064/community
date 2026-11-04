@@ -6,6 +6,7 @@ fetch evidence or infer unstated values. Contextual wording remains a review tas
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import re
@@ -272,26 +273,45 @@ def _date_year_context(text: str) -> frozenset:
                      if not re.search(r'(?:버전|version|ver\.?|v)\s*[:：]?\s*$', text[:m.start()], re.I))
 
 
-def _validate_field(korean: str, japanese: str, *, known_years: frozenset = frozenset()) -> None:
+@contextmanager
+def _advisory(report, **location):
+    try:
+        with validation_location(**location):
+            yield
+    except ValidationError as error:
+        if report is None:
+            raise
+        report(error)
+
+
+def _validate_field(korean: str, japanese: str, *, known_years: frozenset = frozenset(), report=None, field=None) -> None:
     korean, japanese = comparison_text(korean), comparison_text(japanese)
     # URLs are opaque. Do not NFKC-normalize their path, query or identifiers.
-    if Counter(_URL.findall(korean)) - Counter(_URL.findall(japanese)):
-        raise ValidationError('official_link', 'missing')
+    with _advisory(report, field=field):
+        if Counter(_URL.findall(korean)) - Counter(_URL.findall(japanese)):
+            raise ValidationError('official_link', 'missing')
     ko, ja = _normal(korean), _normal(japanese)
-    _require_present('fee_amount', _amounts(ko, japanese=False), _amounts(ja, japanese=True))
-    _require_present('per_session', _per_session(ko, japanese=False), _per_session(ja, japanese=True))
-    _require_present('per_person', _per_person(ko, japanese=False), _per_person(ja, japanese=True))
-    _require_present('quantity', _quantities(ko, japanese=False), _quantities(ja, japanese=True))
-    _require_present('first_come_quantity', _first_come(ko, japanese=False), _first_come(ja, japanese=True))
-    _require_present('duration_minutes', _durations(ko), _durations(ja))
+    with _advisory(report, field=field):
+        _require_present('fee_amount', _amounts(ko, japanese=False), _amounts(ja, japanese=True))
+    with _advisory(report, field=field):
+        _require_present('per_session', _per_session(ko, japanese=False), _per_session(ja, japanese=True))
+    with _advisory(report, field=field):
+        _require_present('per_person', _per_person(ko, japanese=False), _per_person(ja, japanese=True))
+    with _advisory(report, field=field):
+        _require_present('quantity', _quantities(ko, japanese=False), _quantities(ja, japanese=True))
+    with _advisory(report, field=field):
+        _require_present('first_come_quantity', _first_come(ko, japanese=False), _first_come(ja, japanese=True))
+    with _advisory(report, field=field):
+        _require_present('duration_minutes', _durations(ko), _durations(ja))
     for role, (ko_label, ja_label) in zip(('application', 'operation', 'meeting', 'deadline'), _PERIOD_ROLES):
         source = _entry(ko, ko_label)
         if source is not None and (expected := _dates_and_times(source, known_years=known_years)):
             target = _entry(ja, ja_label)
             actual = _dates_and_times(target, known_years=known_years) if target is not None else []
-            if actual != expected:
-                raise ValidationError('period_date_time', 'missing' if not actual else 'mismatch',
-                                      location={'period_role': role}, expected=expected, actual=actual)
+            with _advisory(report, field=field):
+                if actual != expected:
+                    raise ValidationError('period_date_time', 'missing' if not actual else 'mismatch',
+                                          location={'period_role': role}, expected=expected, actual=actual)
     for ko_label, ja_label in _FEE_ROLES:
         source = _entry(ko, ko_label)
         if source is not None:
@@ -304,7 +324,8 @@ def _validate_field(korean: str, japanese: str, *, known_years: frozenset = froz
                 ) or (
                     any(amount > 0 for amount in amounts) and not free and re.search(r"無料|無償", target)
                 ):
-                    raise ValidationError('fee_role', 'missing_or_mismatched', expected=list(amounts), actual=list(_amounts(target or '', japanese=True)))
+                    with _advisory(report, field=field):
+                        raise ValidationError('fee_role', 'missing_or_mismatched', expected=list(amounts), actual=list(_amounts(target or '', japanese=True)))
 
 
 def _cell_ordinal(text: str) -> tuple[int | None, str]:
@@ -417,47 +438,53 @@ def _validate_cell(korean: str, japanese: str, *, known_years: frozenset = froze
             raise ValidationError('participation_constraint', 'missing')
 
 
-def _validate_markdown(korean: str, japanese: str) -> None:
+def _validate_markdown(korean: str, japanese: str, *, report=None) -> None:
     ko, ja = read_body(korean), read_body(japanese)
     known_years = _date_year_context(korean)
-    if len(ko.tables) != len(ja.tables):
-        raise ValidationError('table_count', 'mismatch', expected=len(ko.tables), actual=len(ja.tables))
-    if len(ko.items) != len(ja.items):
-        raise ValidationError('list_item_count', 'mismatch', expected=len(ko.items), actual=len(ja.items))
+    with _advisory(report, field='body'):
+        if len(ko.tables) != len(ja.tables):
+            raise ValidationError('table_count', 'mismatch', expected=len(ko.tables), actual=len(ja.tables))
+    with _advisory(report, field='body'):
+        if len(ko.items) != len(ja.items):
+            raise ValidationError('list_item_count', 'mismatch', expected=len(ko.items), actual=len(ja.items))
     for table, (source, target) in enumerate(zip(ko.tables, ja.tables), 1):
         expected_shape = (source.section, len(source.headers), len(source.rows))
         actual_shape = (target.section, len(target.headers), len(target.rows))
-        with validation_location(table=table):
-            if expected_shape != actual_shape:
+        if expected_shape != actual_shape:
+            with _advisory(report, field='body', table=table):
                 raise ValidationError('table_shape', 'mismatch', expected=expected_shape, actual=actual_shape)
-            for column, (source_header, target_header) in enumerate(zip(source.headers, target.headers), 1):
-                with validation_location(row=0, column=column):
-                    _validate_role_label(source_header, target_header)
-            for row, (source_row, target_row) in enumerate(zip(source.rows, target.rows), 1):
-                for column, (source_cell, target_cell) in enumerate(zip(source_row, target_row), 1):
-                    with validation_location(row=row, column=column):
-                        if column == 1:
-                            _validate_role_label(source_cell, target_cell)
-                        if is_weekday_matrix(source.headers):
-                            _validate_weekday_cell(source_cell, target_cell)
-                        _validate_cell(source_cell, target_cell, known_years=known_years)
+            continue
+        for column, (source_header, target_header) in enumerate(zip(source.headers, target.headers), 1):
+            with _advisory(report, field='body', table=table, row=0, column=column):
+                _validate_role_label(source_header, target_header)
+        for row, (source_row, target_row) in enumerate(zip(source.rows, target.rows), 1):
+            for column, (source_cell, target_cell) in enumerate(zip(source_row, target_row), 1):
+                with _advisory(report, field='body', table=table, row=row, column=column):
+                    if column == 1:
+                        _validate_role_label(source_cell, target_cell)
+                    if is_weekday_matrix(source.headers):
+                        _validate_weekday_cell(source_cell, target_cell)
+                    _validate_cell(source_cell, target_cell, known_years=known_years)
     for index, (source, target) in enumerate(zip(ko.items, ja.items), 1):
-        with validation_location(item=index):
+        with _advisory(report, field='body', item=index):
             if (source.section, source.indent, source.number) != (target.section, target.indent, target.number):
                 raise ValidationError('list_item_shape', 'mismatch')
             _validate_cell(source.text, target.text, known_years=known_years)
     source_bold, target_bold = strong_spans(korean), strong_spans(japanese)
-    if source_bold and not target_bold:
-        raise ValidationError('emphasis', 'missing')
+    with _advisory(report, field='body'):
+        if source_bold and not target_bold:
+            raise ValidationError('emphasis', 'missing')
     if len(source_bold) == len(target_bold):
         for source, target in zip(source_bold, target_bold):
-            _validate_cell(source, target, known_years=known_years)
+            with _advisory(report, field='body'):
+                _validate_cell(source, target, known_years=known_years)
     # Recognized emphasized fact labels must keep their translated emphasis.
     # Arbitrary natural-language emphasis remains a model/human review task.
     for ko_label, ja_label in (*_PERIOD_ROLES, *_FEE_ROLES):
         if any(re.search(ko_label, span) for span in source_bold) and not any(
                 re.search(ja_label, span) for span in target_bold):
-            raise ValidationError('emphasized_fact_label', 'missing')
+            with _advisory(report, field='body'):
+                raise ValidationError('emphasized_fact_label', 'missing')
 
 
 def _validate_weekday_cell(korean: str, japanese: str) -> None:
@@ -491,21 +518,23 @@ def _validate_role_label(korean: str, japanese: str) -> None:
                 raise ValidationError('table_role_label', 'mismatch')
 
 
-def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str, content_ja: str) -> None:
+def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str, content_ja: str, *, report=None) -> None:
     content_ko = normalize_schedule_heading(content_ko, 'ko')
     content_ja = normalize_schedule_heading(content_ja, 'ja')
-    with validation_location(field='title'):
-        _validate_field(title_ko, title_ja, known_years=_date_year_context(title_ko))
-    with validation_location(field='body'):
-        # Structured cells are checked before the body-wide inventory so a
-        # missing quantity or clock retains its actual table coordinates.
-        _validate_markdown(content_ko, content_ja)
-        _validate_field(content_ko, content_ja, known_years=_date_year_context(content_ko))
+    with _advisory(report, field='title'):
+        _validate_field(title_ko, title_ja, known_years=_date_year_context(title_ko), report=report, field='title')
+    with _advisory(report, field='body'):
+        # Structured cells are checked before the body-wide inventory.
+        _validate_markdown(content_ko, content_ja, report=report)
+    with _advisory(report, field='body'):
+        _validate_field(content_ko, content_ja, known_years=_date_year_context(content_ko), report=report, field='body')
     expected = [_HEADERS[h] for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ko) if h in _HEADERS]
     actual = [h for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ja) if h in _HEADERS.values()]
-    if actual != expected:
-        raise ValidationError('translated_sections', 'missing_added_or_reordered')
+    with _advisory(report):
+        if actual != expected:
+            raise ValidationError('translated_sections', 'missing_added_or_reordered')
     if expected and re.match(r"\s*\[", content_ko):
         # A review verdict before the first required section is not content.
         if not content_ja.lstrip().startswith(f"[{expected[0]}]"):
-            raise ValidationError('translated_sections', 'unexpected_preamble')
+            with _advisory(report):
+                raise ValidationError('translated_sections', 'unexpected_preamble')
