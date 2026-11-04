@@ -32,12 +32,13 @@ def schedule_values(text: str, *, japanese: bool = False) -> dict[str, set]:
         dates.add((int(month), int(day)))
         years.add(int(year))
     clock = r"(?:\d{1,2}:[0-5]\d|\d{1,2}\s*시(?:\s*[0-5]?\d\s*분)?)"
-    def minutes(value: str) -> int:
+    from ingest.translation_validation import midnight_closing
+    def minutes(value: str, *, closing: bool = False) -> int:
         parts = [int(v) for v in re.findall(r"\d+", value)]
-        if parts[0] > 23:
+        if parts[0] > 23 and not (closing and parts in ([24], [24, 0])):
             raise ValidationError('clock', 'out_of_range', actual=parts)
         return parts[0] * 60 + (parts[1] if len(parts) > 1 else 0)
-    times = {(minutes(m[1]), minutes(m[2])) for m in re.finditer(
+    times = {(minutes(m[1]), minutes(m[2], closing=midnight_closing(text[:m.start(2)]))) for m in re.finditer(
         rf"({clock})\s*(?:~|～|〜|–|—|-|부터|から)\s*({clock})", text)}
     counts = {int(v) for v in re.findall(r"(\d+)\s*회", text)}
     # Counted classes, not an exit number, attempt limit or an arbitrary '번'.

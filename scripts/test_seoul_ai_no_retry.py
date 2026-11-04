@@ -69,7 +69,11 @@ class NoRetryTests(unittest.TestCase):
                 if mode == 'finish_unknown': raise RpcTimeout()
                 if mode == 'finish_malformed': return {'outcome': 'inserted'}
                 return {'outcome': 'inserted', 'candidateId': c['sourceItemId']}
-            if name == 'fail_seoul_ai_no_retry':
+            if name in {'fail_seoul_ai_no_retry', 'fail_seoul_ai_with_draft'}:
+                if name == 'fail_seoul_ai_with_draft':
+                    self.assertEqual(args['p_error_code'], 'ai_schema_error')
+                    self.assertTrue(args['p_draft']['ko'])
+                    self.assertNotIn('failurePolicy', args['p_draft'])
                 if mode == 'fail_unknown': raise RpcTimeout()
                 self.assertEqual(args['p_attempt'], c['failurePolicy']['attempt'])
                 self.assertEqual(args['p_revision'], c['revision'])
@@ -113,7 +117,7 @@ class NoRetryTests(unittest.TestCase):
             self.assertEqual(r.diagnostic, {'rule': 'summary_facts', 'reason': 'missing_field',
                                             'location': {'field': 'facts.how_to_apply'}})
             self.assertEqual(calls, ['summary']); self.assertEqual(count, 1)
-            self.assertEqual([x[0] for x in e][1:], ['fail_seoul_ai_no_retry'])
+            self.assertEqual([x[0] for x in e][1:], ['fail_seoul_ai_with_draft'])
 
     def test_schedule_validation_failure_before_translation(self):
         for classified in (False, True):
@@ -125,7 +129,7 @@ class NoRetryTests(unittest.TestCase):
                                             'location': {'row': 1, 'column': 1},
                                             'expected': [['time', 10, 0]], 'actual': [['time', 9, 0]]})
             self.assertEqual(calls, ['summary']); self.assertEqual(count, 1)
-            self.assertEqual(e[-1][0], 'fail_seoul_ai_no_retry')
+            self.assertEqual(e[-1][0], 'fail_seoul_ai_with_draft')
 
     def test_known_translation_failure_is_terminal(self):
         for classified in (False, True):
@@ -133,7 +137,7 @@ class NoRetryTests(unittest.TestCase):
             self.assertEqual((r.failed, r.retried, r.completed), (1, 0, 0))
             self.assertEqual(r.failure_scope, 'item')
             self.assertEqual(calls, ['summary', 'translation']); self.assertEqual(count, 2)
-            self.assertEqual(e[-1][0], 'fail_seoul_ai_no_retry')
+            self.assertEqual(e[-1][0], 'fail_seoul_ai_with_draft')
 
     def test_translation_comparisons_keep_values_and_cell_position(self):
         for classified in (False, True):
@@ -145,7 +149,7 @@ class NoRetryTests(unittest.TestCase):
                      'expected': ['time', 10, 0], 'actual': ['time', 10, 30]})
                 self.assertTrue(result.termination_confirmed)
                 self.assertEqual((count, calls), (2, ['summary', 'translation']))
-                self.assertEqual([name for name, _ in events][1:], ['fail_seoul_ai_no_retry'])
+                self.assertEqual([name for name, _ in events][1:], ['fail_seoul_ai_with_draft'])
                 result, _, _, _ = self.replay(classified, 'ja_quantity')
                 self.assertEqual(result.diagnostic['rule'], 'quantity')
                 self.assertIn(15, [item[0][0] for item in result.diagnostic['expected']])

@@ -137,7 +137,8 @@ def program_input(c: dict[str, Any]) -> str:
     f = c["facts"]
     # Observed facts are explicitly separate; only the validated current facts are authoritative.
     changed = sorted(k for k in f if f[k] != c["observedFacts"].get(k))
-    from ingest.seoul_content import validation_view
+    from ingest.seoul_content import source_description, validation_view
+    f = {**f, 'description': source_description(f['description'])}
     from ingest.myseoul_content import schedule_lines
     from ingest.seoul_fact_roles import weekly_input_evidence
     matrix = weekly_input_evidence(f['description'])
@@ -147,6 +148,7 @@ def program_input(c: dict[str, Any]) -> str:
         "capacityEvidence": view['capacity_raw'], "sessionEvidence": [line for line in schedule_lines(view)
             if line not in view.get('weekly_validation_records', [])],
         "weeklyScheduleEvidence": matrix,
+        "operatingDayEvidence": view.get("operating_day_evidence", []),
         "facilityHoursEvidence": view['facility_hours_evidence'],
         "instructions": "검증된 현재 facts를 기준으로 작성하세요. 원문과 충돌해 이미 보완된 값을 재해석하지 마세요. "
         "국적 제한 미표기를 외국인 참여 보장으로 쓰지 마세요. 가족·비용·거주/연령 조건을 보존하고 신청 기간과 운영 기간을 구별하세요. "
@@ -184,6 +186,9 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         # Malformed claim context must not be used to fail/complete some other job.
         return AiWorkerResult(status="ai_state_unknown", state_unknown=1)
     fence = {"p_job_id": c["jobId"], "p_claimed_at": c["claimedAt"], "p_lease_until": c["leaseUntil"], "p_worker_id": worker_id}
+    from ingest.seoul_ai_correction import current_output, retained_output
+    draft = {}
+    capture_token = current_output.set(draft if no_retry else None)
     stage = 'summary'
     try:
         owner = getattr(summarize_ko, "__self__", None)
@@ -191,6 +196,7 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         content_ko, status_ko, model = summarize_program(program_input(c), c["facts"]["official_url"], title=c["title"])
         if status_ko != "success" or not isinstance(content_ko, str):
             raise ValidationError('summary_result', 'missing_or_invalid')
+        draft.update(ko=content_ko, model=model)
         stage = 'korean_validation'
         from ingest.body_sections import normalize_schedule_heading
         content_ko = normalize_schedule_heading(content_ko, 'ko')
@@ -203,6 +209,7 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content_ko)
         if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
             raise ValidationError('translation_result', 'missing_or_invalid')
+        draft.update(jaTitle=title_ja, ja=content_ja)
         stage = 'japanese_validation'
         content_ja = normalize_schedule_heading(content_ja, 'ja')
         validate_public_body(content_ja)
@@ -235,7 +242,8 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
             if uncertain_failure(exc):
                 return unknown_failure_result(exc, stage)
             try:
-                terminate_no_retry(adapter, c, exc)
+                retained = retained_output(draft) if isinstance(exc, ValidationError) else None
+                terminate_no_retry(adapter, c, exc, draft=retained, stage=stage)
                 return terminal_failure_result(exc, stage)
             except Exception as finish_exc:
                 return unknown_failure_result(finish_exc, 'failure_termination',
@@ -248,3 +256,5 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
             return AiWorkerResult(status="processed", claimed=1, retried=int(status == "queued"), failed=int(status == "failed"))
         except Exception:
             return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
+    finally:
+        current_output.reset(capture_token)

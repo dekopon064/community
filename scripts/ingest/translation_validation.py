@@ -182,7 +182,13 @@ def _local_schedule_text(text: str) -> str:
                   r'(\+\d{2}:?\d{2})(?!\d)', annotation, text)
 
 
-def _dates_and_times(text: str, *, known_years: frozenset = frozenset()) -> list[tuple]:
+def midnight_closing(prefix: str) -> bool:
+    line = prefix.rsplit('\n', 1)[-1]
+    return bool(re.search(r'(?:레이저|시설|센터|レーザー|施設|センター)\s*(?:の|의)?\s*(?:운영|이용|개관|運営|稼働|点灯|開館)\s*(?:시간|시間|時間)', line)
+                and re.search(r'(?:[01]?\d|2[0-3])(?::[0-5]\d|\s*[시時](?:\s*[0-5]?\d\s*[분分])?)\s*[~～〜–—-]\s*$', line))
+
+
+def _dates_and_times(text: str, *, known_years: frozenset = frozenset(), facility_range: bool = False) -> list[tuple]:
     text = _local_schedule_text(text)
     text = text.translate(str.maketrans({"年": "년", "月": "월", "日": "일", "時": "시", "分": "분"}))
     pattern = (r"(?P<iso>\d{4}-\d{2}-\d{2})|"
@@ -223,7 +229,9 @@ def _dates_and_times(text: str, *, known_years: frozenset = frozenset()) -> list
             second = int(match['colon_second'] or match['second'] or 0)
             if match["meridiem"]:
                 hour = hour % 12 + (12 if match["meridiem"] in {"오후", "午後"} else 0)
-            if hour > 23 or minute > 59 or second > 59:
+            midnight = (hour, minute, second) == (24, 0, 0) and not match['meridiem'] and (
+                midnight_closing(text[:match.start()]) or facility_range and bool(values) and values[-1][0] == 'time')
+            if (hour > 23 and not midnight) or minute > 59 or second > 59:
                 raise ValidationError('clock', 'out_of_range', actual=(hour, minute, second))
             values.append(("time", hour, minute, second) if second else ("time", hour, minute))
         if values and values[-1][0] == 'date':

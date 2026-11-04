@@ -106,9 +106,15 @@ def _recruitment_session_lines(view: dict) -> list[str]:
     return list(dict.fromkeys(result))
 
 
+def source_description(text: str) -> str:
+    """Drop embedded players/scripts from the source projection only."""
+    return re.sub(r'<(iframe|script)\b[^>]*>.*?</\1\s*>', '', text, flags=re.I | re.S)
+
+
 def validation_view(facts: dict) -> dict:
     from ingest.seoul_operating_hours import facility_hours_evidence
-    description = facts['description']
+    description = source_description(facts['description'])
+    facts = {**facts, 'description': description}
     # Only explicitly labelled capacity text; V_MIN/V_MAX have no known role.
     roles = public_roles(facts)
     capacity = list(dict.fromkeys(roles['capacity'] + [line.strip() for line in description.splitlines()
@@ -125,6 +131,22 @@ def validation_view(facts: dict) -> dict:
         # Retain existing tables/ordinary schedules as well as this narrowly
         # supported source label. The shared MySeoul extraction is unchanged.
         view['session_evidence'] = list(dict.fromkeys(schedule_lines(view) + recruitment))
+    # In an explicit operating-day section, “체험 ... 신청 가능” can
+    # describe the days offered, independent of the reservation window.
+    operating = False
+    operating_days = []
+    for line in description.splitlines():
+        if re.search(r'\[\s*운영일\s*안내\s*\]', line):
+            operating = True
+            continue
+        if operating and re.search(r'매주\s+[월화수목금토일,·\s]+요일\s+체험\s*프로그램\s*신청\s*가능', line):
+            days = re.search(r'매주\s+([월화수목금토일,·\s]+)요일', line)[1]
+            operating_days.append('체험 가능 요일: ' + ', '.join(ch + '요일' for ch in days if ch in '월화수목금토일'))
+            operating = False
+        elif operating and re.match(r'\s*(?:\[|[0-9]+\.)', line):
+            operating = False
+    if operating_days:
+        view['operating_day_evidence'] = operating_days
     matrix = weekly_schedule(description)
     if matrix:
         # Separate validation evidence from public rendering: bare table cells
@@ -181,7 +203,7 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
         dates.append('\n' + sessions)
     # Explicit table cells come from current description, not an old observed
     # HTML snapshot. Copy only the already parsed supported schedule tables.
-    tables = schedule_tables(facts['description'])
+    tables = schedule_tables(view['description'])
     if tables:
         dates = [line for line in dates if line != '\n' + sessions]
         dates += ['\n' + table.markdown for table in tables]
@@ -209,6 +231,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     from ingest.body_sections import normalize_schedule_heading
     from ingest.seoul_public_guidance import without_reception_status, ensure_application_guidance, validate_public_guidance
     from ingest.seoul_schedule_display import normalize_period_labels, clean_schedule_display, validate_checkin
+    facts = {**facts, 'description': source_description(facts['description'])}
     content = normalize_period_labels(normalize_schedule_heading(content, 'ko'))
     view = validation_view(facts)
     # Reclassification supplies its current reviewed date roles without
