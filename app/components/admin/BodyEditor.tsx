@@ -196,7 +196,7 @@ export default function BodyEditor({id,label,locale,value,onChange,disabled,erro
       <label className="block text-sm font-semibold">링크 주소<input type="url" className="mt-2 block min-h-11 w-full rounded-lg border border-info-rule bg-info-surface px-3 py-2 text-base" value={link.url} disabled={locked} onChange={e=>setLink({...link,url:e.target.value})}/></label>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={button} disabled={locked} onClick={()=>action(()=>{
-          if(!active||!selection||!safeLink(link.url)||!link.text.trim())throw Error('표시 문구와 http 또는 https 링크를 입력해 주세요.');
+          if(!active||!selection||!safeLink(link.url)||!link.text.trim())throw Error('표시 문구와 http·https 링크 또는 mailto:이메일주소를 입력해 주세요.');
           const nodes=selectedInline(active.children,selection.from,selection.to,{text:link.text,url:link.url});
           commit(replaceInline(value,active,nodes),{...selection,to:selection.from+link.text.length});setLink(null);
         })}>링크 적용</button>
