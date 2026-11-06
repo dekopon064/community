@@ -136,11 +136,11 @@ class PlanWorkerTests(unittest.TestCase):
                        '기한 내 미제출 시 예약 취소. 명단 변경은 교육 시작일 2일 전까지, 당일 변경 불가.')
         cases = [
             ('summarize_program_ko', mapo_source,
-             '**개인 예약**\n\n교육 희망일 3일 전까지 신청하세요. 예약 취소는 이용일 1일 전까지 가능합니다.\n\n'
+             '**개인 예약**\n\n교육 희망일 3일 전까지 신청하세요.\n예약 취소는 이용일 1일 전까지 가능합니다.\n\n'
              '**10명 이상 단체 예약**\n\n1. 전화로 교육일을 협의하세요.\n'
              '2. 교육일 1주 전까지 명단을 제출하세요. 기한을 넘기면 예약이 취소됩니다.\n\n'
              '명단 변경 시 교육 시작일 2일 전까지 제출하세요. 당일 변경은 불가합니다.',
-             '**個人予約**\n\n受講希望日の3日前までにお申し込みください。予約は受講日の1日前までキャンセルできます。\n\n'
+             '**個人予約**\n\n受講希望日の3日前までにお申し込みください。\n予約は受講日の1日前までキャンセルできます。\n\n'
              '**10名以上の団体予約**\n\n1. 電話で受講日をご相談ください。\n'
              '2. 受講日の1週間前までに名簿をご提出ください。期限を過ぎると予約は取り消されます。\n\n'
              '名簿を変更する場合は講習開始日の2日前までにご提出ください。当日の変更はできません。'),
@@ -157,11 +157,43 @@ class PlanWorkerTests(unittest.TestCase):
                 _, translated, _, _ = adapter.translate_ja('교육', body)
                 self.assertEqual(body, summary['content_ko'])
                 self.assertEqual(translated, translation['content_ja'])
+                self.assertIn(body, client.calls[1]['input'][0]['content'])
                 self.assertEqual(len(client.calls), 2)
                 for request in client.calls:
                     self.assertIn('only when their procedures differ', request['instructions'])
                     self.assertIn('one short paragraph', request['instructions'])
                     self.assertIn('its own cutoff, reference date and stated consequence', request['instructions'])
+                    self.assertIn('switch audience or action', request['instructions'])
+
+    def test_reader_facing_conditions_and_tentative_schedule(self):
+        # Known editorial examples; fake replies test transport and preservation,
+        # not the writing quality of a live model.
+        cases = [
+            ('summarize_program_ko', '톡톡 광희·장충 투어', '제한없음(보호자 동반 必)',
+             '[대상]\n누구나 신청할 수 있습니다. **보호자 동반은 필수입니다.**',
+             '[対象]\nどなたでもお申し込みいただけます。**保護者の同伴が必要です。**'),
+            ('summarize_ko', '특별 교육 일정', '11월은 4일 오전과 18일 오후만 진행 예정',
+             '[일정 안내]\n11월에는 4일 오전과 18일 오후에만 교육을 진행할 예정입니다.',
+             '[日程案内]\n11月は4日の午前と18日の午後のみ、講習を実施する予定です。'),
+        ]
+        for method, title, source, ko_section, ja_section in cases:
+            with self.subTest(title=title):
+                ko = '[한 줄 요약]\n프로그램 안내입니다.\n\n' + ko_section + '\n\n[주요 내용]\n프로그램에 참여합니다.'
+                ja = '[要約]\nプログラムのご案内です。\n\n' + ja_section + '\n\n[主な内容]\nプログラムに参加します。'
+                client = streamed([
+                    response(json.dumps({**json.loads(SUMMARY_JSON), 'content_ko': ko})),
+                    response(json.dumps({'title_ja': 'プログラム', 'content_ja': ja})),
+                ])
+                adapter, _, _ = self.adapter(client)
+                body, _, _ = getattr(adapter, method)(source, None)
+                _, translated, _, _ = adapter.translate_ja(title, body)
+                summary_request, translation_request = client.calls
+                self.assertEqual(body, ko)
+                self.assertIn(body, translation_request['input'][0]['content'])
+                self.assertEqual(translated, ja)
+                for request in (summary_request, translation_request):
+                    self.assertIn('Address the reader directly', request['instructions'])
+                    self.assertIn('planned vs confirmed', request['instructions'])
 
     def test_generation_budget_resets_for_new_jobs_but_no_repeated_stage_in_a_pair(self):
         client = streamed([response(SUMMARY_JSON),response(TRANSLATION_JSON)] * 2)
