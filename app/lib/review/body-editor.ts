@@ -15,7 +15,15 @@ export type Block = { node: RootContent; id: string; leaves: Leaf[]; nested: Blo
 export type Segment = { heading?: string; blocks: Block[] };
 export type Document = { source: string; segments: Segment[]; leaves: Leaf[]; tables: {id:string;node:Table;base:number}[]; error?: string };
 const parser = unified().use(remarkParse).use(remarkGfm, { singleTilde: false });
-export const safeLink = (url: string) => /^https?:\/\/[^\s\u0000-\u001f]+$/i.test(url);
+export const safeLink = (url: string) => {
+  if (/^https?:\/\/[^\s\u0000-\u001f]+$/i.test(url)) return true;
+  // Preserve a single plain email address. Header/query parameters, encoded
+  // characters, multiple recipients and control characters are not supported.
+  if (!/^mailto:/i.test(url)) return false;
+  const address = url.slice(7), [local, domain] = address.split('@');
+  return address.length <= 254 && Boolean(local && local.length <= 64 && domain) &&
+    /^[a-z0-9_+-]+(?:\.[a-z0-9_+-]+)*@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(address);
+};
 const start = (node: RootContent | Inline) => node.position?.start.offset ?? 0;
 const end = (node: RootContent | Inline) => node.position?.end.offset ?? 0;
 

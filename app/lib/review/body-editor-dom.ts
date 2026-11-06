@@ -18,7 +18,7 @@ export function domInline(root:Node):Inline[] {
     else if(tag==='EM'||tag==='I')result.push({type:'emphasis',children});
     else if(tag==='A'){
       const url=element.getAttribute('href')??'';
-      if(!safeLink(url))throw Error('http 또는 https 링크를 입력해 주세요.');
+      if(!safeLink(url))throw Error('http·https 링크 또는 mailto:이메일주소를 입력해 주세요.');
       result.push({type:'link',url,title:element.getAttribute('title'),children});
     } else {
       if(['DIV','P'].includes(tag)&&result.length)result.push({type:'break'});
