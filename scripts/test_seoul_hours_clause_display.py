@@ -9,6 +9,7 @@ from ingest.ai_errors import AiJobError
 from ingest.seoul_content import assemble_seoul_body, validation_view
 from ingest.seoul_operating_hours import validate_facility_hours_clause
 from ingest.seoul_schedule_display import _display_values
+from ingest.translation_validation import validate_translation_fidelity
 from ingest.program_ai import program_input
 from ingest.reclassification_ai import classification_input
 import test_seoul_date_hours_replay as date_hours_fixture
@@ -42,6 +43,48 @@ class HoursClauseDisplayTests(unittest.TestCase):
     def replay(self,index,classified=False,**kwargs):
         with patch('test_seoul_date_hours_replay.recorded',side_effect=replay_fixture):
             return date_hours_fixture.DateHoursReplayTests.replay(self,index,classified,**kwargs)
+
+    def test_namsan_weekly_departures_allow_date_only_operation_display(self):
+        facts = copy.deepcopy(recorded()[0]['facts'])
+        facts['description'] = (
+            '1. 운영일시 : 매주 화 , 목 , 토 오전 10 시 / 오후 2 시 ( 약 2시간 소요 ) ※ 공휴일 미운영'
+        )
+        facts['conditions'] = []
+        for role in ('RCPT', 'SVCOPN'):
+            facts['periods'][role + 'BGNDT']['value'] = '2026-06-05T00:00:00+09:00'
+            facts['periods'][role + 'ENDDT']['value'] = '2026-11-30T00:00:00+09:00'
+        original_facts = copy.deepcopy(facts)
+        ko_table = '| 운영 요일 | 출발 시간 | 소요 시간 |\n|---|---|---|\n| 매주 화·목·토 | 오전 10시, 오후 2시 | 약 2시간 |'
+        summary = '[한 줄 요약]\n도보 역사 탐방입니다.\n[일정 안내]\n' + ko_table + '\n\n[주요 내용]\n해설과 함께 걷습니다.'
+        body = assemble_seoul_body(summary, facts)
+        application = '- **신청기간:** 2026-06-05 00:00 ~ 2026-11-30 00:00'
+        operation = '- **진행기간:** 2026-06-05 ~ 2026-11-30'
+        self.assertIn(application, body)
+        self.assertIn(operation, body)
+        self.assertIn(ko_table, body)
+        self.assertEqual(facts, original_facts)
+        self.assertEqual(body, assemble_seoul_body(body, facts))
+
+        ja = ('[日程案内]\n| 実施曜日 | 出発時間 | 所要時間 |\n|---|---|---|\n'
+              '| 毎週火・木・土曜日 | 10時、14時 | 約2時間 |\n\n'
+              '- **申込期間**：2026年6月5日 0時～2026年11月30日 0時\n'
+              '- **実施期間**：2026年6月5日～2026年11月30日')
+        ko = f'[일정 안내]\n{ko_table}\n\n{application}\n{operation}'
+        validate_translation_fidelity('남산 기억로', ko, 'ナムサン記憶の道', ja)
+        with self.assertRaises(AiJobError):
+            validate_translation_fidelity('남산 기억로', ko, 'ナムサン記憶の道',
+                                          ja.replace('11月30日 0時', '11月30日', 1))
+
+        for description in (
+            original_facts['description'].replace('오전 10 시', '오전 12 시'),
+            original_facts['description'] + '\n운영기간: 2026-06-05 00:00 ~ 2026-11-30 00:00',
+            original_facts['description'] + '\n첫날 특별 회차는 자정에 출발합니다.',
+            '시설 운영시간: 10:00~14:00',
+        ):
+            with self.subTest(description=description):
+                facts['description'] = description
+                self.assertIn('- **진행기간:** 2026-06-05 00:00 ~ 2026-11-30 00:00',
+                              assemble_seoul_body(summary, facts))
 
     def test_retained_hanyang_body_before_after_and_idempotence(self):
         d=recorded()[0];raw=FIXTURE.read_bytes();facts=copy.deepcopy(d['facts'])
