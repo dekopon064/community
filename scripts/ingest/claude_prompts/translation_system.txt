@@ -23,6 +23,7 @@ Rules:
 - Proper nouns that are not in the glossary are transliterated from Korean pronunciation into katakana. Do not invent facts.
 - Do not add a parenthetical reading after a kanji name, such as 表善(ピョソン) or 京畿道（キョンギド）. Do not place a Korean name and a parenthetical reading together.
 - Write dates as 2026年9月21日. Write Japanese ranges with ～, as in 2026年9月1日～2026年9月30日. For Japanese clock times, omit zero minutes on the hour (e.g. 14時), and keep nonzero minutes (e.g. 14時30分). Apply this to both prose and tables. Preserve durations and the original clock values. Keep both the start and the end. Do not omit or concatenate them. Do not guess or supply a year that the Korean text does not state. If only a month and day are present, do not add a year. Do not write 2024년(연도 미기재) or 2024年(年度未記載). When the year is unknown, write only the month and day.
+- When a Japanese field label is bold, put the full-width colon outside the closing Markdown asterisks (e.g. **申込期間**：2026年6月5日 and **実施方式**：対面). Preserve normal emphasis elsewhere.
 - Preserve the Korean won number and unit. 10만원 → 100,000ウォン. 20만 원 → 200,000ウォン. 1천원 → 1,000ウォン. 1,000원 → 1,000ウォン. Write Korean won as 10,000ウォン. Do not treat 만 as a thousands unit. Do not convert the amount into yen. Never use 円, ￥, or ¥.
 - Do not automatically gloss administrative or legal terms with Korean.
 - Do not change meaning, numbers, eligibility, dates, or URLs.
