@@ -86,6 +86,37 @@ class HoursClauseDisplayTests(unittest.TestCase):
                 self.assertIn('- **진행기간:** 2026-06-05 00:00 ~ 2026-11-30 00:00',
                               assemble_seoul_body(summary, facts))
 
+    def test_pilgrimage_weekly_departures_with_numbered_label_and_combined_duration(self):
+        facts = copy.deepcopy(recorded()[0]['facts'])
+        schedule = '1) 운영일시 : 매주 수 , 금 , 토 오전 10 시 , 오후 2 시 ( 약 1 시간 30 분 소요 ) ※ 공휴일 미운영'
+        facts['description'] = schedule
+        facts['conditions'] = []
+        for role in ('RCPT', 'SVCOPN'):
+            facts['periods'][role + 'BGNDT']['value'] = '2026-06-05T00:00:00+09:00'
+            facts['periods'][role + 'ENDDT']['value'] = '2026-11-30T00:00:00+09:00'
+        departures = '매주 수·금·토 오전 10시, 오후 2시 출발'
+        summary = f'[한 줄 요약]\n도보 역사 탐방입니다.\n\n[일정 안내]\n{departures}\n\n[주요 내용]\n해설과 함께 걷습니다.'
+        body = assemble_seoul_body(summary, facts)
+        application = '- **신청기간:** 2026-06-05 00:00 ~ 2026-11-30 00:00'
+        operation = '- **진행기간:** 2026-06-05 ~ 2026-11-30'
+        self.assertIn(application, body)
+        self.assertIn(operation, body)
+        self.assertIn(departures, body)
+        ja = ('[日程案内]\n毎週水・金・土曜日の10時、14時に出発\n\n'
+              '- **申込期間**：2026年6月5日 0時～2026年11月30日 0時\n'
+              '- **実施期間**：2026年6月5日～2026年11月30日')
+        ko = body[body.index('[일정 안내]'):body.index('[주요 내용]')].strip()
+        validate_translation_fidelity('순례역사길 2코스', ko, '巡礼歴史の道 第2コース', ja)
+
+        for description in (
+            schedule.replace('오전 10 시', '오전 12 시'),
+            schedule + '\n2) 운영일정 : 주말 회차는 날짜에 따라 다릅니다.',
+        ):
+            with self.subTest(description=description):
+                facts['description'] = description
+                self.assertIn('- **진행기간:** 2026-06-05 00:00 ~ 2026-11-30 00:00',
+                              assemble_seoul_body(summary, facts))
+
     def test_retained_hanyang_body_before_after_and_idempotence(self):
         d=recorded()[0];raw=FIXTURE.read_bytes();facts=copy.deepcopy(d['facts'])
         self.assertIn('00:00',d['before_ko']);self.assertIn('**진행 일정:**',d['before_ko'])

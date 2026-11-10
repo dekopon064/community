@@ -20,13 +20,14 @@ _RANGE = re.compile(rf'{_POINT}\s*(?:~|～|〜|–|—|-)\s*{_POINT}')
 _APPLICATION = r'신청\s*기간|접수\s*기간|접수|신청'
 _OPERATION = r'진행\s*기간|운영\s*기간|개최\s*기간|운영'
 _RECURRING_CLOCK = rf'(?:(?:오전|오후)\s*)?{_CLOCK}'
-_OPERATION_RECORD = re.compile(r'^(?:\d+\.\s*)?(?:운영|진행|개최|해설)\s*(?:일시|일정|시간|기간)\s*[:：]')
+_NUMBERED_PREFIX = r'(?:\d+[.)]\s*)?'
+_OPERATION_RECORD = re.compile(rf'^{_NUMBERED_PREFIX}(?:운영|진행|개최|해설)\s*(?:일시|일정|시간|기간)\s*[:：]')
 _MIDNIGHT = re.compile(r'자정|(?<!\d)(?:00?:00|24:00|(?:00?|24)\s*시(?!간))|오전\s*12\s*시(?!간)')
 _WEEKLY_SESSION = re.compile(
-    rf'(?:\d+\.\s*)?(?:운영|진행|해설)\s*일시\s*[:：]\s*매주\s+'
+    rf'{_NUMBERED_PREFIX}(?:운영|진행|해설)\s*일시\s*[:：]\s*매주\s+'
     rf'{WEEKDAY}(?:\s*[,·]\s*{WEEKDAY})*\s+'
     rf'(?P<clocks>{_RECURRING_CLOCK}(?:\s*[/,·]\s*{_RECURRING_CLOCK})*)'
-    r'\s*(?:\(\s*(?:약\s*)?\d+\s*(?:시간|분)\s*소요\s*\))?'
+    r'\s*(?:\(\s*(?:약\s*)?\d+\s*(?:시간(?:\s*\d+\s*분)?|분)\s*소요\s*\))?'
     r'\s*(?:※\s*공휴일\s*미\s*운영)?'
 )
 
