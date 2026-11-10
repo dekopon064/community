@@ -6,6 +6,7 @@ from ingest.ai_errors import ValidationError
 from ingest.body_markdown import inline_text, read_body
 from ingest.myseoul_ai_support import schedule_values
 from ingest.myseoul_content import schedule_block, schedule_lines, _dated_schedule_details
+from ingest.seoul_fact_roles import WEEKDAY
 from ingest.translation_validation import _entry
 from ingest.translation_validation import _dates_and_times
 from ingest.seoul_calendar_sessions import (record_calendar_sessions, session_text,
@@ -18,6 +19,16 @@ _POINT = rf'{_DATE}(?:[T \t]+{_CLOCK})?(?:Z|[+-]\d{{2}}:?\d{{2}})?'
 _RANGE = re.compile(rf'{_POINT}\s*(?:~|～|〜|–|—|-)\s*{_POINT}')
 _APPLICATION = r'신청\s*기간|접수\s*기간|접수|신청'
 _OPERATION = r'진행\s*기간|운영\s*기간|개최\s*기간|운영'
+_RECURRING_CLOCK = rf'(?:(?:오전|오후)\s*)?{_CLOCK}'
+_OPERATION_RECORD = re.compile(r'^(?:\d+\.\s*)?(?:운영|진행|개최|해설)\s*(?:일시|일정|시간|기간)\s*[:：]')
+_MIDNIGHT = re.compile(r'자정|(?<!\d)(?:00?:00|24:00|(?:00?|24)\s*시(?!간))|오전\s*12\s*시(?!간)')
+_WEEKLY_SESSION = re.compile(
+    rf'(?:\d+\.\s*)?(?:운영|진행|해설)\s*일시\s*[:：]\s*매주\s+'
+    rf'{WEEKDAY}(?:\s*[,·]\s*{WEEKDAY})*\s+'
+    rf'(?P<clocks>{_RECURRING_CLOCK}(?:\s*[/,·]\s*{_RECURRING_CLOCK})*)'
+    r'\s*(?:\(\s*(?:약\s*)?\d+\s*(?:시간|분)\s*소요\s*\))?'
+    r'\s*(?:※\s*공휴일\s*미\s*운영)?'
+)
 
 
 def _plain(line: str) -> str:
@@ -124,6 +135,25 @@ def _covered(values: dict, rows: list[dict], occurrences=None) -> bool:
         for row in rows)
 
 
+def _weekly_session_without_midnight(record: str) -> bool:
+    match = _WEEKLY_SESSION.fullmatch(_plain(record))
+    if not match:
+        return False
+    clocks = _dates_and_times(match['clocks'])
+    return bool(clocks) and all(any(clock[1:]) for clock in clocks)
+
+
+def _has_only_weekly_sessions(view: dict, records: list[str]) -> bool:
+    # A list of departure times can be absent from schedule_lines(), which
+    # primarily picks up dated records and clock ranges.
+    description = view.get('description', '')
+    if _MIDNIGHT.search(description):
+        return False
+    lines = map(_plain, description.splitlines())
+    labeled = [line for line in lines if _OPERATION_RECORD.match(line)]
+    return bool(labeled) and all(_weekly_session_without_midnight(line) for line in [*labeled, *records])
+
+
 def _operation_period_display(sections: dict, view: dict) -> dict:
     """Separate calendar bounds from independently verified session clocks.
 
@@ -141,7 +171,8 @@ def _operation_period_display(sections: dict, view: dict) -> dict:
         return sections
     start,end=(d.date() for d in dates)
     matrix=view.get('weekly_schedule')
-    explicit=[_display_values(record,years=_years(view))['times'] for record in schedule_lines(view)]
+    records = schedule_lines(view)
+    explicit=[_display_values(record,years=_years(view))['times'] for record in records]
     if any(a==0 or b==0 or a>=b for times in explicit for a,b in times):
         return sections
     if matrix:
@@ -150,13 +181,13 @@ def _operation_period_display(sections: dict, view: dict) -> dict:
         clocks=[tuple(map(int,row[0].split(':'))) for row in matrix.rows]
         if not clocks or any(hour==minute==0 for hour,minute in clocks):
             return sections
-    else:
-        evidence=[_display_values(record,years=_years(view)) for record in schedule_lines(view)]
+    elif not _has_only_weekly_sessions(view, records):
+        evidence=[_display_values(record,years=_years(view)) for record in records]
         if not evidence or any(not v['dates'] or not v['times']
                 or any(a==0 or b==0 or a>=b for a,b in v['times']) for v in evidence):
             return sections
         represented=set()
-        for record,values in zip(schedule_lines(view),evidence):
+        for record,values in zip(records,evidence):
             details=_dated_schedule_details(record,known_years=_years(view))
             for month,day in values['dates']:
                 candidates=[]
