@@ -30,7 +30,7 @@ export function PublicListLoading() {
   const t = useTranslations("Info");
   const categories = useTranslations("Categories");
   const intro = category ? t(`categoryIntros.${category}`) : t("intro");
-  return <div className="min-h-[60vh] bg-canvas px-5 pb-24 pt-8 md:px-8 md:pt-16 lg:px-10 lg:pt-20" data-public-loading="list">
+  return <div className="min-h-[60vh] bg-canvas px-5 pb-24 pt-8 md:px-8 md:pt-16 lg:px-10 lg:pt-20" data-public-loading="list" data-public-category={category ?? undefined}>
     <div className="mx-auto grid max-w-6xl min-w-0 gap-6 lg:grid-cols-[minmax(13rem,0.42fr)_minmax(0,1fr)] lg:gap-14">
       <aside>
         <div className="flex items-center gap-2.5 md:gap-3">
