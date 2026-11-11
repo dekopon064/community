@@ -1,0 +1,38 @@
+/* Light-mode header surface only; the existing dark theme keeps its roles. */
+:global(html:not([data-theme="dark"])) .header {
+  background: #315777;
+  border-color: #315777;
+  --header-control-color: #ffffff;
+  --header-control-hover: rgb(255 255 255 / 10%);
+  --header-control-focus: #ffffff;
+  --header-control-focus-offset: -4px;
+}
+
+:global(html:not([data-theme="dark"])) .brand,
+:global(html:not([data-theme="dark"])) .actions :global(.theme-toggle) {
+  color: #ffffff;
+}
+
+:global(html:not([data-theme="dark"])) .navLink { color: #edf2f8; }
+:global(html:not([data-theme="dark"])) .navLink[aria-current="page"] { color: #ffffff; border-bottom-color: #ffffff; }
+:global(html:not([data-theme="dark"])) .navLink::after { background: #ffffff; }
+:global(html:not([data-theme="dark"])) .mobileNavigation { border-top-color: rgb(255 255 255 / 16%); }
+
+:global(html:not([data-theme="dark"])) .brand:focus-visible,
+:global(html:not([data-theme="dark"])) .navLink:focus-visible,
+:global(html:not([data-theme="dark"])) .actions :global(.theme-toggle):focus-visible {
+  outline-color: #ffffff;
+  outline-offset: -4px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :global(html:not([data-theme="dark"])) .navLink:hover { color: #ffffff; }
+  :global(html:not([data-theme="dark"])) .actions :global(.theme-toggle):hover {
+    background: var(--header-control-hover);
+  }
+}
+
+@media (forced-colors: active) {
+  .header { border-bottom-color: CanvasText; }
+  .navLink[aria-current="page"] { border-bottom-color: LinkText; }
+}

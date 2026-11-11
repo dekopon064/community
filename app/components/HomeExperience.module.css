@@ -1,4 +1,31 @@
 .home { max-width: 1280px; margin-inline: auto; padding: 0 40px 48px; color: var(--color-primary-text); }
+/* The approved white canvas belongs to the home route, including its gutters
+   and footer. It disappears on navigation and does not replace other pages. */
+:global(html:not([data-theme="dark"])) :global(body):has(.home, .loading) {
+  --color-canvas: #ffffff;
+  --color-info-rule: #d7dde4;
+  --color-stone: #d7dde4;
+}
+:global(html:not([data-theme="dark"])) .home .featuredCard {
+  border: 1px solid #aab5c3;
+  box-shadow: 0 5px 12px -8px rgb(16 47 92 / 30%);
+}
+:global(html:not([data-theme="dark"])) .home .peek { border: 1px solid #d3dae3; }
+:global(html:not([data-theme="dark"])) .home .controls > button { border-color: #aab5c3; }
+:global(html:not([data-theme="dark"])) .home .meta > span:first-child {
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border-radius: 4px;
+  background: #e8e8f3;
+  color: #102f5c;
+}
+:global(html:not([data-theme="dark"])) .home .topicStrip a svg {
+  border-radius: 50%;
+  padding: 3px;
+  background: #e1efec;
+}
+:global(html:not([data-theme="dark"])) .home .topicStrip a:nth-child(2) svg { background: #e5e8f8; }
+:global(html:not([data-theme="dark"])) .home .topicStrip a:nth-child(3) svg { background: #eee5f6; }
 .home h1,.home h2,.home h3,.home p { margin: 0; }
 .home h2 { font-size: 24px; font-weight: 650; line-height: 1.5; letter-spacing: -.02em; }
 .home a { text-decoration: none; }

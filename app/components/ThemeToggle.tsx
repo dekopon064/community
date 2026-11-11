@@ -17,10 +17,10 @@ function subscribeTheme(onStoreChange: () => void) {
   return () => observer.disconnect();
 }
 
-function updateBrowserThemeColor(theme: Theme) {
+function updateBrowserThemeColor(theme: Theme, pathname: string) {
   document.querySelector('meta[name="theme-color"]')?.setAttribute(
     "content",
-    theme === "dark" ? "#171717" : "#eef6fb",
+    theme === "dark" ? "#171717" : pathname === "/" ? "#ffffff" : "#eef6fb",
   );
 }
 
@@ -38,11 +38,11 @@ export default function ThemeToggle() {
       // An unavailable store always falls back to light.
     }
     document.documentElement.dataset.theme = saved;
-    updateBrowserThemeColor(saved);
-  }, [locale]);
+    updateBrowserThemeColor(saved, pathname);
+  }, [locale, pathname]);
 
   useEffect(() => {
-    updateBrowserThemeColor(theme);
+    updateBrowserThemeColor(theme, pathname);
   }, [theme, pathname]);
 
   function toggleTheme() {

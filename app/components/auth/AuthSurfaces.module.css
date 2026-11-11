@@ -44,8 +44,10 @@
 .notice p {font-size:14px;}
 .error strong,.error>svg {color:var(--color-info-status);}
 .notice .link {font-size:14px;}
-.account {display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;min-width:44px;padding:8px;border-radius:8px;font-size:14px;font-weight:600;color:var(--color-ink);}
-.account:hover,.menuAction:hover {background:var(--color-info-surface);}
+.account {display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;min-width:44px;padding:8px;border-radius:8px;font-size:14px;font-weight:600;color:var(--header-control-color,var(--color-ink));}
+.account:hover {background:var(--header-control-hover,var(--color-info-surface));}
+.account:focus-visible {outline-color:var(--header-control-focus,var(--color-focus));outline-offset:var(--header-control-focus-offset,3px);}
+.menuAction:hover {background:var(--color-info-surface);}
 .accountName {max-width:56px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 .menu {position:absolute;right:0;top:calc(100% + 7px);width:230px;max-width:calc(100vw - 24px);background:var(--color-canvas-white);border:1px solid var(--color-stone);border-radius:12px;padding:8px;z-index:1;font-size:15px;color:var(--color-ink);}
 .menuAction {display:flex;gap:12px;align-items:center;min-height:48px;width:100%;text-align:left;padding:10px 12px;border-radius:6px;}
