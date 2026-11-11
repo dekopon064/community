@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const {PGlite}=await import(process.env.PGLITE_TEST_MODULE || '@electric-sql/pglite');
-const sql=await readFile(new URL('../supabase/migrations/20261111131523_living_checked_on_label_encoding.sql',import.meta.url),'utf8');
+const sql=await readFile(new URL('../supabase/migrations/20261111132015_living_checked_on_label_encoding.sql',import.meta.url),'utf8');
 assert.equal(/[^\x00-\x7f]/.test(sql),false,'migration transport must be ASCII-only');
 const badKo='\ufffd'.repeat(4)+' \u022e'+'\ufffd'.repeat(4)+': ',badJa='\ufffd'.repeat(10)+': ';
 const goodKo='정보 확인일: ',goodJa='情報確認日: ',day='2026-11-11';
