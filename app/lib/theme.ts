@@ -4,7 +4,7 @@
  * CSS 변수(var(--color-*))를 사용할 수 없는 곳에서 참조한다.
  */
 export const themeColors = {
-  canvas: "#eef6fb",
+  canvas: "#ffffff",
   canvasWhite: "#ffffff",
   ink: "#102f5c",
 } as const;

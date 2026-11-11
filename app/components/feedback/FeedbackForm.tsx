@@ -52,7 +52,7 @@ const controlClass =
   "w-full min-h-11 rounded-xl border bg-canvas-white px-4 py-3 text-ink placeholder:text-ink-sub transition-colors focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-3 disabled:opacity-60";
 const textareaClass =
   "w-full min-h-[13.5rem] rounded-md border-0 bg-transparent px-0 py-2 text-ink placeholder:text-ink-sub focus:outline-none focus-visible:outline-none disabled:opacity-60 resize-none overflow-y-auto md:max-h-[28rem] md:resize-y";
-const validControlClass = "border-stone focus:border-ink focus-visible:outline-focus";
+const validControlClass = "border-info-muted focus:border-ink focus-visible:outline-focus";
 const invalidControlClass = "border-coral focus:border-coral focus-visible:outline-coral";
 
 function asStringList(value: unknown): readonly string[] {

@@ -1,22 +1,4 @@
 .page {padding:46px 40px 72px;}
-/* Public category lists share the approved white home canvas. Defining surface
-   roles on the active page's body also covers portalled filters and mobile
-   navigation without changing detail pages or the existing dark theme. */
-:global(html:not([data-theme="dark"])) :global(body):has(
-  .page,
-  .whiteCanvas,
-  :global([data-public-loading="list"][data-public-category="program"]),
-  :global([data-public-loading="list"][data-public-category="event"]),
-  :global([data-public-loading="list"][data-public-category="policy"]),
-  :global([data-public-loading="list"][data-public-category="living"]),
-  :global([data-public-loading="list"][data-public-category="youth_space"])
-) {
-  --color-canvas: #ffffff;
-  --color-info-surface: #ffffff;
-  --color-info-hover: #f5f7f9;
-  --color-info-rule: #d7dde4;
-  --color-stone: #d7dde4;
-}
 .container {max-width:1240px;margin-inline:auto;}
 .shell {display:grid;min-width:0;grid-template-columns:208px minmax(0,1fr);gap:48px;align-items:start;}
 .intro {position:sticky;top:112px;align-self:start;padding-top:4px;}

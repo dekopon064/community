@@ -9,7 +9,6 @@ import { fetchLocalizedCurations } from "@/app/lib/curations";
 import { supabase } from '@/app/lib/supabase';
 import { attachHomeCardColors } from '@/app/lib/home-colors/public-read';
 import { readHomePins } from '@/app/lib/home-featured/public-read';
-import styles from '@/app/components/HomeExperience.module.css';
 
 // Keep publication visibility; compute all home selections at one request time.
 export const dynamic = "force-dynamic";
@@ -17,7 +16,7 @@ export const dynamic = "force-dynamic";
 export default async function Home({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
-  return <Suspense fallback={<div className={styles.loading}><PublicCardsLoading /></div>}><HomeContents locale={locale} /></Suspense>;
+  return <Suspense fallback={<PublicCardsLoading />}><HomeContents locale={locale} /></Suspense>;
 }
 
 async function HomeContents({ locale }: { locale: string }) {

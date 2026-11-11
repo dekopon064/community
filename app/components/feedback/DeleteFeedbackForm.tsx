@@ -9,7 +9,7 @@ import TurnstileField, {
 } from "@/app/components/feedback/TurnstileField";
 
 const controlClass =
-  "w-full min-h-11 rounded-xl border border-stone bg-canvas-white px-4 py-3 font-mono text-ink placeholder:text-ink-sub transition-colors focus:border-ink focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-focus disabled:opacity-60";
+  "w-full min-h-11 rounded-xl border border-info-muted bg-canvas-white px-4 py-3 font-mono text-ink placeholder:text-ink-sub transition-colors focus:border-ink focus:outline-none focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-focus aria-invalid:border-coral disabled:opacity-60";
 
 type DeleteFeedbackFormProps = {
   turnstileSiteKey: string;
