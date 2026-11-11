@@ -54,8 +54,8 @@ export function applySeoulReviewPatch(content: CandidateContent, issue: ReviewIs
   return next;
 }
 
-// These are current-document locations, never reconstructed historical AI output.
-// Match the worker's supported single-line lists and GFM table coordinates only.
+// Historical coordinates are diagnostic context only. Match recorded text uniquely;
+// never interpret old list/table/line numbers as positions in an edited candidate.
 function surroundingLine(text: string, needle?: string): string | null {
   if (!needle) return null;
   const at = text.indexOf(needle);
@@ -71,27 +71,7 @@ export function issueExcerpt(content: CandidateContent, issue: ReviewIssue): str
   const text = content[field];
   const surrounding = surroundingLine(text, issue.before) ?? surroundingLine(text, issue.after);
   if (surrounding !== null) return surrounding;
-  const lines = text.split(/\r?\n/);
-  const loc = issue.location;
-  if (typeof loc?.item === 'number') {
-    return lines.filter(line => /^( *)(?:[-+*]\s+|\d+[.)]\s+)\S/.test(line))
-      [loc.item - 1]?.replace(/^( *)(?:[-+*]\s+|\d+[.)]\s+)/, '') ?? null;
-  }
-  if (typeof loc?.table === 'number' && typeof loc.row === 'number' && typeof loc.column === 'number') {
-    const cells = (line: string) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map(s => s.trim());
-    let table = 0;
-    for (let i = 0; i + 1 < lines.length; i++) {
-      if (!lines[i].includes('|') || !cells(lines[i + 1]).every(s => /^:?-{3,}:?$/.test(s))) continue;
-      table++;
-      const rows = [cells(lines[i])];
-      i += 2;
-      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(cells(lines[i++]));
-      i--;
-      if (table === loc.table) return rows[loc.row]?.[loc.column - 1] ?? null;
-    }
-  }
-  if (typeof loc?.line === 'number') return lines[loc.line - 1] ?? null;
-  return field === 'titleJa' ? text : null;
+  return null;
 }
 export function groupReviewIssues(issues: ReviewIssue[], saved: CandidateContent) {
   const groups: { issue: ReviewIssue; occurrences: ReviewIssue[] }[] = [];
@@ -168,13 +148,16 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
   const [applied, setApplied] = useState<Record<number, CandidateContent>>({});
   const [kept, setKept] = useState<Record<number, boolean>>({});
   const groups = groupReviewIssues(review.issues, savedContent);
+  const actionable = groups.map((group, index) => ({ ...group, index })).filter(g => g.issue.disposition !== 'equivalent');
+  const history = groups.filter(g => g.issue.disposition === 'equivalent');
   const count = (d: ReviewIssue['disposition']) => groups.filter(g => g.issue.disposition === d).length;
   return <>
     <h3 className="text-lg font-bold">AI 결과 검토</h3>
-    <p className="mt-2 text-sm leading-6">수정 제안 {count('change')}개 · 문구 유지 {count('equivalent')}개 · 근거 확인 필요 {count('needs_review')}개</p>
-    <p className="mt-2 max-w-prose text-sm leading-6">검사가 감지한 차이와 AI의 판단을 원문과 비교해 주세요. 수정안은 편집기에만 반영되며, 아래 ‘수정 저장’ 후 게시 여부를 결정합니다.</p>
+    <p className="mt-2 text-sm leading-6">수정 제안 {count('change')}개 · 근거 확인 필요 {count('needs_review')}개</p>
+    {actionable.length > 0 ? <p className="mt-2 max-w-prose text-sm leading-6">아래 수정 제안과 확인이 필요한 내용을 원문과 비교해 주세요. 수정안을 적용하거나 직접 편집했다면 ‘수정 저장’ 후 게시 여부를 결정합니다.</p>
+      : <p className="mt-2 max-w-prose text-sm leading-6">이 검사 기록에서 추가로 수정할 사항은 없습니다. 별도 수정·저장 없이 본문 최종 검토 후 게시 여부를 결정할 수 있습니다.</p>}
     <ol className="mt-6 space-y-8">
-      {groups.map(({ issue, occurrences }, index) => {
+      {actionable.map(({ issue, occurrences, index }) => {
         const field = issueField(issue);
         const patched = applySeoulReviewPatch(content, issue);
         const excerpt = issueExcerpt(content, issue);
@@ -184,7 +167,7 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
         const state = reviewSaveState(issue, content, savedContent, applied[index]);
         return <li key={index} className="min-w-0 border-t border-info-rule pt-5 text-sm leading-7">
           <h4 className="text-base font-bold">{checks[issue.rule ?? ''] ?? '내용 확인'} · {issue.disposition === 'change' ? 'AI 수정 제안' : issue.disposition === 'equivalent' ? '문구 유지' : '근거 확인 필요'}</h4>
-          <p className="text-info-muted">{field ? fields[field] : issue.stage === 'korean_validation' ? '한국어 결과' : '일본어 결과'} · {occurrences.length > 1 ? `${occurrences.length}곳에서 같은 내용 감지` : locationText(issue)}</p>
+          <p className="text-info-muted">{field ? fields[field] : issue.stage === 'korean_validation' ? '한국어 결과' : '일본어 결과'} · {occurrences.length > 1 ? `${occurrences.length}곳에서 같은 내용 감지` : `검사 당시 위치: ${locationText(issue)}`}</p>
           <p className="mt-3 font-semibold">왜 확인이 필요한가요?</p>
           <p className="max-w-prose">{reasons[issue.reason ?? ''] ?? '검사에서 확인이 필요한 표현을 감지했습니다. 검사 상세와 원문을 함께 확인해 주세요.'} 검사의 감지 결과이며, 실제 오류인지는 원문과 비교해 판단합니다.</p>
           {readableValue(issue.expected) !== null && readableValue(issue.actual) !== null && <p className="mt-2 font-semibold">검사 비교 · 기준 {readableValue(issue.expected)} / 결과 {readableValue(issue.actual)}</p>}
@@ -194,8 +177,8 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
           </dl>
           <div className="mt-5 grid min-w-0 gap-5 md:grid-cols-2">
             <div className="min-w-0"><p className="font-semibold">현재 후보 문구</p>
-              <p className="mt-2 whitespace-pre-wrap break-words" lang={field === 'contentKo' ? 'ko' : 'ja'}>{excerpt ? issue.disposition === 'change' && suggestion ? <ChangedText text={excerpt} other={suggestion}/> : excerpt : '저장된 진단만으로 해당 문장을 특정할 수 없습니다. 본문에서 직접 확인해 주세요.'}</p>
-              {excerpt && !issue.before && <p className="mt-1 text-xs text-info-muted">현재 본문의 기록된 위치를 표시합니다. 검사 당시 문장 사본은 아닙니다.</p>}
+              <p className="mt-2 whitespace-pre-wrap break-words" lang={!excerpt || field === 'contentKo' ? 'ko' : 'ja'}>{excerpt ? issue.disposition === 'change' && suggestion ? <ChangedText text={excerpt} other={suggestion}/> : excerpt : '현재 본문에서 검사 당시 문구를 특정할 수 없습니다. 과거 위치로 다른 문장을 표시하지 않습니다. 본문 전체와 원문을 대조해 주세요.'}</p>
+              {excerpt && !issue.before && <p className="mt-1 text-xs text-info-muted">기록된 문구와 일치하는 현재 본문을 표시합니다.</p>}
               {!excerpt && field && <details className="mt-2"><summary className="min-h-11 cursor-pointer py-2">현재 필드 전체 보기</summary><p className="max-h-64 overflow-auto whitespace-pre-wrap break-words" lang={field === 'contentKo' ? 'ko' : 'ja'}>{content[field]}</p></details>}
             </div>
             <div className="min-w-0"><p className="font-semibold">{issue.disposition === 'change' ? 'AI 수정 제안' : 'AI 검토 결과'}</p>
@@ -211,7 +194,7 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
             {issue.disposition === 'change' && <button type="button" className={secondaryButton} disabled={disabled || !patched} onClick={() => {
               if (patched && !disabled) { setApplied(old => ({ ...old, [index]: patched })); setKept(old => ({ ...old, [index]: false })); onChange(patched); }
             }}>수정안 적용</button>}
-            {field && <button type="button" className={secondaryButton} disabled={disabled} onClick={() => editAt(field, excerpt)}>본문에서 직접 편집</button>}
+            {field && <button type="button" className={secondaryButton} disabled={disabled} onClick={() => editAt(field, excerpt)}>{excerpt ? '본문에서 직접 편집' : '본문 전체에서 확인·편집'}</button>}
             {issue.disposition === 'change' && patched && <button type="button" className={secondaryButton} disabled={disabled} onClick={() => setKept(old => ({ ...old, [index]: true }))}>현재 문구 유지</button>}
           </div>}
           {kept[index] && <p className="mt-2 text-xs text-info-muted">이 화면에서의 선택이며 별도 확인 이력은 저장하지 않습니다. 수정안은 계속 선택할 수 있습니다.</p>}
@@ -224,6 +207,25 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
         </li>;
       })}
     </ol>
+    {history.length > 0 && <details className="mt-6 border-t border-info-rule pt-3">
+      <summary className="min-h-11 cursor-pointer py-2 font-semibold">수정 불필요 · 참고 이력 {count('equivalent')}개</summary>
+      <p className="mt-2 max-w-prose text-sm leading-6">자동 검사가 감지했지만 AI가 원문과 같은 의미로 판단해 문구를 유지한 기록입니다. 이 기록에 대한 별도 수정·저장은 필요하지 않습니다. 본문 최종 검토는 그대로 진행해 주세요.</p>
+      <ul className="mt-4 space-y-5 text-sm leading-7">
+        {history.map(({ issue, occurrences }, index) => <li key={index} className="border-t border-info-rule pt-4">
+          <h4 className="font-semibold">{checks[issue.rule ?? ''] ?? '내용 검사'} · AI 판단: 수정 불필요</h4>
+          <p className="mt-2">원문과 같은 의미로 판단해 문구를 유지했습니다. AI가 수정한 부분은 없습니다.</p>
+          <p className="mt-2 whitespace-pre-wrap break-words"><strong>당시 확인한 원문 근거</strong><br/>{issue.evidence || '저장된 원문 인용이 없습니다.'}</p>
+          <details className="mt-2 text-info-muted">
+            <summary className="min-h-11 cursor-pointer py-2">당시 검사 기록</summary>
+            <p>{reasons[issue.reason ?? ''] ?? '내용 차이가 감지됐습니다.'}</p>
+            <p>검사 {issue.rule} · 사유 {issue.reason}</p>
+            {occurrences.map((occurrence, n) => <p key={n}>검사 당시 위치: {locationText(occurrence)}</p>)}
+            <p>위치는 과거 기록이며 현재 본문의 위치를 뜻하지 않습니다.</p>
+            <p className="break-words">기준 자료 추출값 {JSON.stringify(issue.expected ?? null)} / 결과 추출값 {JSON.stringify(issue.actual ?? null)}</p>
+          </details>
+        </li>)}
+      </ul>
+    </details>}
     {review.source && <details className="mt-6 border-t border-info-rule pt-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">수집된 원문 전체 보기</summary><p className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm leading-7">{review.source}</p></details>}
   </>;
 }
