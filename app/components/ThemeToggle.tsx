@@ -3,6 +3,7 @@
 import { Moon, Sun } from "lucide-react";
 import { useEffect, useLayoutEffect, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { themeColors } from "@/app/lib/theme";
 import { usePathname } from "@/i18n/navigation";
 
 type Theme = "light" | "dark";
@@ -17,14 +18,10 @@ function subscribeTheme(onStoreChange: () => void) {
   return () => observer.disconnect();
 }
 
-function updateBrowserThemeColor(theme: Theme, pathname: string) {
-  const whiteCanvas = pathname === "/" || [
-    "/info/category/program", "/info/category/event", "/info/category/policy",
-    "/info/category/living", "/info/category/youth_space",
-  ].includes(pathname);
+function updateBrowserThemeColor(theme: Theme) {
   document.querySelector('meta[name="theme-color"]')?.setAttribute(
     "content",
-    theme === "dark" ? "#171717" : whiteCanvas ? "#ffffff" : "#eef6fb",
+    theme === "dark" ? "#171717" : themeColors.canvas,
   );
 }
 
@@ -42,11 +39,11 @@ export default function ThemeToggle() {
       // An unavailable store always falls back to light.
     }
     document.documentElement.dataset.theme = saved;
-    updateBrowserThemeColor(saved, pathname);
+    updateBrowserThemeColor(saved);
   }, [locale, pathname]);
 
   useEffect(() => {
-    updateBrowserThemeColor(theme, pathname);
+    updateBrowserThemeColor(theme);
   }, [theme, pathname]);
 
   function toggleTheme() {
