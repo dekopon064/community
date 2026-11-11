@@ -18,6 +18,8 @@ declare
   old_ja_expr text;
   new_ko_expr text;
   new_ja_expr text;
+  canonical_ko_expr text;
+  canonical_ja_expr text;
   function_before jsonb;
   documents_before text;
   assets_before text;
@@ -44,11 +46,16 @@ begin
   old_ja_expr := 'ja:=ja||E' || chr(39) || chr(92)||'n'||chr(92)||'n'||old_ja||chr(39);
   new_ko_expr := 'ko:=ko||E' || chr(39)||chr(92)||'n'||chr(92)||'n'||chr(39) || '||U&' || chr(39) || chr(92)||'c815'||chr(92)||'bcf4 '||chr(92)||'d655'||chr(92)||'c778'||chr(92)||'c77c: '||chr(39);
   new_ja_expr := 'ja:=ja||E' || chr(39)||chr(92)||'n'||chr(92)||'n'||chr(39) || '||U&' || chr(39) || chr(92)||'60c5'||chr(92)||'5831'||chr(92)||'78ba'||chr(92)||'8a8d'||chr(92)||'65e5: '||chr(39);
-  if strpos(definition,old_ko_expr)=0 or strpos(definition,old_ja_expr)=0 then
+  canonical_ko_expr := 'ko:=ko||E' || chr(39)||chr(92)||'n'||chr(92)||'n'||good_ko||chr(39);
+  canonical_ja_expr := 'ja:=ja||E' || chr(39)||chr(92)||'n'||chr(92)||'n'||good_ja||chr(39);
+  -- Canonical UTF-8 installs and already repaired installs are valid too.
+  -- Unknown implementations still fail closed instead of replacing their bodies.
+  if (strpos(definition,old_ko_expr)=0 and strpos(definition,canonical_ko_expr)=0 and strpos(definition,new_ko_expr)=0)
+    or (strpos(definition,old_ja_expr)=0 and strpos(definition,canonical_ja_expr)=0 and strpos(definition,new_ja_expr)=0) then
     raise exception 'living date label predecessor differs';
   end if;
-  rewritten := replace(replace(definition,old_ko_expr,new_ko_expr),old_ja_expr,new_ja_expr);
-  execute rewritten;
+  rewritten := replace(replace(replace(replace(definition,old_ko_expr,new_ko_expr),old_ja_expr,new_ja_expr),canonical_ko_expr,new_ko_expr),canonical_ja_expr,new_ja_expr);
+  if rewritten is distinct from definition then execute rewritten; end if;
   if (select jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl::text,
     'config',proconfig,'definer',prosecdef) from pg_proc where oid=target)
     is distinct from function_before then

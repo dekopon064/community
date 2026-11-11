@@ -39,6 +39,7 @@ try{
   const before=await q('select * from public.curations order by id');
   const docs=await q('select * from machimoa_review.living_articles order by id'),assets=await q('select * from machimoa_review.living_image_assets order by id');
   const properties=await q("select oid,proowner,proacl::text,prosecdef,proconfig from pg_proc where oid='public.admin_living_write(uuid,text,uuid,text,jsonb,uuid)'::regprocedure");
+  const initialFunction=(await q("select pg_get_functiondef('public.admin_living_write(uuid,text,uuid,text,jsonb,uuid)'::regprocedure) definition"))[0].definition;
   await db.exec(sql);
   const after=await q('select * from public.curations order by id');
   for(let i=0;i<3;i++){
@@ -55,8 +56,25 @@ try{
   const future=await db.query('select public.admin_living_write(null,null,null,null,$1::jsonb,null) value',[document]);
   assert.equal(future.rows[0].value.ko,prefixKo+'\n\n'+goodKo+day);
   assert.equal(future.rows[0].value.ja,prefixJa+'\n\n'+goodJa+day);passed++;
-  // Reapplying against a changed function fails closed without changing data.
+  // Already repaired function and publications are a no-op.
+  await db.exec(sql);
+  assert.deepEqual(await q('select * from public.curations order by id'),after);passed++;
+  // Fresh installs use the canonical UTF-8 migration rather than damaged text.
+  await db.exec(initialFunction.replaceAll(badKo,goodKo).replaceAll(badJa,goodJa));
+  await db.exec(sql);
+  assert.deepEqual(await q('select * from public.curations order by id'),after);
+  const canonicalFuture=await db.query('select public.admin_living_write(null,null,null,null,$1::jsonb,null) value',[document]);
+  assert.deepEqual(canonicalFuture.rows,future.rows);passed++;
+  // A function with an unrecognised label is not silently overwritten.
+  await db.exec(initialFunction.replaceAll(badKo,'Unexpected date label: '));
   await assert.rejects(db.exec(sql),/predecessor differs/);await db.exec('rollback');
   assert.deepEqual(await q('select * from public.curations order by id'),after);passed++;
+  // Unexpected published footer rolls back the function repair and all row writes.
+  await db.exec(initialFunction);
+  await db.exec("update public.curations set content_ja='unexpected footer' where id='00000000-0000-4000-8000-000000000003'");
+  const unexpectedRows=await q('select * from public.curations order by id');
+  await assert.rejects(db.exec(sql),/living date footer differs/);await db.exec('rollback');
+  assert.deepEqual(await q('select * from public.curations order by id'),unexpectedRows);
+  assert.equal((await q("select pg_get_functiondef('public.admin_living_write(uuid,text,uuid,text,jsonb,uuid)'::regprocedure) definition"))[0].definition,initialFunction);passed++;
   console.log(JSON.stringify({passed,engine:'isolated PostgreSQL/WASM',operational_db:0,publications:0}));
 }finally{await db.close();}
