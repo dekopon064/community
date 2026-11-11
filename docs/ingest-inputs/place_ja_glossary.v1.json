@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "verified_on": "2026-11-11",
+  "entries": [
+    {
+      "ko": "을지로3가역",
+      "ja": "乙支路3街駅",
+      "reading_form": "乙支路3街（ウルチロサムガ）駅",
+      "accepted_ja": ["乙支路3街駅", "乙支路3街（ウルチロサムガ）駅", "ウルチロサムガ（乙支路3街）駅", "ウルチロサムガ駅"],
+      "sources": ["https://japanese.visitkorea.or.kr/svc/contents/contentsView.do?vcontsId=225837", "https://japanese.visitkorea.or.kr/svc/whereToGo/locIntrdn/rgnContentsView.do?vcontsId=176850"]
+    },
+    {
+      "ko": "종로3가역",
+      "ja": "鐘路3街駅",
+      "reading_form": "鐘路3街（チョンノサムガ）駅",
+      "accepted_ja": ["鐘路3街駅", "鐘路3街（チョンノサムガ）駅", "チョンノサムガ駅"],
+      "sources": ["https://japanese.visitkorea.or.kr/svc/contents/contentsView.do?vcontsId=225150", "https://japanese1.visitkorea.or.kr/jpn/TMC/TE_JPN_1.jsp"]
+    },
+    {
+      "ko": "이순신",
+      "ja": "李舜臣",
+      "reading_form": "李舜臣（イ・スンシン）",
+      "accepted_ja": ["李舜臣", "李舜臣（イ・スンシン）", "イ・スンシン", "イスンシン"],
+      "sources": ["https://japanese.visitkorea.or.kr/svc/contents/contentsView.do?vcontsId=63381"]
+    },
+    {
+      "ko": "중부시장",
+      "scope": "서울 중구",
+      "ja": "中部市場",
+      "accepted_ja": ["中部市場", "チュンブ市場"],
+      "sources": ["https://japanese.visitkorea.or.kr/svc/contents/contentsView.do?vcontsId=63093"]
+    },
+    {
+      "ko": "하도감",
+      "scope": "서울 중구",
+      "ja": "下都監",
+      "accepted_ja": ["下都監", "ハドガム"],
+      "sources": ["https://seoulcitywall.seoul.go.kr/jp/wallcourse/3.do"]
+    }
+  ]
+}

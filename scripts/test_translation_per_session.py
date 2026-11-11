@@ -68,6 +68,22 @@ class PerSessionTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(AiJobError):
                 self.validate(ko, bad)
 
+    def test_explicit_session_duration_equivalents_and_counterexamples(self):
+        for ko, ja in [('회당 3시간', '1回180分間'), ('회당 3시간', '1回3時間'),
+                       ('회당 1시간 30분', '一回90分間'),
+                       ('총 1회, 3시간', '全1回180分間'),
+                       ('총 1회, 3시간', '全  1回180分間')]:
+            for source, target in [(ko, ja), ('- '+ko, '- '+ja),
+                                   ('| 구분 | 안내 |\n| --- | --- |\n| 교육 | '+ko+' |',
+                                    '| 区分 | 案内 |\n| --- | --- |\n| 教育 | '+ja+' |')]:
+                with self.subTest(source=source, target=target):
+                    self.validate(source, target)
+        for bad in ('1回120分間', '2回180分間', '180分間', '全1回180分間',
+                    '計1回180分間', '第1回180分間', '全  1回180分間',
+                    '計 1回180分間', '第 1回180分間', '1回18時', '1回180名'):
+            with self.subTest(bad=bad), self.assertRaises(AiJobError):
+                self.validate('- 회당 3시간', '- '+bad)
+
 
 if __name__ == '__main__':
     unittest.main()
