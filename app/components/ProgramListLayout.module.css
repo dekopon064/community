@@ -1,11 +1,15 @@
 .page {padding:46px 40px 72px;}
-/* Program/event lists share the approved white home canvas. Defining surface
+/* Public category lists share the approved white home canvas. Defining surface
    roles on the active page's body also covers portalled filters and mobile
-   navigation without changing other categories or the existing dark theme. */
+   navigation without changing detail pages or the existing dark theme. */
 :global(html:not([data-theme="dark"])) :global(body):has(
   .page,
+  .whiteCanvas,
   :global([data-public-loading="list"][data-public-category="program"]),
-  :global([data-public-loading="list"][data-public-category="event"])
+  :global([data-public-loading="list"][data-public-category="event"]),
+  :global([data-public-loading="list"][data-public-category="policy"]),
+  :global([data-public-loading="list"][data-public-category="living"]),
+  :global([data-public-loading="list"][data-public-category="youth_space"])
 ) {
   --color-canvas: #ffffff;
   --color-info-surface: #ffffff;

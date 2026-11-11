@@ -18,7 +18,10 @@ function subscribeTheme(onStoreChange: () => void) {
 }
 
 function updateBrowserThemeColor(theme: Theme, pathname: string) {
-  const whiteCanvas = pathname === "/" || pathname === "/info/category/program" || pathname === "/info/category/event";
+  const whiteCanvas = pathname === "/" || [
+    "/info/category/program", "/info/category/event", "/info/category/policy",
+    "/info/category/living", "/info/category/youth_space",
+  ].includes(pathname);
   document.querySelector('meta[name="theme-color"]')?.setAttribute(
     "content",
     theme === "dark" ? "#171717" : whiteCanvas ? "#ffffff" : "#eef6fb",
