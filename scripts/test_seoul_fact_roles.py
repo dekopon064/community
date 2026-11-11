@@ -38,7 +38,11 @@ def fake_translation(body):
     """Explicit fake Japanese for new input; never a regenerated model result."""
     fixture=recorded()['fake_translation_cleaned']
     if body.strip()==fixture['content_ko'].strip():
-        return fixture['content_ja']
+        # Adapt only the synthetic reply to the navigation-literal contract.
+        # The preserved actual_translation and JSON evidence stay unchanged.
+        return (fixture['content_ja'].replace('「ペク・インジェ」', '「백인제」')
+                .replace('「ペク・インジェ家屋」', '「백인제가옥」')
+                .replace('「2026 ペク・インジェ家屋 展示解説予約」', '「2026 백인제가옥 전시해설 예약」'))
     from test_seoul_content import fake_japanese
     body=body.replace('회차당','各回').replace('회당','各回')
     body=re.sub(r'(\d+)\s*회차',r'第\1回',body)

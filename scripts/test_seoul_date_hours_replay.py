@@ -91,18 +91,20 @@ class DateHoursReplayTests(unittest.TestCase):
         self.assertIn('센터 운영시간인 09:00~17:00 안에서 일정을 협의',body)
         self.assertEqual(FIXTURE.read_bytes(),raw)
 
-    def replay(self, index, classified=False, *, bad_ko=None, bad_ja=None, claim_change=None, unknown=None, skip=False):
+    def replay(self, index, classified=False, *, bad_ko=None, bad_ja=None, claim_change=None, unknown=None, skip=False, review=False):
         d = recorded()[index]; c = context(index,classified); expected = copy.deepcopy(c)
         native = c['nativeConfirmedFacts']['programFacts'] if classified else c['facts']
         summary = copy.deepcopy(d['summary'])
         if bad_ko: summary['content_ko'] = bad_ko(summary['content_ko'])
+        from ingest.seoul_candidate_review import SeoulCandidateReview
+        collector = SeoulCandidateReview(None) if review else None
         try:
             if classified:
                 app = c['filters']['application']['value']
                 assembled = assemble_seoul_body(summary['content_ko'],native,reviewed=protected_sections(c),
-                    periods={'application':[{'status':'ok','endpoints':[app['start'],app['end']]}]})
+                    periods={'application':[{'status':'ok','endpoints':[app['start'],app['end']]}]}, review=collector)
             else:
-                assembled = assemble_seoul_body(summary['content_ko'],native)
+                assembled = assemble_seoul_body(summary['content_ko'],native,review=collector)
         except AiJobError: assembled = '[한 줄 요약]\n사용되지 않는 합성 번역 입력'
         japanese = (d['translation'] if index == 0 and not classified and not bad_ko
                     and assembled == d['translation_input_ko'] else
@@ -110,6 +112,9 @@ class DateHoursReplayTests(unittest.TestCase):
         if bad_ja: japanese = {**japanese,'content_ja':bad_ja(japanese['content_ja'])}
         client = streamed([response(json.dumps(summary,ensure_ascii=False)),
                            response(json.dumps(japanese,ensure_ascii=False))])
+        if review:
+            # Explicit fake correction: no supported edit, retain for human review.
+            client.events.append(streamed([response(json.dumps({'findings': []}))]).events[0])
         provider = create_provider_adapter('chatgpt_plan',None,client=client,plan_session=verified_session())
         self.addCleanup(provider.close)
         events, outputs = [], []
@@ -128,7 +133,7 @@ class DateHoursReplayTests(unittest.TestCase):
                     self.assertEqual(args['p_attempt'],c['failurePolicy']['attempt'])
                     if unknown == 'failure': raise RpcTimeout()
                     return 'failed'
-                self.assertEqual(args.get('p_facts_version',args.get('p_classification_version')),
+                self.assertEqual(args.get('p_input_version',args.get('p_facts_version',args.get('p_classification_version'))),
                                  c.get('factsVersion',c.get('classificationVersion')))
                 if unknown == 'completion': raise RpcTimeout()
                 outputs.append(args['p_output'])
@@ -142,7 +147,9 @@ class DateHoursReplayTests(unittest.TestCase):
                   if classified else process_seoul_program_job(ProgramAIAdapter(rpc),**kwargs))
         self.assertEqual(c,before)
         self.assertEqual(result.retried,0)
-        self.assertLessEqual(len(client.calls),2)
+        self.assertLessEqual(len(client.calls),3 if review else 2)
+        if len(client.calls) == 3:
+            self.assertEqual(client.calls[2]['text']['format']['name'], 'machimoa_seoul_candidate_review')
         self.assertLessEqual(sum(n.startswith('finish_') for n,_ in events),1)
         self.assertLessEqual(sum(n in {'fail_seoul_ai_no_retry','fail_seoul_ai_with_draft'} for n,_ in events),1)
         self.assertNotIn(c['failurePolicy']['attempt'],json.dumps(client.calls))
@@ -170,7 +177,16 @@ class DateHoursReplayTests(unittest.TestCase):
                             self.assertIn(text,out['contentKo'])
                         self.assertIn('10명이상',out['contentKo'])
 
-    def test_actual_translation_date_weekday_time_and_cell_changes_fail(self):
+    def assert_review_candidate(self, result, events, outputs, calls, stage, rule=None):
+        self.assertEqual((result.completed,result.failed,result.state_unknown),(1,0,0))
+        self.assertEqual((len(calls),len(outputs),len(events)),(3,1,2))
+        self.assertEqual(events[-1][0],'finish_seoul_ai_candidate_review')
+        issues=events[-1][1]['p_review']['issues']
+        self.assertTrue(any(i['stage']==stage and (rule is None or i['rule']==rule) for i in issues))
+        self.assertTrue(all(i['disposition']=='needs_review' for i in issues))
+        self.assertEqual(json.loads(calls[2]['input'][0]['content'])['candidate'],outputs[0])
+
+    def test_translation_errors_are_detected_and_retained_for_private_review(self):
         a = recorded()[0]
         for change in (lambda s:s.replace('2026年10月7日','2027年10月7日'),
                        lambda s:s.replace('2026年10月7日','2026年10月8日'),
@@ -183,13 +199,12 @@ class DateHoursReplayTests(unittest.TestCase):
                 validate_translation_fidelity(a['title'],a['translation_input_ko'],
                                              a['translation']['title_ja'],change(a['translation']['content_ja']))
         for classified in (False,True):
-            r,e,out,calls = self.replay(0,classified,bad_ja=lambda s:s.replace('19','18'))
-            self.assertEqual((r.completed,r.failed),(0,1)); self.assertEqual(len(calls),2)
-            self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft'); self.assertFalse(out)
+            r,e,out,calls = self.replay(0,classified,bad_ja=lambda s:s.replace('19','18'),review=True)
+            self.assert_review_candidate(r,e,out,calls,'japanese_validation')
 
-    def test_wrong_hours_fixed_sessions_and_periods_terminate_before_translation(self):
+    def test_wrong_hours_fixed_sessions_and_periods_remain_review_findings(self):
         for classified in (False,True):
-            for change in (
+            changes=(
                 lambda s:s.replace('09:00~17:00','08:00~17:00'),
                 lambda s:s.replace('센터 운영시간인 09:00~17:00 안에서 일정을 협의합니다',
                                    '프로그램은 매일 09:00~17:00 진행합니다'),
@@ -197,21 +212,31 @@ class DateHoursReplayTests(unittest.TestCase):
                 lambda s:s.replace('센터 운영시간인 09:00~17:00 안에서 일정을 협의합니다',
                                    '신청시간: 09:00~17:00'),
                 lambda s:s.replace('[일정 안내]','[일정 안내]\n진행기간: 2027-03-28 ~ 2027-12-31'),
-            ):
-                r,e,out,calls = self.replay(1,classified,bad_ko=change)
-                self.assertEqual((r.failed,r.completed),(1,0));self.assertEqual(len(calls),1)
-                self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft');self.assertFalse(out)
+            )
+            rules=('facility_hours','session_hours','receipt_or_viewing_hours','receipt_or_viewing_hours','reviewed_period')
+            for rule,change in zip(rules,changes):
+                with self.subTest(classified=classified,rule=rule):
+                    r,e,out,calls = self.replay(1,classified,bad_ko=change,review=True)
+                    self.assert_review_candidate(r,e,out,calls,'korean_validation',rule)
 
     def test_korean_date_table_changes_cannot_borrow_source_numbers(self):
         for classified in (False,True):
-            for change in (lambda s:s.replace('19:00~21:00','18:00~21:00'),
+            changes=(lambda s:s.replace('19:00~21:00','18:00~21:00'),
                            lambda s:s.replace('19:00~21:00','21:00~19:00'),
                            lambda s:s.replace('2026.10.7.(수)','2026.10.21.(수)'),
                            lambda s:s.replace('2026.10.7.(수)','2027.10.7.(목)'),
-                           lambda s:s.replace('| 2026.10.7.(수) |','| |')):
-                r,e,out,calls=self.replay(0,classified,bad_ko=change)
-                self.assertEqual((r.completed,r.failed),(0,1));self.assertEqual(len(calls),1)
-                self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft');self.assertFalse(out)
+                           lambda s:s.replace('| 2026.10.7.(수) |','| |'))
+            rules=('calendar_session_clock','calendar_session_clock','calendar_session_date','calendar_session_date',None)
+            for rule,change in zip(rules,changes):
+                with self.subTest(classified=classified,rule=rule):
+                    r,e,out,calls=self.replay(0,classified,bad_ko=change,review=True)
+                    if rule is None:
+                        # A blank table cell remains a structural failure.
+                        self.assertEqual((r.completed,r.failed),(0,1));self.assertEqual(len(calls),1)
+                        self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft');self.assertFalse(out)
+                        self.assertTrue(r.termination_confirmed)
+                    else:
+                        self.assert_review_candidate(r,e,out,calls,'korean_validation',rule)
 
     def test_existing_candidate_stale_claim_and_unknown_writes_do_not_retry(self):
         for classified in (False,True):
@@ -222,8 +247,9 @@ class DateHoursReplayTests(unittest.TestCase):
                 self.assertEqual(r.state_unknown,1);self.assertEqual(len(calls),0);self.assertEqual(len(e),1)
             r,e,out,calls = self.replay(1,classified,unknown='completion')
             self.assertEqual(r.state_unknown,1);self.assertEqual(len(calls),2);self.assertFalse(out)
-            r,e,out,calls = self.replay(1,classified,unknown='failure',bad_ko=lambda s:s.replace('09:00','08:00'))
+            r,e,out,calls = self.replay(1,classified,unknown='failure',bad_ko=lambda s:'')
             self.assertEqual(r.state_unknown,1);self.assertEqual(len(calls),1);self.assertFalse(out)
+            self.assertEqual(len(e),2);self.assertEqual(e[-1][0],'fail_seoul_ai_no_retry')
 
     def test_only_current_reviewed_hours_reach_both_inputs(self):
         for classified in (False,True):

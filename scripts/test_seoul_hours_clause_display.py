@@ -267,7 +267,7 @@ class HoursClauseDisplayTests(unittest.TestCase):
                 self.assertIn('facilityHoursEvidence',text)
                 self.assertIn('09시~17시',text);self.assertIn('전화나 현장방문',text)
 
-    def test_true_date_time_quantity_conflicts_fail_before_translation(self):
+    def test_true_date_time_quantity_conflicts_remain_private_review_findings(self):
         for classified in (False,True):
             for index,change in ((0,lambda s:s.replace('2026.10.7.(수)','2026.10.8.(목)')),
                                  (0,lambda s:s.replace('19:00~21:00','18:00~21:00')),
@@ -275,9 +275,12 @@ class HoursClauseDisplayTests(unittest.TestCase):
                                  (1,lambda s:s.replace('09:00~17:00','08:00~17:00')),
                                  (1,lambda s:s.replace('센터 운영시간은 09:00~17:00이며 실제 회차 시간은 별도 협의가 필요합니다.',
                                                       '프로그램은 매일 09:00~17:00 진행합니다.'))):
-                r,e,out,calls=self.replay(index,classified,bad_ko=change)
-                self.assertEqual((r.completed,r.failed),(0,1));self.assertEqual(len(calls),1)
-                self.assertFalse(out);self.assertEqual(e[-1][0],'fail_seoul_ai_with_draft')
+                with self.subTest(index=index,classified=classified):
+                    r,e,out,calls=self.replay(index,classified,bad_ko=change,review=True)
+                    date_hours_fixture.DateHoursReplayTests.assert_review_candidate(
+                        self,r,e,out,calls,'korean_validation')
+                    self.assertEqual(e[-1][1]['p_mode'],'classification' if classified else 'program')
+                    self.assertTrue(e[-1][1]['p_review']['source'])
 
     def test_existing_candidate_stale_and_unknown_results_have_no_retry(self):
         for classified in (False,True):
@@ -287,8 +290,17 @@ class HoursClauseDisplayTests(unittest.TestCase):
             self.assertEqual(r.state_unknown,1);self.assertEqual(len(calls),0)
             r,e,out,calls=self.replay(1,classified,unknown='completion')
             self.assertEqual(r.state_unknown,1);self.assertEqual(len(calls),2);self.assertFalse(out)
-            r,e,out,calls=self.replay(1,classified,unknown='failure',bad_ko=lambda s:s.replace('09:00','08:00'))
+            # Use an actually unusable result for the terminal failure path;
+            # an ordinary time mismatch now goes to private candidate review.
+            r,e,out,calls=self.replay(1,classified,unknown='failure',bad_ko=lambda s:'')
             self.assertEqual(r.state_unknown,1);self.assertEqual(len(calls),1);self.assertFalse(out)
+            self.assertEqual(len(e),2);self.assertEqual(e[-1][0],'fail_seoul_ai_no_retry')
+            self.assertFalse(r.termination_confirmed)
+            # Ambiguous reviewed-candidate storage also stops, without retry.
+            r,e,out,calls=self.replay(1,classified,unknown='completion',
+                bad_ko=lambda s:s.replace('09:00','08:00'),review=True)
+            self.assertEqual((r.state_unknown,r.completed,len(calls)),(1,0,3));self.assertFalse(out)
+            self.assertEqual(len(e),2);self.assertEqual(e[-1][0],'finish_seoul_ai_candidate_review')
 
 
 if __name__=='__main__':unittest.main()

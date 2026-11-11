@@ -19,7 +19,7 @@ RESTRICTION = r'필수|의무|불가|금지|제한|전용|한정|보호자|동�
 
 
 def plain(text):
-    return re.sub(r'^[\s▹▶○●■□*+\-]+', '', inline_text(text)).strip()
+    return re.sub(r'^[\s▹▶○❍☞●■□*+\-]+', '', inline_text(text)).strip()
 
 
 def key(text):
@@ -107,6 +107,7 @@ def weekly_input_evidence(description):
 
 
 def public_roles(facts):
+    from ingest.seoul_condition_display import projected_conditions, additional_role
     matrix = weekly_schedule(facts['description'])
     cells = {key(cell) for row in matrix.rows for cell in row[1:]} if matrix else set()
     # A standalone language annotation is table data only when actually attached
@@ -114,7 +115,7 @@ def public_roles(facts):
     annotations = {key(m[0]) for cell in cells for m in re.finditer(r'[（(][^()（）]+[）)]', cell)}
     table_rows={key('| '+' | '.join(row)+' |') for row in matrix.rows} if matrix and not matrix.flattened else set()
     roles = {name: [] for name in ('eligibility', 'capacity', 'schedule', 'booking')}
-    for value in dict.fromkeys(facts['conditions']):
+    for value in projected_conditions(facts):
         text = plain(value)
         if key(text) in table_rows:
             continue
@@ -125,7 +126,10 @@ def public_roles(facts):
         if matrix and (re.fullmatch(ORDINAL, text) and any(key(text) == re.sub(r'[（(].*', '', c) for c in cells)
                        or key(text) in annotations):
             continue  # Kept in the source and schedule table, not eligibility.
-        if re.match(CAPACITY + r'\s*[:：]', text):
+        extra_role = additional_role(text)
+        if extra_role:
+            role = extra_role
+        elif re.match(CAPACITY + r'\s*[:：]', text):
             role = 'capacity'
         elif re.match(SCHEDULE + r'\s*[:：]', text) and not re.search(RESTRICTION, text):
             role = 'schedule'

@@ -190,6 +190,7 @@ def reception_status(facts: dict, now: datetime | None = None) -> str:
 
 def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, str]:
     view = validation_view(facts)
+    roles = public_roles(facts)
     target = ['대상: ' + facts['target_raw']]
     target += ['참가 조건: ' + value for value in participation_constraints(view)]
     target += ['거주 조건 근거: ' + value for value in facts['residence_evidence']]
@@ -201,6 +202,10 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
                                if line not in view.get('weekly_validation_records', [])])
     if sessions:
         dates.append('\n' + sessions)
+    from ingest.seoul_condition_display import additional_role
+    for value in roles['schedule']:
+        if additional_role(value) == 'schedule' and value not in schedule_lines(view):
+            dates.append('진행 일정: ' + plain(value))
     # Explicit table cells come from current description, not an old observed
     # HTML snapshot. Copy only the already parsed supported schedule tables.
     tables = schedule_tables(view['description'])
@@ -285,13 +290,13 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     from ingest.seoul_body_display import clean_fact_repetitions
     content, sections = clean_fact_repetitions(content, sections, facts)
     content, sections = clean_role_repetitions(content, sections, facts)
-    # Booking procedures were historically extracted as eligibility. Keep them
-    # in the method section unless the generated method proves their explicit
-    # search/selection tokens; never discard unique numbers/URLs/restrictions.
+    from ingest.seoul_condition_display import clean_projected_duplicates, additional_role, covered_condition
+    content, sections = clean_projected_duplicates(content, sections, facts)
     method = optional_section(content, '[신청 방법]')
     sections = dict(sections)
     for value in public_roles(facts)['booking']:
-        if not booking_covered(value, method):
+        covered = covered_condition(value, method) or (not additional_role(value) and booking_covered(value, method))
+        if not covered:
             sections['[신청 방법]'] += '\n- **예약 절차:** ' + plain(value)
     content = merge_reviewed_sections(content, sections)
     content = ensure_application_guidance(content, facts)

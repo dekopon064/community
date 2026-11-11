@@ -117,11 +117,16 @@ def validate_japanese_output(title_ja: str, content_ja: str, korean_source: str)
         raise ValidationError('required_text_field', 'missing_or_invalid', location={'field': 'title_ja'})
     if not isinstance(content_ja, str) or not content_ja.strip():
         raise ValidationError('required_text_field', 'missing_or_invalid', location={'field': 'content_ja'})
+    from ingest.korean_navigation_terms import checked_navigation_texts
+    source_prose, japanese_prose, missing = checked_navigation_texts(korean_source, content_ja)
     combined = f"{title_ja}\n{content_ja}"
-    if _HANGUL_RE.search(combined) is not None:
+    if _HANGUL_RE.search(f"{title_ja}\n{japanese_prose}") is not None:
         raise ValidationError('translation_language', 'untranslated_hangul')
+    if missing:
+        raise ValidationError('navigation_literal', 'missing_or_mismatched',
+                              location={'field': 'content_ja'}, expected=len(missing), actual=0)
     if any(mark in combined for mark in _YEN_MARKS):
         raise ValidationError('translation_currency', 'unexpected_yen')
-    for entry in regions_in_text(korean_source):
+    for entry in regions_in_text(source_prose):
         if entry.ja not in combined:
             raise ValidationError('region_glossary', 'missing')
