@@ -8,6 +8,7 @@ from typing import Any
 
 from ingest.ai_errors import AI_UNEXPECTED_THINKING, AiJobError, ValidationError, validation_location
 from ingest.region_ja_glossary import glossary_prompt_block, validate_japanese_output
+from ingest.place_ja_glossary import place_prompt_block
 from ingest.translation_validation import validate_translation_fidelity
 from ingest.body_sections import normalize_schedule_heading
 
@@ -36,7 +37,9 @@ def _load_json(relative: str) -> dict[str, Any]:
     return json.loads(_load_text(relative))
 
 
-BODY_FORMAT_RULES = _load_text("claude_prompts/body_format_rules.txt")
+BODY_FORMAT_RULES = (_load_text("claude_prompts/body_format_rules.txt").rstrip() + "\n\n"
+                     + _load_text("claude_prompts/place_name_rules.txt").rstrip() + "\n\n"
+                     + place_prompt_block())
 SUMMARY_SYSTEM = _load_text("claude_prompts/summary_system.txt").rstrip() + "\n\n" + BODY_FORMAT_RULES
 MYSEOUL_FEE_RULES = _load_text("claude_prompts/myseoul_fee_rules.txt")
 SEOUL_SCHEDULE_DISPLAY_RULES = _load_text("claude_prompts/seoul_schedule_display_rules.txt")

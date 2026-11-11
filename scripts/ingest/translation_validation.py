@@ -56,7 +56,10 @@ def _amounts(text: str, *, japanese: bool) -> Counter:
 _PER_SESSION = {
     False: re.compile(r'(?<![\d제])(?:(?P<count>\d+)\s*)?회(?:차)?\s*(?:당|마다)|'
                       r'(?:매|각)\s*회(?:차)?(?![가-힣])'),
-    True: re.compile(r'(?<![\d第一二三四五六七八九十百千万])(?:(?P<count>\d+|一)\s*)?回\s*(?:につき|当たり|あたり|ごと(?:に)?)|'
+    # "1回180分間" is an explicit per-session duration, not a total count.
+    # Require a denominator plus a duration unit; exclude 全/計/第 prefixes.
+    True: re.compile(r'(?<![\d全計第一二三四五六七八九十百千万])(?:(?P<count>\d+|一)\s*)?回\s*(?:につき|当たり|あたり|ごと(?:に)?|'
+                     r'(?(count)(?=\d+(?:\.\d+)?\s*(?:時間|分間))|(?!)))|'
                      r'(?:毎|各)\s*回'),
 }
 _PER_PERSON = {
@@ -70,16 +73,26 @@ def _per_person(text: str, *, japanese: bool) -> Counter:
                    for m in _PER_PERSON[japanese].finditer(text))
 
 
+def _session_markers(text: str, *, japanese: bool):
+    for match in _PER_SESSION[japanese].finditer(text):
+        # Total/ordinal prefixes may be separated by whitespace in source text.
+        if japanese and re.search(r'(?:全|計|第)\s*$', text[:match.start()]):
+            continue
+        yield match
+
+
 def _per_session(text: str, *, japanese: bool) -> Counter:
     # An implicit single-session denominator is not a total/session ordinal.
     # Explicit other denominators remain data: 2회당 must match 2回当たり.
     return Counter(1 if m['count'] in (None, '一') else int(m['count'])
-                   for m in _PER_SESSION[japanese].finditer(text))
+                   for m in _session_markers(text, japanese=japanese))
 
 
 def _without_per_session(text: str, *, japanese: bool) -> str:
     # Comparison text only. Never alter stored facts or provider output.
-    return _PER_SESSION[japanese].sub(' ', text)
+    for match in reversed(list(_session_markers(text, japanese=japanese))):
+        text = text[:match.start()] + ' ' + text[match.end():]
+    return text
 
 
 def _quantities(text: str, *, japanese: bool) -> Counter:
@@ -123,7 +136,7 @@ def _per_session_allocations(text: str, *, japanese: bool) -> Counter:
     run = rf'{atom}(?:[·・,、\s-]*{atom})*'
     label = r'(?:の\s*)?(?:(?:定員|参加人数)\s*[:：]?\s*)?' if japanese else r'(?:(?:정원|참가인원)\s*[:：]?\s*)?'
     result = Counter()
-    for marker in _PER_SESSION[japanese].finditer(text):
+    for marker in _session_markers(text, japanese=japanese):
         denominator = 1 if marker['count'] in (None, '一') else int(marker['count'])
         after = re.match(rf'\s*[:：]?\s*{label}(?P<quantities>{run})', text[marker.end():])
         before = re.search(rf'(?P<quantities>{run})\s*[（(]?\s*$', text[:marker.start()]) if not after else None
@@ -427,8 +440,10 @@ def _validate_cell(korean: str, japanese: str, *, known_years: frozenset = froze
     # Class IDs/visa numbers without a recognized amount/date/unit still belong
     # to this cell. This is a bounded numeric check, not meaning interpretation.
     if not (_dates_and_times(ko, known_years=known_years) or _amounts(ko, japanese=False) or _quantities(ko, japanese=False) or _durations(ko)):
-        source_digits = _PER_PERSON[False].sub(' ', _without_per_session(ko, japanese=False))
-        target_digits = _PER_PERSON[True].sub(' ', _without_per_session(ja, japanese=True))
+        from ingest.place_ja_glossary import numeric_name_views
+        ko_digits, ja_digits = numeric_name_views(ko, ja)
+        source_digits = _PER_PERSON[False].sub(' ', _without_per_session(ko_digits, japanese=False))
+        target_digits = _PER_PERSON[True].sub(' ', _without_per_session(ja_digits, japanese=True))
         if Counter(re.findall(r'\d+', source_digits)) != Counter(re.findall(r'\d+', target_digits)):
             raise ValidationError('opaque_numeric_identifier', 'mismatch')
     for source, target in ((r'필수|의무', r'必須|必要|義務'),

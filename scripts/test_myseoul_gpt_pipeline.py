@@ -202,7 +202,7 @@ class GPTPipelineTests(unittest.TestCase):
         import run_myseoul_program_ai as native_cli
         import run_reclassified_content_ai as classified_cli
         fake = OpenAIAdapter(client=FakeClient())
-        args = SimpleNamespace(project_ref='a'*20, source_item_id=ID, revision=REV, classification_version=1)
+        args = SimpleNamespace(project_ref='a'*20, source_item_id=ID, revision=REV, classification_version=1, no_retry=False)
         env = {'SUPABASE_URL': 'https://'+'a'*20+'.supabase.co', 'SUPABASE_SERVICE_KEY': 'synthetic-service',
                'AI_PROVIDER': 'openai', 'OPENAI_API_KEY': 'synthetic-openai', 'ANTHROPIC_API_KEY': 'unused'}
         with patch.dict('os.environ', env, clear=True):
@@ -217,6 +217,7 @@ class GPTPipelineTests(unittest.TestCase):
         self.assertEqual(factory.call_args.args, ('openai', 'synthetic-openai'))
         self.assertEqual(native.call_args.kwargs['summarize_ko'].__self__, fake)
         self.assertEqual(classified.call_args.kwargs['translate_ja'].__self__, fake)
+        self.assertIs(classified.call_args.kwargs['no_retry'], False)
 
     def test_common_cli_selects_gpt_without_loading_anthropic(self):
         import run_ingest_architecture as cli
