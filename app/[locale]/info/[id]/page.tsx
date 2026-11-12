@@ -16,6 +16,7 @@ import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 import { isUserCategory } from "@/app/lib/userCategories";
 import LivingImageGallery from '@/app/components/LivingImageGallery';
 import { publicLivingGallery } from '@/app/lib/living/public-gallery';
+import readingStyles from '@/app/components/CurationReading.module.css';
 
 export const dynamic = "force-dynamic";
 
@@ -78,8 +79,8 @@ export default async function InfoDetailPage({
       {gallery.length>0&&<LivingImageGallery images={gallery} title={item.title} locale={locale}/>}
 
       <div className="mt-8 grid min-w-0 gap-7 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:items-start lg:gap-10">
-        <article className="public-readable min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10">
-          <CurationBody content={item.content} locale={locale} />
+        <article className={`public-readable min-w-0 rounded-[1.5rem] border border-stone bg-canvas-white px-5 py-7 md:px-9 md:py-10 ${readingStyles.article}`}>
+          <CurationBody content={item.content} locale={locale} className={readingStyles.body} />
         </article>
 
         <div>
