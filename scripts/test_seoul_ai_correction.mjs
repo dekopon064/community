@@ -19,6 +19,7 @@ registerHooks({
     }
   },
   load(url, context, next) {
+    if (url.endsWith('.css')) return { format: 'module', shortCircuit: true, source: 'export default {}' };
     if (!url.endsWith('.tsx')) return next(url, context);
     return { format: 'module', shortCircuit: true,
       source: ts.transpileModule(readFileSync(fileURLToPath(url),'utf8'),
@@ -155,8 +156,38 @@ assert.equal(issueExcerpt({...content,contentJa:'10:30\n10:30'},issue),null);
 const unresolved=renderToStaticMarkup(createElement(SeoulCandidateFindings,{review:{source:'원문',issues:[{...equivalent,disposition:'needs_review'}]},content:displaced,onChange:()=>{}}));
 assert.ok(!unresolved.includes('**実施方式:** 対面</p>'));
 assert.ok(unresolved.includes('과거 위치로 다른 문장을 표시하지 않습니다'));
-assert.ok(unresolved.includes('본문 전체에서 확인·편집'));
+assert.ok(unresolved.includes('전체에서 확인·편집'));
 assert.ok(html.indexOf('AI 수정 제안')<html.indexOf('수정 불필요 · 참고 이력'));
-assert.ok(html.indexOf('근거가 부족하거나')<html.indexOf('수정 불필요 · 참고 이력'));
+assert.ok(html.indexOf('당시 AI 검토의 세부 결과가 기록되지 않았습니다')<html.indexOf('수정 불필요 · 참고 이력'));
 assert.ok(!renderToStaticMarkup(createElement(SeoulCandidateFindings,{review:{source:'',issues:[issue]},content})).includes('참고 이력'));
 console.log('history and stale-location checks passed: collapsed non-actionable history, action priority, unique text matching, no coordinate fallback');
+
+const { currentYenLines, reviewOutcomeText } = await import('../app/lib/review/seoul-review-status.ts');
+const seongbuk = JSON.parse(readFileSync(new URL('./testdata/seongbuk_review_context.json', import.meta.url), 'utf8'));
+const unchanged = JSON.stringify(seongbuk);
+const pastHtml = renderToStaticMarkup(createElement(SeoulCandidateFindings, {
+  review: seongbuk.review, content: seongbuk.current, onChange: () => { throw Error('unexpected edit'); },
+}));
+for (const text of ['과거 진단 9개', '현재 감지 없음 1개', '문구 연결 확인 필요 8개',
+  '근거 확인 필요 0개', '현재 한·일 본문과 저장 원문 대조', '현재 엔화 표기 없음',
+  '당시 AI 검토의 세부 결과가 기록되지 않았습니다', '현재 한국어 본문', '현재 일본어 본문']) assert.ok(pastHtml.includes(text), text);
+assert.ok(!pastHtml.includes('근거가 부족하거나 안전한 수정안을'));
+assert.equal(JSON.stringify(seongbuk), unchanged);
+for (const text of ['円滑な運営','円満','円形','100ウォン']) assert.equal(currentYenLines({...content,contentJa:text}).length,0);
+for (const text of ['100円','１００円','千円','¥100','￥100','日本円','費用：円']) assert.equal(currentYenLines({...content,contentJa:text}).length,1,text);
+const currency={stage:'japanese_validation',rule:'translation_currency',reason:'unexpected_yen',disposition:'needs_review'};
+const moneyHtml=renderToStaticMarkup(createElement(SeoulCandidateFindings,{review:{source:'요금 100원',issues:[currency]},content:{...content,contentJa:'料金100円'}}));
+assert.ok(moneyHtml.includes('근거 확인 필요 1개'));
+assert.ok(moneyHtml.includes('料金100円'));
+assert.ok(!moneyHtml.includes('현재 엔화 표기 없음'));
+const captured={...issue,disposition:'needs_review',field:undefined,before:undefined,after:undefined,
+  location:{field:'body',table:1,row:1,column:2},context:{field:'contentJa',candidate:'10:30',reference:'오전 10:00'},reviewOutcome:'evidence_not_matched'};
+assert.equal(issueExcerpt(content,captured),'午前10:30');
+assert.equal(issueExcerpt({...content,contentJa:'10:30\n10:30'},captured),null);
+assert.equal(issueExcerpt({...content,contentJa:'無関係な文'},captured),null);
+const capturedHtml=renderToStaticMarkup(createElement(SeoulCandidateFindings,{review:{source:'오전 10:00',issues:[captured]},content}));
+for(const text of ['검사 당시 대조한 한국어','오전 10:00','현재 후보 문구','午前10:30','원문과 정확히 일치하지 않아']) assert.ok(capturedHtml.includes(text),text);
+assert.match(reviewOutcomeText({...captured,reviewOutcome:'ai_needs_review'}),/AI가 확인 보류로 응답/);
+assert.match(reviewOutcomeText({...captured,reviewOutcome:'unsafe_patch'}),/위치·범위/);
+assert.match(reviewOutcomeText({...captured,reviewOutcome:'no_finding'}),/응답에 없었습니다/);
+console.log('Seongbuk + counterexamples passed: immutable 9 historical findings, current money detection, bounded matching context, truthful AI outcomes, no false resolution of unlinked records');
