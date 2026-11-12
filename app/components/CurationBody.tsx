@@ -4,15 +4,20 @@ import { parseCurationBodySections } from "@/app/lib/curationBodySections";
 export default function CurationBody({
   content,
   locale,
+  className,
 }: {
   content: string;
   locale: string;
+  className?: string;
 }) {
   const parsed = parseCurationBodySections(content, locale);
-  if (!parsed) return <Markdown preserveLineBreaks>{content}</Markdown>;
+  if (!parsed) {
+    const body = <Markdown preserveLineBreaks>{content}</Markdown>;
+    return className ? <div className={className}>{body}</div> : body;
+  }
 
   return (
-    <div>
+    <div className={className}>
       {parsed.introduction && (
         <div className="pb-6 [&>p:first-child]:mt-0">
           <Markdown preserveLineBreaks>{parsed.introduction}</Markdown>

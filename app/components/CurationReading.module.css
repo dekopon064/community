@@ -1,0 +1,57 @@
+/* Public detail only. Keep the shared Markdown/admin rendering unchanged. */
+.body {
+  min-width: 0;
+}
+
+.body :is(p, ul, ol, blockquote) {
+  max-inline-size: 72ch;
+}
+
+.body h1 {
+  font-size: 1.5rem;
+  line-height: 1.4;
+}
+
+.body h2 {
+  margin-block: 2rem .75rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: -.02em;
+}
+
+.body h3 {
+  margin-block: 1.75rem .625rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.body h4 {
+  margin-block: 1.5rem .5rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+/* Parsed section spacing already lives on the surrounding section. */
+.body > section > h2 {
+  margin-block: 0;
+}
+
+.body > :first-child {
+  margin-block-start: 0;
+}
+
+@media (max-width: 767px) {
+  .article {
+    padding-inline: 14px;
+  }
+}
+
+@media (min-width: 768px) {
+  .body h1 { font-size: 1.625rem; }
+  .body h2 { font-size: 1.375rem; }
+  .body h3 { font-size: 1.25rem; }
+  .body h4 { font-size: 1.125rem; }
+}

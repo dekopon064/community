@@ -68,6 +68,23 @@ check('explicit break not doubled',()=>assert.equal((html(Markdown,{children:'on
 for(const [locale,content] of [['ko','[한 줄 요약]\n요약\n[주요 내용]\n첫 줄\n둘째 줄'],['ja','[要約]\n要約\n[主な内容]\n一行目\n二行目'],['ko','plain\nbody']])check('actual body '+locale,()=>assert.match(html(Body,{content,locale}),/<br/));
 check('input bytes untouched',()=>assert.equal(input,'first\nsecond\n\nthird'));
 
+// The public detail typography opt-in must not change either Markdown path's content.
+for (const [locale,content] of [
+ ['ko','[한 줄 요약]\n요약과 **강조**\n[주요 내용]\n## 작은 제목\n첫 줄\n둘째 줄\n\n| 날짜 | 시간 |\n|---|---|\n| 2026.11.25 | 11:00 |\n\n[공식 안내](https://example.invalid/source?x=1)'],
+ ['ja','[要約]\n要約と**強調**\n[主な内容]\n### 小見出し\n一行目\n二行目\n\n| 日付 | 時間 |\n|---|---|\n| 2026年11月25日 | 11:00 |\n\n[公式案内](https://example.invalid/source?x=1)'],
+ ['ko','## 생활 안내\n본문과 **강조**\n\n### 필요한 서류\n- 여권\n- 신청서\n\n[공식 안내](https://example.invalid/guide)\n\n```text\n원본 줄\n다음 줄\n```'],
+ ['ja','## 暮らしのガイド\n本文と**強調**\n\n### 必要な書類\n- パスポート\n- 申請書\n\n[公式案内](https://example.invalid/guide)\n\n```text\n元の行\n次の行\n```'],
+]) {
+ const before=html(Body,{content,locale}),after=html(Body,{content,locale,className:'public-detail-reading'});
+ const textOnly=value=>value.replace(/<[^>]*>/g,'');
+ check(locale+' reading style preserves all visible text and line breaks',()=>assert.equal(textOnly(after),textOnly(before)));
+ check(locale+' reading style preserves heading order, links, tables and code',()=>{
+  for(const pattern of [/<h[1-6][\s\S]*?<\/h[1-6]>/g,/<a [\s\S]*?<\/a>/g,/<table[\s\S]*?<\/table>/g,/<pre[\s\S]*?<\/pre>/g])
+   assert.deepEqual(after.match(pattern),before.match(pattern));
+ });
+ check(locale+' detail style remains opt-in',()=>{assert.match(after,/class="public-detail-reading"/);assert.doesNotMatch(before,/public-detail-reading/)});
+}
+
 const id='10000000-0000-4000-8000-000000000001';
 const listeners=new Map();
 globalThis.window=new EventTarget();
