@@ -11,7 +11,7 @@ import CurationMobileSourceLink from "@/app/components/CurationMobileSourceLink"
 import SaveControl from "@/app/components/auth/SaveControl";
 import SavedCount from "@/app/components/auth/SavedCount";
 import ContentComments from "@/app/components/ContentComments";
-import { getCurationPeriodPresentation, todayKst } from "@/app/lib/applicationDeadlineDisplay";
+import { getCurationPeriodPresentation, matchingDeadlineEndpoint, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
 import { isUserCategory } from "@/app/lib/userCategories";
 import LivingImageGallery from '@/app/components/LivingImageGallery';
@@ -43,12 +43,13 @@ export default async function InfoDetailPage({
     eventEndOn: item.event_end_on,
     todayKst: todayKst(),
     locale,
+    deadlineEndpoint: item.userCategory === 'program' ? matchingDeadlineEndpoint(item.contentFilters, item.application_deadline_on) : null,
   };
   const hasPeriod = !!getCurationPeriodPresentation(periodInput);
   const canSave = isUserCategory(item.userCategory);
   const gallery = await publicLivingGallery(item.source,item.source_item_id);
   return (
-    <div className="mx-auto min-h-[60vh] max-w-6xl bg-canvas px-5 pt-8 pb-24 md:px-8 md:pt-12 lg:px-10 lg:pt-16"
+    <div className="mx-auto min-h-[60vh] max-w-6xl bg-canvas px-5 pt-5 pb-24 md:px-8 md:pt-12 lg:px-10 lg:pt-16"
       data-ga4-content-slug={id} data-ga4-content-language={locale} data-ga4-content-title={item.title}>
       <CurationDetailHeading
         back={(

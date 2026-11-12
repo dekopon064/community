@@ -14,7 +14,8 @@ import PublicFilterCalendar from './PublicFilterCalendar';
 import PublicContentSearch from './PublicContentSearch';
 import { eventTopics, programTopics, provinceLabels } from '@/app/lib/contentFilters';
 import { sortedDistrictChoices } from '@/app/lib/districtSort';
-import type { FilterCategory, FilterEndpoint } from '@/app/lib/contentFilters';
+import type { FilterCategory } from '@/app/lib/contentFilters';
+import { formatPublicEndpoint } from '@/app/lib/applicationDeadlineDisplay';
 import { applicationStates, deliveries, eventTiming, exploreCurations, matchesPublicSearch, nextExplorationTransition, programTiming, readExplorationQuery, writeExplorationQuery } from '@/app/lib/publicContentFilters';
 import type { ExplorationQuery, PublicCurationItem } from '@/app/lib/publicContentFilters';
 import Link from './PublicNavigationLink';
@@ -220,14 +221,10 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
   function resetButton(scope:string) {
     return <span className={styles.resetControl}><button type="button" className={`${styles.iconButton} ${styles.resetButton}`} aria-label={query.search?searchT('resetAll'):t('resetAll')} aria-describedby={`${id}-${scope}-reset-hint`} onClick={reset}><RotateCcw size={16} aria-hidden="true"/><span>{query.search?searchT('resetAll'):t('resetHint')}</span></button><span id={`${id}-${scope}-reset-hint`} className={styles.resetHint} role="tooltip">{query.search?searchT('resetAll'):t('resetHint')}</span></span>;
   }
-  function formatEndpoint(value:FilterEndpoint) {
-    if(value.precision==='day')return value.value.replaceAll('-','.');
-    return new Intl.DateTimeFormat(locale==='ja'?'ja-JP':'ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',...(value.precision==='second'?{second:'2-digit'}:{}),hourCycle:'h23'}).format(new Date(value.value));
-  }
   function period(item:PublicCurationItem) {
     if(category==='program') {
       const timing=programTiming(item,now);
-      return <span className="text-info-status">{t(`states.${timing.state}`)}{timing.deadline?<>{' · '}{t('deadline')} <time className="whitespace-nowrap" dateTime={timing.deadline.value}>{formatEndpoint(timing.deadline)}</time></>:<>{' · '}{t(timing.deadlineKind==='none'?'noDeadline':'unknownDeadline')}</>}</span>;
+      return <span className="text-info-status">{t(`states.${timing.state}`)}{timing.deadline?<>{' · '}{t('deadline')} <time className="whitespace-nowrap" dateTime={timing.deadline.value}>{formatPublicEndpoint(timing.deadline,locale)}</time></>:<>{' · '}{t(timing.deadlineKind==='none'?'noDeadline':'unknownDeadline')}</>}</span>;
     }
     if(category==='event') {
       const timing=eventTiming(item,now);

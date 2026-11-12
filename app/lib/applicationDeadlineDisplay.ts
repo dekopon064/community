@@ -1,4 +1,5 @@
 import type { UserCategory } from "@/app/lib/userCategories";
+import type { ContentFilters, FilterEndpoint } from './contentFilters';
 
 export type ApplicationDeadlineKind = "fixed" | "none" | "closed";
 
@@ -43,11 +44,42 @@ function utcDay(value: string | null | undefined): number | null {
   return parsed.getTime();
 }
 
-function localDate(isoDate: string, locale: string): string {
-  const [year, month, day] = isoDate.split("-");
-  return locale === "ja"
-    ? `${year}年${Number(month)}月${Number(day)}日`
-    : `${year}.${month}.${day}`;
+export function formatPublicDay(day: string, locale: string): string {
+  const parts = new Intl.DateTimeFormat(locale === 'ja' ? 'ja-JP' : 'ko-KR', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(`${day}T00:00:00+09:00`));
+  const value = (type: string) => parts.find(part => part.type === type)!.value;
+  return locale === 'ja'
+    ? `${value('year')}年${Number(value('month'))}月${Number(value('day'))}日`
+    : `${value('year')}.${value('month')}.${value('day')}`;
+}
+
+const localDate = formatPublicDay;
+
+function validEndpoint(endpoint: FilterEndpoint): boolean {
+  if (utcDay(endpoint.value.slice(0, 10)) === null) return false;
+  return endpoint.precision === 'day' ? endpoint.value.length === 10
+    : (endpoint.precision === 'minute' || endpoint.precision === 'second')
+      && /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\+09:00$/.test(endpoint.value)
+      && (endpoint.precision !== 'minute' || endpoint.value.slice(17, 19) === '00');
+}
+
+/** Display only: retain the saved precision, dateTime and all timing/filter semantics. */
+export function formatPublicEndpoint(endpoint: FilterEndpoint, locale: string): string {
+  if (!validEndpoint(endpoint)) throw Error('invalid_public_endpoint');
+  const date = formatPublicDay(endpoint.value.slice(0, 10), locale);
+  if (endpoint.precision === 'day') return date;
+  // Omit a trailing :00; meaningful nonzero seconds remain visible.
+  const clock = endpoint.value.slice(11, endpoint.precision === 'second' && endpoint.value.slice(17, 19) !== '00' ? 19 : 16);
+  return `${date} ${clock}`;
+}
+
+/** Enrich an existing detail date only with a confirmed clock on that same day. */
+export function matchingDeadlineEndpoint(filters: ContentFilters | null | undefined, day: string | null): FilterEndpoint | null {
+  if (!day || filters?.category !== 'program' || filters.application.status !== 'known') return null;
+  const application = filters.application.value;
+  const end = application.end;
+  return application.deadlineKind === 'fixed' && end && end.value.slice(0, 10) === day && validEndpoint(end) ? end : null;
 }
 
 export function getApplicationDeadlinePresentation(input: {
@@ -55,6 +87,7 @@ export function getApplicationDeadlinePresentation(input: {
   on: string | null | undefined;
   todayKst: string;
   locale: string;
+  deadlineEndpoint?: FilterEndpoint | null;
 }): PeriodPresentation | null {
   const { kind, on, locale } = input;
   const isJa = locale === "ja";
@@ -74,10 +107,12 @@ export function getApplicationDeadlinePresentation(input: {
   if (today === null || deadline === null) return null;
 
   const days = Math.round((deadline - today) / DAY_MS);
+  const endpoint = input.deadlineEndpoint;
+  const clock = endpoint && validEndpoint(endpoint) && endpoint.precision !== 'day' && endpoint.value.slice(0, 10) === on ? endpoint : null;
   const detailDate = {
     label: isJa ? "申込締切日" : "접수 마감일",
-    startOn: on,
-    startText: localDate(on, locale),
+    startOn: clock?.value ?? on,
+    startText: clock ? formatPublicEndpoint(clock, locale) : localDate(on, locale),
   };
   if (days < 0) {
     const label = isJa ? "受付終了" : "접수 종료";
@@ -115,6 +150,7 @@ export function getCurationPeriodPresentation(input: {
   eventEndOn: string | null;
   todayKst: string;
   locale: string;
+  deadlineEndpoint?: FilterEndpoint | null;
 }): PeriodPresentation | null {
   if (input.category === "policy" || input.category === "program") {
     return getApplicationDeadlinePresentation({
@@ -122,6 +158,7 @@ export function getCurationPeriodPresentation(input: {
       on: input.deadlineOn,
       todayKst: input.todayKst,
       locale: input.locale,
+      deadlineEndpoint: input.deadlineEndpoint,
     });
   }
   if (input.category !== "event") return null;

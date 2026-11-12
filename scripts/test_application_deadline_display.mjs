@@ -8,10 +8,40 @@ import {
   getApplicationDeadlinePresentation,
   getCurationPeriodPresentation,
   todayKst,
+  formatPublicEndpoint,
+  matchingDeadlineEndpoint,
 } from "../app/lib/applicationDeadlineDisplay.ts";
 import { isUserCategory, USER_CATEGORIES } from "../app/lib/userCategories.ts";
 
 const today = "2026-09-24";
+
+// Visible dates share one locale format without inventing precision or changing facts.
+for (const locale of ['ko','ja']) {
+  const date=locale==='ja'?'2026年11月12日':'2026.11.12';
+  const endpoint=(precision,clock)=>({precision,value:clock?`2026-11-12T${clock}+09:00`:'2026-11-12'});
+  assert.equal(formatPublicEndpoint(endpoint('day'),locale),date);
+  assert.equal(formatPublicEndpoint(endpoint('minute','17:00:00'),locale),date+' 17:00');
+  assert.equal(formatPublicEndpoint(endpoint('second','17:00:00'),locale),date+' 17:00');
+  assert.equal(formatPublicEndpoint(endpoint('second','17:00:25'),locale),date+' 17:00:25');
+  assert.equal(formatPublicEndpoint(endpoint('minute','00:00:00'),locale),date+' 00:00');
+  const saved=endpoint('second','17:00:25'), original=JSON.stringify(saved);
+  const filters={category:'program',application:{status:'known',value:{deadlineKind:'fixed',end:saved}}};
+  assert.equal(matchingDeadlineEndpoint(filters,'2026-11-12'),saved);
+  assert.equal(matchingDeadlineEndpoint(filters,'2026-11-13'),null);
+  assert.equal(matchingDeadlineEndpoint({...filters,application:{status:'unknown',value:null}},'2026-11-12'),null);
+  assert.equal(matchingDeadlineEndpoint({...filters,category:'event'},'2026-11-12'),null);
+  const args={kind:'fixed',on:'2026-11-12',todayKst:'2026-11-11',locale};
+  const normal=getApplicationDeadlinePresentation(args);
+  const withClock=getApplicationDeadlinePresentation({...args,deadlineEndpoint:saved});
+  assert.equal(withClock.detailDate.startText,date+' 17:00:25');
+  assert.equal(withClock.detailDate.startOn,saved.value);
+  assert.equal(withClock.detailLabel,normal.detailLabel);
+  assert.equal(withClock.listLabel,normal.listLabel);
+  assert.equal(getApplicationDeadlinePresentation({...args,on:'2026-11-13',deadlineEndpoint:saved}).detailDate.startOn,'2026-11-13');
+  assert.equal(JSON.stringify(saved),original);
+}
+assert.throws(()=>formatPublicEndpoint({value:'2026-02-30',precision:'day'},'ko'));
+assert.throws(()=>formatPublicEndpoint({value:'2026-11-12T24:00:00+09:00',precision:'minute'},'ja'));
 
 function label(kind, on, locale, day = today) {
   return formatApplicationDeadline({ kind, on, todayKst: day, locale });
