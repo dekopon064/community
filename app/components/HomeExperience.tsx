@@ -21,9 +21,12 @@ export default function HomeExperience({ locale, headline, intro, items, section
   return <div className={`${styles.home} public-readable`}>
     <section className={styles.intro}><h1>{headline.map((line, i) => <span key={i}>{line}</span>)}</h1><p>{intro}</p></section>
     <HomeFeaturedCarousel key={locale} items={items} locale={locale} />
-    <section className={styles.deadline} aria-labelledby="home-deadline-title">
-      <h2 id="home-deadline-title">{words.deadline}</h2>
-      <div>{sections?.deadline.length ? rows(sections.deadline) : <p>{words.deadlineEmpty} <Link href="/info/category/program">{words.programList}<HomeArrow /></Link></p>}</div>
+    <section className={styles.living} aria-labelledby="home-living-title">
+      <div className={styles.livingHeading}><h2 id="home-living-title">{words.living}</h2>
+        <Link href="/info/category/living">{words.moreLiving}<HomeArrow /></Link></div>
+      <div className={styles.livingItems}>{sections?.living.length
+        ? sections.living.map(item => <HomeContentCard key={item.id} item={item} locale={locale} layout="living" />)
+        : <p className={styles.sectionEmpty}>{words.livingEmpty}</p>}</div>
     </section>
     <section className={styles.topicStrip} aria-labelledby="home-browse-title"><h2 id="home-browse-title">{words.browse}</h2>
       <nav aria-label={words.browse}>{['culture_experience', 'language_learning', 'employment_career'].map(topic =>

@@ -106,6 +106,24 @@ await test('selection is immutable, unique by public ID/slug, with intentional c
   assert.equal(result.featured.length, 1); assert.equal(result.sections.experiences[0].id, result.featured[0].id);
   assert.equal(JSON.stringify([a, duplicateLink]), before);
 });
+await test('living selects two latest public guides, not updates, deadlines or program pins', () => {
+  const old = row('old-guide', 'living', {contentFilters:null,created_at:'2026-10-01T00:00:00Z',updated_at:'2027-01-01T00:00:00Z'});
+  const a = row('a-guide', 'living', {contentFilters:null,created_at:'2026-10-23T00:00:00Z'});
+  const b = row('b-guide', 'living', {contentFilters:null,created_at:'2026-10-23T00:00:00Z',application_deadline_kind:'closed'});
+  const inputs = Object.freeze([old,b,a,row('program'),{...a}]);
+  const before=JSON.stringify(inputs);
+  const result=select(inputs,now,[{id:old.id,position:1}]);
+  assert.equal(homeLimits.living,2);
+  assert.deepEqual(idList(result.sections.living),['a-guide','b-guide']);
+  assert.deepEqual(idList(result.featured),['program']);
+  assert.equal(JSON.stringify(inputs),before);
+  assert.deepEqual(idList(select(inputs.map(x=>({...x,title:'日本語 '+x.title})),now).sections.living),['a-guide','b-guide']);
+});
+await test('living preserves zero or one guide and never fills a missing guide with another category', () => {
+  assert.deepEqual(select([row('program')],now).sections.living,[]);
+  const guide=row('only-guide','living',{contentFilters:null});
+  assert.deepEqual(idList(select([row('program'),guide],now).sections.living),['only-guide']);
+});
 await test('KST Monday-Sunday week respects UTC, year and next-week boundaries', () => {
   const week = homeWeek(Date.parse('2026-10-25T14:59:59.999Z'));
   assert.equal(new Date(week.start).toISOString(), '2026-10-18T15:00:00.000Z');
@@ -177,7 +195,7 @@ async function route(rows, locale, time) {
     return await outer.props.children.type(outer.props.children.props);
   } finally { globalThis.Date = Clock; }
 }
-await test('actual route localizes published rows, fills four sections, bounds one color read and leaks no private payload', async () => {
+await test('actual route localizes public sections, bounds one color read and leaks no private payload', async () => {
   const culture = app('culture', { end: endpoint('2026-10-25') });
   const learn = row('learn'); learn.contentFilters.topic = known('daily_safety');
   const events = row('event', 'event');
@@ -187,7 +205,7 @@ await test('actual route localizes published rows, fills four sections, bounds o
   for (const locale of ['ko', 'ja']) {
     const result = await route(data, locale, now);
     assert.deepEqual(idList(result.props.items), ['culture', 'event', 'learn']);
-    assert.deepEqual(Object.fromEntries(Object.entries(result.props.sections).map(([key, rows]) => [key, idList(rows)])), { deadline: ['culture'], experiences: ['culture'], learning: ['learn'], events: ['event'] });
+    assert.deepEqual(Object.fromEntries(Object.entries(result.props.sections).map(([key, rows]) => [key, idList(rows)])), { living: [], deadline: ['culture'], experiences: ['culture'], learning: ['learn'], events: ['event'] });
     assert.equal(result.props.sections.deadline[0].period, locale === 'ko' ? '접수 마감 D-1' : '申込締切まであと1日');
     assert(!JSON.stringify(result.props).includes('PRIVATE_'));
     assert(queries.some(x => x[0] === 'eq' && x[1] === 'is_published' && x[2] === true));
@@ -195,8 +213,33 @@ await test('actual route localizes published rows, fills four sections, bounds o
     assert.equal(rpcCalls.filter(x=>x.name==='public_home_featured_pins').length,1); assert.equal(rpcCalls.filter(x=>x.name==='public_home_card_colors')[0].args.p_ids.length,3);
     assert(result.props.items.every(x => x.tone === 'purple' && x.toneManual));
     const html = renderToStaticMarkup(result);
-    for (const label of [locale === 'ko' ? '이번 주 신청 마감' : '今週、申込締切の情報', 'culture', 'learn', 'event']) assert(html.includes(label));
+    for (const label of [locale === 'ko' ? '생활 안내' : '暮らしのガイド', 'culture', 'learn', 'event']) assert(html.includes(label));
+    assert(!html.includes('home-deadline-title'));
     assert(html.includes('href="/feedback"')); assert(html.includes('topic=daily_safety')); assert(html.includes('data-tone="purple"'));
+  }
+});
+await test('ko/ja route updates latest living guides through the existing public fetch and bilingual gate', async () => {
+  const guide=(id,date,patch={})=>raw(row(id,'living',{contentFilters:null,created_at:date,...patch}));
+  const old=guide('guide-old','2026-10-01T00:00:00Z',{updated_at:'2027-01-01T00:00:00Z'});
+  const newer=guide('guide-new','2026-10-23T00:00:00Z');
+  const newest=guide('guide-newest','2026-10-24T00:00:00Z');
+  const incomplete={...guide('guide-incomplete','2026-10-25T00:00:00Z'),summary_ja:' '};
+  for(const locale of ['ko','ja']) {
+    for(const [data,expected] of [[[],[]],[[old],['guide-old']],[[old,newer,incomplete],['guide-new','guide-old']],[[old,newest,newer,incomplete],['guide-newest','guide-new']]]) {
+      const result=await route(data,locale,now);
+      assert.deepEqual(idList(result.props.sections.living),expected);
+      assert.equal(result.props.items.length,0);
+      assert(result.props.sections.living.every(x=>x.period===null));
+      assert.equal(queries.filter(x=>x[0]==='from').length,1);
+      assert(queries.some(x=>x[0]==='eq'&&x[1]==='is_published'&&x[2]===true));
+      assert.equal(rpcCalls.filter(x=>x.name==='public_home_card_colors').length,0);
+      const html=renderToStaticMarkup(result);
+      assert.equal((html.match(/class="contentCard livingCard/g)||[]).length,expected.length);
+      assert(html.includes('href="/info/category/living"'));
+      assert(html.includes(locale==='ko'?'생활 더 보기':'暮らしをもっと見る'));
+      assert(!html.includes('guide-incomplete')&&!html.includes('PRIVATE_')&&!html.includes('최신 게시순'));
+      if(!expected.length)assert(html.includes(locale==='ko'?'아직 등록된 생활 안내가 없어요.':'暮らしのガイドはまだありません。'));
+    }
   }
 });
 await test('actual route preserves empty/one/two/six carousel states and no writes or analysis', async () => {
