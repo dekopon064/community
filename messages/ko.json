@@ -1,4 +1,8 @@
 {
+  "Accessibility": {
+    "tableRegion": "가로로 이동할 수 있는 표",
+    "tableScroll": "표를 좌우로 이동해 내용을 확인하세요."
+  },
   "Header": {
     "title": "Machimoa"
   },

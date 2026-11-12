@@ -107,6 +107,42 @@ html[data-theme="dark"] .locale-switcher {
   background: var(--color-canvas);
 }
 
+@media (max-width: 767px) {
+  .locale-switcher,
+  html[data-theme="dark"] .locale-switcher {
+    position: relative;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .locale-switcher::before {
+    content: "";
+    position: absolute;
+    inset: 4px 0;
+    border-radius: inherit;
+    background: var(--color-canvas-white);
+    box-shadow: inset 0 0 0 1px var(--color-stone);
+    pointer-events: none;
+  }
+
+  html[data-theme="dark"] .locale-switcher::before {
+    background: var(--color-canvas);
+  }
+
+  .locale-switcher > button {
+    position: relative;
+    width: 44px;
+    min-width: 44px;
+    padding-inline: 0;
+  }
+
+  .locale-switcher > button > span {
+    height: 32px;
+    min-width: 42px;
+    padding-inline: 3px;
+  }
+}
+
 .theme-toggle {
   -webkit-tap-highlight-color: transparent;
 }

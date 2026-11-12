@@ -1,5 +1,20 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { isValidElement, type ReactNode } from "react";
+import ReadableTable from "./ReadableTable";
+import tableStyles from "./ReadableTable.module.css";
+
+function cellText(value: ReactNode): string {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(cellText).join("");
+  if (isValidElement<{ children?: ReactNode }>(value)) return value.type === "br" ? "\n" : cellText(value.props.children);
+  return "";
+}
+
+function compactCell(value: ReactNode): boolean {
+  const text = cellText(value).trim();
+  return text.length > 0 && Array.from(text).length <= 12 && !text.includes("\n");
+}
 
 // B 셸의 읽기 화면에 맞춘 마크다운 요소 스타일.
 export const markdownComponents: Components = {
@@ -69,14 +84,18 @@ export const markdownComponents: Components = {
       {...props}
     />
   ),
-  table: (props) => (
-    <div className="my-5 overflow-x-auto rounded-xl border border-stone">
-      <table
-        className="w-full border-collapse text-sm text-ink [&_td]:border-b [&_td]:border-stone [&_td]:px-3 [&_td]:py-3 [&_th]:border-b [&_th]:border-stone [&_th]:bg-mineral [&_th]:px-3 [&_th]:py-3 [&_th]:text-left [&_th]:font-bold"
-        {...props}
-      />
-    </div>
-  ),
+  table: ({ node, ...props }) => {
+    void node;
+    return <ReadableTable {...props} />;
+  },
+  th: ({ children, node, ...props }) => {
+    void node;
+    return <th {...props} className={compactCell(children) ? tableStyles.compactCell : undefined}>{children}</th>;
+  },
+  td: ({ children, node, ...props }) => {
+    void node;
+    return <td {...props} className={compactCell(children) ? tableStyles.compactCell : undefined}>{children}</td>;
+  },
 };
 
 type MarkdownNode = { type: string; value?: string; children?: MarkdownNode[] };

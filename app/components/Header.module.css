@@ -25,6 +25,15 @@
   outline-offset: -4px;
 }
 
+:global(html:not([data-theme="dark"])) .actions :global(.locale-switcher):has(button:focus-visible) {
+  outline:3px solid #ffffff;
+  outline-offset:3px;
+}
+:global(html:not([data-theme="dark"])) .actions :global(.locale-switcher) button:focus-visible {
+  outline:3px solid #315777;
+  outline-offset:-3px;
+}
+
 @media (hover: hover) and (pointer: fine) {
   :global(html:not([data-theme="dark"])) .navLink:hover { color: #ffffff; }
   :global(html:not([data-theme="dark"])) .actions :global(.theme-toggle):hover {
