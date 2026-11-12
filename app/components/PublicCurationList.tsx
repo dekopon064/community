@@ -234,7 +234,12 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
     return undefined;
   }
 
-  const filteredEmpty=items.length>0&&(Boolean(query.search)||count>0||(category==='youth_space'&&query.spaceKinds.length>0));
+  // A tab is a view, not a failed search. Check its public content before refinements.
+  const emptySpaceTab=category==='youth_space'&&results.length===0&&exploreCurations(items,category,{
+    ...readExplorationQuery(new URLSearchParams(),category),spaceKinds:query.spaceKinds,
+  },now).length===0;
+  const filteredEmpty=!emptySpaceTab&&items.length>0&&(Boolean(query.search)||count>0);
+  const emptyTitle=emptySpaceTab&&spaceKind?t(`spaceEmptyTitle.${spaceKind}`):infoT(filteredEmpty?'searchEmptyTitle':'emptyTitle');
   const appliedSearch=query.search&&<p id={`${id}-applied-search`} className={styles.appliedSearch}><span>{searchT('applied')}</span><strong title={query.search}>{query.search}</strong></p>;
   function compactSelection(scope:string) {
     if(!count&&!query.search) return null;
@@ -284,7 +289,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
       </>}
       {!category&&<div className={`${styles.resultSummary} mb-4`}><p tabIndex={-1} id="curation-results-title" role="status" aria-live="polite" className={styles.resultTitle}>{infoT('resultCount',{count:results.length})}</p>{appliedSearch}</div>}
       <div id="curation-results" className="flex min-w-0 flex-col border-t border-info-rule">
-        {results.length?results.map(item=><CurationCard key={item.id} slug={item.slug} category={item.userCategory} categoryLabel={item.userCategory?categoriesT(item.userCategory):null} title={item.title} summary={item.summary} imageUrl={item.source_image_url} summaryLabel={infoT('atAGlance')} locale={locale} deadlineKind={item.application_deadline_kind} deadlineOn={item.application_deadline_on} eventStartOn={item.event_start_on} eventEndOn={item.event_end_on} todayKst={todayKst} periodOverride={period(item)} programLayout={category==='program'} eventLayout={category==='event'} comparisonFacts={category==='program'?<ProgramComparisonFacts filters={item.contentFilters}/>:category==='event'?<EventComparisonFacts filters={item.contentFilters} occurrence={eventTiming(item,now).occurrence}/>:undefined}/>):<InfoStatePanel title={infoT(filteredEmpty?'searchEmptyTitle':'emptyTitle')} description={infoT(filteredEmpty?'searchEmptyDescription':'emptyDescription')} role="status" headingLevel={2}>
+        {results.length?results.map(item=><CurationCard key={item.id} slug={item.slug} category={item.userCategory} categoryLabel={item.userCategory?categoriesT(item.userCategory):null} title={item.title} summary={item.summary} imageUrl={item.source_image_url} summaryLabel={infoT('atAGlance')} locale={locale} deadlineKind={item.application_deadline_kind} deadlineOn={item.application_deadline_on} eventStartOn={item.event_start_on} eventEndOn={item.event_end_on} todayKst={todayKst} periodOverride={period(item)} programLayout={category==='program'} eventLayout={category==='event'} comparisonFacts={category==='program'?<ProgramComparisonFacts filters={item.contentFilters}/>:category==='event'?<EventComparisonFacts filters={item.contentFilters} occurrence={eventTiming(item,now).occurrence}/>:undefined}/>):<InfoStatePanel title={emptyTitle} description={infoT(filteredEmpty?'searchEmptyDescription':'emptyDescription')} role="status" headingLevel={2}>
           {query.search||count>0?<button type="button" onClick={reset} className="min-h-11 rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white hover:bg-action-hover">{query.search?searchT('resetAll'):t('reset')}</button>:<Link href="/info" className="inline-flex min-h-11 items-center rounded-full bg-ink px-5 py-2.5 text-sm font-bold text-canvas-white">{t('allCategories')}</Link>}
         </InfoStatePanel>}
       </div>

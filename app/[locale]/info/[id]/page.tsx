@@ -83,14 +83,12 @@ export default async function InfoDetailPage({
           <CurationBody content={item.content} locale={locale} className={readingStyles.body} />
         </article>
 
-        <div>
-          <CurationTrustPanel
-            locale={locale}
-            sourceUrl={item.source_url}
-            publishedAt={item.created_at}
-            updatedAt={item.updated_at}
-          />
-        </div>
+        <CurationTrustPanel
+          locale={locale}
+          sourceUrl={item.source_url}
+          publishedAt={item.created_at}
+          updatedAt={item.updated_at}
+        />
       </div>
       {canSave ? (
         <div className="mt-5 grid min-w-0 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.36fr)] lg:gap-10" data-detail-saved-count>

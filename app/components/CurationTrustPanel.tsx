@@ -72,7 +72,7 @@ export default async function CurationTrustPanel({
             href={source.href}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-source-border bg-source-surface px-[15px] py-[11px] text-sm font-bold text-source-text transition-colors hover:bg-source-hover"
+            className="flex min-h-11 scroll-mt-32 scroll-mb-24 items-center justify-between gap-3 rounded-xl border border-source-border bg-source-surface px-[15px] py-[11px] text-sm font-bold text-source-text transition-colors hover:bg-source-hover lg:scroll-mb-0"
           >
             <span className="min-w-0">
               <span className="flex items-center gap-2">
@@ -96,7 +96,7 @@ export default async function CurationTrustPanel({
           </a>
         ) : (
           <div>
-            <p className="text-sm font-bold text-ink">{t("reviewedTitle")}</p>
+            <p className="text-sm font-bold text-ink">{t("sourceTitle")}</p>
             <p className="mt-2 text-sm leading-6 text-ink-sub">
               {t("sourceUnavailable")}
             </p>
