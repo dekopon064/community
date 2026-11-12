@@ -38,6 +38,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
   const selectedControls=useRef<HTMLUListElement>(null);
   const browseRoot=useRef<HTMLDivElement>(null);
   const sidebarLayout=category==='program'||category==='event';
+  const youthSpace=category==='youth_space';
   const savedScroll=useRef(0);
   const rawParams=new URLSearchParams(params.toString());
   // Default tab is a view choice. The shared query parser and data classifications are unchanged.
@@ -242,7 +243,7 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
       {resetButton(scope)}
     </div>;
   }
-  const mobileFilterButton=<button ref={filterTrigger} type="button" className={styles.mobileFilter} aria-haspopup="dialog" aria-expanded={panelOpen} aria-controls={`${id}-panel`} onClick={()=>{closePopover(false);setPanelOpen(true);}}><SlidersHorizontal size={18} aria-hidden="true"/>{sidebarLayout?(count?t('compactFilterWithCount',{count}):t('compactFilter')):(count?t('filterWithCount',{count}):t('filterButton'))}</button>;
+  const mobileFilterButton=<button ref={filterTrigger} type="button" className={styles.mobileFilter} aria-haspopup="dialog" aria-expanded={panelOpen} aria-controls={`${id}-panel`} onClick={()=>{closePopover(false);setPanelOpen(true);}}><SlidersHorizontal size={18} aria-hidden="true"/>{sidebarLayout||youthSpace?(count?t('compactFilterWithCount',{count}):t('compactFilter')):(count?t('filterWithCount',{count}):t('filterButton'))}</button>;
   return <>
     <div ref={browseRoot} className={sidebarLayout?styles.sidebarLayout:undefined}>
       {sidebarLayout&&<aside className={styles.filterSidebar} aria-labelledby={`${id}-sidebar-title`}>
@@ -268,15 +269,14 @@ export default function PublicCurationList({items,category,todayKst,nowIso}:{ite
               <span className={styles.triggerTop}>{group.label}<ChevronDown size={16} aria-hidden="true"/></span><span className={styles.triggerValue}>{summary(group.key)}</span>
             </button>)}
           </div>
-          {mobileFilterButton}
           {count>0&&<div className={styles.selection}>
             <div className={styles.selectionHeader}><h2>{t('selected')} ({count})</h2>{resetButton('summary')}</div>
             <ul ref={selectedControls} className={styles.selected} aria-label={t('selected')}>{selected.map(choice=><li key={`${choice.key}:${choice.value}`}><button type="button" className={styles.selectedButton} aria-label={t('remove',{label:choice.label})} onClick={()=>{if(choice.key==='date')update({...query,date:''});else if(choice.key==='audiences'&&choice.value==='both')update({...query,audiences:[]});else toggle(choice.key,choice.value);focusAfterRemoval();}}>{choice.label}<X size={16} aria-hidden="true"/></button></li>)}</ul>
           </div>}
         </>}
         {sidebarLayout&&<div className={styles.desktopSelection}>{compactSelection('desktop')}</div>}
-        <div className={styles.toolbar}>
-          {sidebarLayout&&mobileFilterButton}
+        <div className={`${styles.toolbar}${youthSpace?` ${styles.spaceToolbar}`:''}`} data-region-filter={youthSpace?regionAvailable:undefined}>
+          {(sidebarLayout||(youthSpace&&regionAvailable))&&mobileFilterButton}
           <div className={styles.resultSummary}><p tabIndex={-1} id="curation-results-title" role="status" aria-live="polite" aria-atomic="true" className={styles.resultTitle}>{infoT('resultCount',{count:results.length})}</p>{appliedSearch}</div>
           {category!=='youth_space'?<label className={styles.sort} htmlFor={`${id}-sort`}><span>{t('sort')}</span><select id={`${id}-sort`} value={query.sort} onChange={event=>update({...query,sort:event.target.value==='latest'?'latest':'default'})}><option value="default">{t(category==='program'?'deadlineSort':'eventSort')}</option><option value="latest">{t('latestSort')}</option></select></label>:spaceKind==='news'&&<p className={styles.note}>{t('latestSort')}</p>}
         </div>
