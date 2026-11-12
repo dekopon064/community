@@ -1,4 +1,8 @@
 {
+  "Accessibility": {
+    "tableRegion": "横にスクロールできる表",
+    "tableScroll": "表を左右にスクロールして内容をご確認ください。"
+  },
   "Header": {
     "title": "Machimoa"
   },
