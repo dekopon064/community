@@ -10,7 +10,7 @@ export type HomeItem = {
   id: string; slug: string; title: string; summary: string; categoryLabel: string;
   imageUrl: string | null; period: string | null; tone?: HomeTone; toneManual?: boolean;
 };
-export type HomeSections = { deadline: HomeItem[]; experiences: HomeItem[]; learning: HomeItem[]; events: HomeItem[] };
+export type HomeSections = { deadline: HomeItem[]; living: HomeItem[]; experiences: HomeItem[]; learning: HomeItem[]; events: HomeItem[] };
 
 // Display projection only. Selection is performed on structured public facts in
 // homeSelection; no body, private source identity or filter snapshot crosses here.
@@ -65,6 +65,7 @@ export const homeCopy = {
     emptyTitle: '지금은 소개할 정보가 없어요', emptyBody: '프로그램과 행사 목록을 살펴보세요.',
     programList: '프로그램 보기', eventList: '행사 보기', allPrograms: '프로그램 전체 목록 보기',
     deadline: '이번 주 신청 마감', deadlineEmpty: '신청 마감 정보는 프로그램 목록에서 확인해 주세요.',
+    living: '생활 안내', moreLiving: '생활 더 보기', livingEmpty: '아직 등록된 생활 안내가 없어요.',
     browse: '관심 가는 것부터 찾아보세요', experiences: '일상에 새로운 경험을', learning: '한국 생활에 도움이 되는 배움',
     events: '다가오는 행사', morePrograms: '프로그램 더 보기', moreEvents: '행사 더 보기',
     sectionEmpty: '목록에서 더 많은 정보를 살펴보세요.', finder: '조건을 골라 찾아보기',
@@ -81,6 +82,7 @@ export const homeCopy = {
     emptyTitle: 'いま紹介できる情報はありません', emptyBody: 'プログラムやイベントの一覧をご覧ください。',
     programList: 'プログラムを見る', eventList: 'イベントを見る', allPrograms: 'プログラムの全一覧を見る',
     deadline: '今週、申込締切の情報', deadlineEmpty: '申込締切はプログラムの一覧でご確認ください。',
+    living: '暮らしのガイド', moreLiving: '暮らしをもっと見る', livingEmpty: '暮らしのガイドはまだありません。',
     browse: '気になることから探す', experiences: 'いつもの毎日に、新しい体験を', learning: '韓国の暮らしに役立つ学び',
     events: 'これからのイベント', morePrograms: 'プログラムをもっと見る', moreEvents: 'イベント一覧',
     sectionEmpty: '一覧からほかの情報もご覧ください。', finder: '条件を選んで探す',

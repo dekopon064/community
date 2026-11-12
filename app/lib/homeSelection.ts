@@ -6,12 +6,12 @@ import type { LocalizedCuration } from './types';
 // The caller supplies only localized, complete, publicly visible rows. Pins
 // change order only; they never grant eligibility or fill with unknown facts.
 export type HomePin = { id: string; position: 1 | 2 };
-export const homeLimits = Object.freeze({ featured: 6, deadline: 1, experiences: 2, learning: 2, events: 1 });
+export const homeLimits = Object.freeze({ featured: 6, deadline: 1, living: 2, experiences: 2, learning: 2, events: 1 });
 const learningTopics = new Set(['language_learning', 'employment_career', 'daily_safety']);
 const DAY = 86_400_000;
 export type HomeSelection = {
   featured: LocalizedCuration[];
-  sections: { deadline: LocalizedCuration[]; experiences: LocalizedCuration[]; learning: LocalizedCuration[]; events: LocalizedCuration[] };
+  sections: { deadline: LocalizedCuration[]; living: LocalizedCuration[]; experiences: LocalizedCuration[]; learning: LocalizedCuration[]; events: LocalizedCuration[] };
 };
 
 export function homeWeek(now: number) {
@@ -61,6 +61,9 @@ export function selectHomeContent(rows: readonly LocalizedCuration[], now: numbe
     featured: [...pinned, ...eligible.filter(x => !pinnedIds.has(x.id))].slice(0, homeLimits.featured),
     sections: {
       deadline: deadline.slice(0, homeLimits.deadline).map(x => x.item),
+      // Match the public living list's created_at order. Editing a guide does
+      // not promote it, and application/event timing does not apply to guides.
+      living: unique.filter(item => item.userCategory === 'living').slice(0, homeLimits.living),
       experiences: programs.filter(x => topic(x.item) === 'culture_experience').slice(0, homeLimits.experiences).map(x => x.item),
       learning: programs.filter(x => learningTopics.has(topic(x.item) ?? '')).slice(0, homeLimits.learning).map(x => x.item),
       events: events.sort((a, b) => a.timing.group - b.timing.group || a.timing.order - b.timing.order || latest(a.item, b.item))

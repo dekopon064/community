@@ -36,6 +36,7 @@ async function HomeContents({ locale }: { locale: string }) {
   // use the existing list cards and never trigger analysis or additional color reads.
   const items = await attachHomeCardColors(display(selection.featured), supabase);
   const sections: HomeSections = {
+    living: display(selection.sections.living),
     deadline: display(selection.sections.deadline), experiences: display(selection.sections.experiences),
     learning: display(selection.sections.learning), events: display(selection.sections.events),
   };
