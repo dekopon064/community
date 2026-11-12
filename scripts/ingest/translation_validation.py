@@ -96,6 +96,9 @@ def _without_per_session(text: str, *, japanese: bool) -> str:
 
 
 def _quantities(text: str, *, japanese: bool) -> Counter:
+    if japanese:
+        # Comparison only: retain the exclusive bound and do not match its negation.
+        text = re.sub(r'(\d[\d,]*\s*(?:名|人))\s*に満たない(?!わけ|ことはない)', r'\1未満', text)
     text = _without_per_session(text, japanese=japanese)
     text = _PER_PERSON[japanese].sub(' ', text)
     units = _QUANTITY_UNITS[japanese]
@@ -204,12 +207,15 @@ def midnight_closing(prefix: str) -> bool:
 
 def _dates_and_times(text: str, *, known_years: frozenset = frozenset(), facility_range: bool = False) -> list[tuple]:
     text = _local_schedule_text(text)
+    # A shared clock unit applies to both endpoints (14~16시), never a duration.
+    text = re.sub(r'(?<![\d.:/])(?P<mer>오전|오후|午前|午後)?\s*(?P<a>\d{1,2})\s*(?P<sep>[~～〜–—-])\s*(?P<b>\d{1,2})\s*(?P<unit>[시時])(?!간|間)',
+                  lambda m: f'{m["mer"] or ""}{m["a"]}{m["unit"]}{m["sep"]}{m["mer"] or ""}{m["b"]}{m["unit"]}', text)
     text = text.translate(str.maketrans({"年": "년", "月": "월", "日": "일", "時": "시", "分": "분"}))
     pattern = (r"(?P<iso>\d{4}-\d{2}-\d{2})|"
                r"(?<![\w./-])(?P<dot_year>\d{4})\s*\.\s*(?P<dot_month>\d{1,2})\s*\.\s*"
                r"(?P<dot_day>\d{1,2})(?![\d]|\.\d)|"
                r"(?<![\w./-])(?P<short_year>['’]\d{2})\s*\.\s*(?P<short_month>\d{1,2})\s*\.\s*(?P<short_day>\d{1,2})(?!\d|\.\d)|"
-               r"(?<![\w.-])(?P<brief_month>\d{1,2})\s*\.\s*(?P<brief_day>\d{1,2})\.?(?=\s*[（(][월화수목금토일月火水木金土日])|"
+               r"(?<![\w.-])(?P<brief_month>\d{1,2})\s*\.\s*(?P<brief_day>\d{1,2})\.?(?=\s*[（(]\s*[월화수목금토일月火水木金土日])|"
                r"(?:(?P<year>\d{4})\s*년\s*)?(?P<month>\d{1,2})\s*월\s*(?P<day>\d{1,2})\s*일|"
                r"(?P<colon_hour>\d{1,2}):(?P<colon_minute>\d{2})(?::(?P<colon_second>\d{2}))?|"
                r"(?P<meridiem>오전|오후|午前|午後)?\s*(?P<hour>\d{1,2})\s*시(?!간|間)(?:\s*(?P<minute>\d{1,2})\s*분)?(?:\s*(?P<second>\d{1,2})\s*[초秒])?")

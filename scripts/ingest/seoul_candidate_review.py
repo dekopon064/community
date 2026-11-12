@@ -64,13 +64,24 @@ class SeoulCandidateReview:
         self.stage = 'correction'
         # Every diagnostic has a disposition even when no supported edit is returned.
         review = {'source': source, 'issues': [dict(issue, disposition='needs_review') for issue in self.issues]}
+        from ingest.seoul_review_context import attach_context
+        attach_context(review['issues'], output, source)
+        for issue in review['issues']:
+            issue['reviewOutcome'] = 'no_finding'
         try:
-            payload = self.suggest(output=output, source=source, issues=self.issues)
+            # Reuse bounded excerpts already identified above; no extra AI request.
+            payload = self.suggest(output=output, source=source, issues=[
+                {k: v for k, v in issue.items() if k not in {'disposition', 'reviewOutcome'}}
+                for issue in review['issues']])
         except AiJobError as error:
             if error.code not in {'ai_refusal', 'ai_unexpected_thinking'} or getattr(error, 'failure_scope', None) == 'batch':
                 raise
+            for issue in review['issues']:
+                issue['reviewOutcome'] = 'provider_declined'
             return review
         if not isinstance(payload, dict) or set(payload) != {'findings'} or not isinstance(payload['findings'], list):
+            for issue in review['issues']:
+                issue['reviewOutcome'] = 'invalid_response'
             return review
 
         # Duplicate or overlapping suggestions are ambiguous. Keep the original
@@ -84,20 +95,33 @@ class SeoulCandidateReview:
             if type(index) is not int or not 1 <= index <= len(self.issues):
                 continue
             if index in seen:
+                for issue in review['issues']:
+                    issue['reviewOutcome'] = 'duplicate_finding'
                 return review
             seen.add(index)
             issue = review['issues'][index - 1]
             evidence = row.get('evidence')
+            if row.get('decision') == 'needs_review':
+                issue['reviewOutcome'] = 'ai_needs_review'
+                if isinstance(evidence, str) and 0 < len(evidence.strip()) <= 500 and evidence in source:
+                    issue['evidence'] = evidence
+                continue
             if not isinstance(evidence, str) or not evidence.strip() or len(evidence) > 500 or evidence not in source:
+                issue['reviewOutcome'] = 'evidence_not_matched'
                 continue
             if row.get('decision') == 'equivalent':
-                patches.append((issue, {'disposition': 'equivalent', 'evidence': evidence}))
+                patches.append((issue, {'disposition': 'equivalent', 'evidence': evidence, 'reviewOutcome': 'equivalent'}))
                 continue
+            issue['evidence'] = evidence
             if row.get('decision') != 'change':
+                issue['reviewOutcome'] = 'invalid_decision'
                 continue
             patch = self.patch(row, issue, output, evidence)
             if patch:
+                patch['reviewOutcome'] = 'change'
                 patches.append((issue, patch))
+            else:
+                issue['reviewOutcome'] = 'unsafe_patch'
 
         for issue, patch in patches:
             if patch['disposition'] == 'change' and any(
@@ -105,6 +129,7 @@ class SeoulCandidateReview:
                 and other['start'] < patch['end'] and patch['start'] < other['end']
                 for _, other in patches
             ):
+                issue['reviewOutcome'] = 'overlapping_patch'
                 continue
             issue.update({key: value for key, value in patch.items() if key not in {'start', 'end'}})
         return review

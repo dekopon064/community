@@ -20,7 +20,12 @@ _ENTRY_RE = re.compile(
     r"ja: ([^,]+), status: ([^}]+)\}$"
 )
 _HANGUL_RE = re.compile(r"[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3]")
-_YEN_MARKS = ("円", "￥", "¥")
+# Currency expressions, not characters inside ordinary words such as 円滑/円満.
+_YEN = re.compile(r'[￥¥]|[\d０-９一二三四五六七八九十百千万億兆〇零]+(?:[,.，．]\d+)*\s*円|日本円|円建て|円換算|(?<!\w)円(?!\w)')
+
+
+def yen_match(text: str):
+    return _YEN.search(text)
 
 
 @dataclass(frozen=True)
@@ -125,8 +130,10 @@ def validate_japanese_output(title_ja: str, content_ja: str, korean_source: str)
     if missing:
         raise ValidationError('navigation_literal', 'missing_or_mismatched',
                               location={'field': 'content_ja'}, expected=len(missing), actual=0)
-    if any(mark in combined for mark in _YEN_MARKS):
-        raise ValidationError('translation_currency', 'unexpected_yen')
+    for field, text in (('title', title_ja), ('body', content_ja)):
+        if match := yen_match(text):
+            raise ValidationError('translation_currency', 'unexpected_yen',
+                                  location={'field': field, 'line': text.count('\n', 0, match.start()) + 1})
     for entry in regions_in_text(source_prose):
         if entry.ja not in combined:
             raise ValidationError('region_glossary', 'missing')

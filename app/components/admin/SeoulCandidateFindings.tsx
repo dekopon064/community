@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { CandidateContent } from '@/app/lib/review/contracts';
 import { secondaryButton } from './ReviewEditors';
+import { currentYenLines, historicalHint, reviewOutcomeText } from '@/app/lib/review/seoul-review-status';
 
 type Value = string | number | boolean | null | Value[];
 type Field = 'contentKo' | 'contentJa' | 'titleJa';
@@ -11,6 +12,8 @@ export type ReviewIssue = {
   location?: Record<string, string | number>; expected?: Value; actual?: Value;
   disposition: 'change' | 'equivalent' | 'needs_review';
   field?: Field; before?: string; after?: string; evidence?: string; summaryPatch?: boolean;
+  context?: { field: Field; candidate?: string; reference?: string };
+  reviewOutcome?: string;
 };
 export type CandidateReview = { source: string; issues: ReviewIssue[] };
 const fields = { contentKo: '한국어 본문', contentJa: '일본어 본문', titleJa: '일본어 제목' };
@@ -30,6 +33,11 @@ const reasons: Record<string, string> = {
 };
 export function issueField(issue: ReviewIssue): Field | null {
   if (issue.field && issue.field in fields) return issue.field;
+  if (issue.context?.field && issue.context.field in fields) return issue.context.field;
+  if (issue.location?.field === 'content_ja') return 'contentJa';
+  if (issue.location?.field === 'content_ko') return 'contentKo';
+  if (issue.location?.field === 'title_ja') return 'titleJa';
+  if (issue.rule === 'translation_currency') return 'contentJa';
   if (issue.location?.field === 'body') return issue.stage === 'korean_validation' ? 'contentKo' : 'contentJa';
   if (issue.location?.field === 'title' && issue.stage === 'japanese_validation') return 'titleJa';
   return null;
@@ -68,8 +76,13 @@ function surroundingLine(text: string, needle?: string): string | null {
 export function issueExcerpt(content: CandidateContent, issue: ReviewIssue): string | null {
   const field = issueField(issue);
   if (!field) return null;
+  if (issue.rule === 'translation_currency') {
+    const matches = currentYenLines(content).filter(line => line.field === field);
+    if (matches.length === 1) return matches[0].text;
+  }
   const text = content[field];
-  const surrounding = surroundingLine(text, issue.before) ?? surroundingLine(text, issue.after);
+  const surrounding = surroundingLine(text, issue.before) ?? surroundingLine(text, issue.after)
+    ?? surroundingLine(text, issue.context?.candidate);
   if (surrounding !== null) return surrounding;
   return null;
 }
@@ -148,14 +161,18 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
   const [applied, setApplied] = useState<Record<number, CandidateContent>>({});
   const [kept, setKept] = useState<Record<number, boolean>>({});
   const groups = groupReviewIssues(review.issues, savedContent);
-  const actionable = groups.map((group, index) => ({ ...group, index })).filter(g => g.issue.disposition !== 'equivalent');
+  const currencyAbsent = (issue: ReviewIssue) => issue.disposition !== 'change' && issue.rule === 'translation_currency' && currentYenLines(content).length === 0;
+  const isPast = (issue: ReviewIssue) => issue.disposition === 'needs_review' && (currencyAbsent(issue) || !issueExcerpt(content, issue));
+  const past = groups.map((group, index) => ({ ...group, index })).filter(g => isPast(g.issue));
+  const actionable = groups.map((group, index) => ({ ...group, index })).filter(g => g.issue.disposition !== 'equivalent' && !isPast(g.issue));
   const history = groups.filter(g => g.issue.disposition === 'equivalent');
-  const count = (d: ReviewIssue['disposition']) => groups.filter(g => g.issue.disposition === d).length;
+  const count = (d: ReviewIssue['disposition']) => (d === 'equivalent' ? groups : actionable).filter(g => g.issue.disposition === d).length;
   return <>
     <h3 className="text-lg font-bold">AI 결과 검토</h3>
     <p className="mt-2 text-sm leading-6">수정 제안 {count('change')}개 · 근거 확인 필요 {count('needs_review')}개</p>
+    {past.length > 0 && <p className="mt-2 text-sm leading-6">과거 진단 {past.length}개 · 현재 감지 없음 {past.filter(g => currencyAbsent(g.issue)).length}개 / 문구 연결 확인 필요 {past.filter(g => !currencyAbsent(g.issue)).length}개. 현재 오류 개수가 아닙니다.</p>}
     {actionable.length > 0 ? <p className="mt-2 max-w-prose text-sm leading-6">아래 수정 제안과 확인이 필요한 내용을 원문과 비교해 주세요. 수정안을 적용하거나 직접 편집했다면 ‘수정 저장’ 후 게시 여부를 결정합니다.</p>
-      : <p className="mt-2 max-w-prose text-sm leading-6">이 검사 기록에서 추가로 수정할 사항은 없습니다. 별도 수정·저장 없이 본문 최종 검토 후 게시 여부를 결정할 수 있습니다.</p>}
+      : <p className="mt-2 max-w-prose text-sm leading-6">{past.some(g => !currencyAbsent(g.issue)) ? '현재 문구와 연결되지 않은 과거 진단이 있습니다. 오류가 해결됐다고 단정하지 않으며, 아래 대조 자료로 본문을 최종 검토해 주세요.' : '이 검사 기록에서 추가로 수정할 사항은 없습니다. 별도 수정·저장 없이 본문 최종 검토 후 게시 여부를 결정할 수 있습니다.'}</p>}
     <ol className="mt-6 space-y-8">
       {actionable.map(({ issue, occurrences, index }) => {
         const field = issueField(issue);
@@ -171,6 +188,7 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
           <p className="mt-3 font-semibold">왜 확인이 필요한가요?</p>
           <p className="max-w-prose">{reasons[issue.reason ?? ''] ?? '검사에서 확인이 필요한 표현을 감지했습니다. 검사 상세와 원문을 함께 확인해 주세요.'} 검사의 감지 결과이며, 실제 오류인지는 원문과 비교해 판단합니다.</p>
           {readableValue(issue.expected) !== null && readableValue(issue.actual) !== null && <p className="mt-2 font-semibold">검사 비교 · 기준 {readableValue(issue.expected)} / 결과 {readableValue(issue.actual)}</p>}
+          {issue.context?.reference && <p className="mt-3 whitespace-pre-wrap break-words"><strong>검사 당시 대조한 한국어</strong><br/>{issue.context.reference}</p>}
           <dl className="mt-4">
             <dt className="font-semibold">수집된 원문 근거</dt>
             <dd className="mt-1 whitespace-pre-wrap break-words">{issue.evidence || '이 검사에 연결된 원문 인용이 없습니다. 아래 수집된 원문 전체와 직접 대조해 주세요.'}</dd>
@@ -182,7 +200,7 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
               {!excerpt && field && <details className="mt-2"><summary className="min-h-11 cursor-pointer py-2">현재 필드 전체 보기</summary><p className="max-h-64 overflow-auto whitespace-pre-wrap break-words" lang={field === 'contentKo' ? 'ko' : 'ja'}>{content[field]}</p></details>}
             </div>
             <div className="min-w-0"><p className="font-semibold">{issue.disposition === 'change' ? 'AI 수정 제안' : 'AI 검토 결과'}</p>
-              <p className="mt-2 whitespace-pre-wrap break-words" lang={issue.disposition === 'change' && field !== 'contentKo' ? 'ja' : 'ko'}>{issue.disposition === 'change' && suggestion ? <ChangedText text={suggestion} other={originalLine ?? issue.before ?? ''}/> : issue.disposition === 'equivalent' ? '원문과 같은 의미로 판단해 문구를 유지했습니다. AI가 수정한 부분은 없습니다.' : '근거가 부족하거나 안전한 수정안을 만들지 못했습니다. 원문을 확인해 직접 편집하거나 보류할 수 있습니다.'}</p>
+              <p className="mt-2 whitespace-pre-wrap break-words" lang={issue.disposition === 'change' && field !== 'contentKo' ? 'ja' : 'ko'}>{issue.disposition === 'change' && suggestion ? <ChangedText text={suggestion} other={originalLine ?? issue.before ?? ''}/> : reviewOutcomeText(issue)}</p>
             </div>
           </div>
           {issue.disposition === 'change' && issue.before && issue.after && <details className="mt-3">
@@ -207,6 +225,32 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
         </li>;
       })}
     </ol>
+    {past.length > 0 && <section className="mt-6 border-t border-info-rule pt-4" aria-label="과거 진단 대조">
+      <h4 className="font-semibold">과거 진단과 현재 본문</h4>
+      <p className="mt-2 text-sm leading-6">기록은 보존합니다. 아래 대조 표시는 후보를 수정하거나 게시를 승인하지 않습니다.</p>
+      {past.map(({issue, index}) => <details key={index} className="mt-3 border-t border-info-rule pt-2">
+        <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">{checks[issue.rule ?? ''] ?? '내용 검사'} · {currencyAbsent(issue) ? '현재 엔화 표기 없음' : '현재 문구 연결 확인 필요'} · 당시 {locationText(issue)}</summary>
+        <div className="space-y-3 py-3 text-sm leading-7">
+          <p>{currencyAbsent(issue) ? '현재 제목·본문에서 엔화 금액 표기를 찾지 못했습니다. 円滑처럼 일반 단어에 포함된 円은 통화로 검사하지 않습니다. 이 과거 경고만으로 문구를 수정할 필요는 없습니다.' : historicalHint(issue)}</p>
+          {(issue.context?.candidate || issue.before) && <p className="whitespace-pre-wrap break-words"><strong>검사 당시 문구</strong><br/>{issue.context?.candidate ?? issue.before}</p>}
+          {issue.context?.reference && <p className="whitespace-pre-wrap break-words"><strong>검사 당시 대조한 한국어</strong><br/>{issue.context.reference}</p>}
+          {readableValue(issue.expected) !== null && readableValue(issue.actual) !== null && <p>당시 추출값 · 기준 {readableValue(issue.expected)} / 결과 {readableValue(issue.actual)} — 실제 문장의 의미와 다를 수 있습니다.</p>}
+          <p className="whitespace-pre-wrap break-words"><strong>연결된 원문 근거</strong><br/>{issue.evidence || '개별 인용이 저장되지 않았습니다. 아래 저장 원문 전체와 비교할 수 있습니다.'}</p>
+          <p><strong>AI 검토 결과</strong><br/>{reviewOutcomeText(issue)}</p>
+          {!currencyAbsent(issue) && <p>과거 위치로 다른 문장을 표시하지 않습니다. 아래는 현재 본문 전체이며 당시 문제 문장을 특정한 것이 아닙니다.</p>}
+          {issue.rule === 'translation_currency' && currentYenLines(content).map((line, n) => <p key={n} className="whitespace-pre-wrap break-words" lang="ja"><strong>{fields[line.field]} · 현재 감지한 통화 문구</strong><br/>{line.text}</p>)}
+        </div>
+      </details>)}
+      {past.some(g => !currencyAbsent(g.issue)) && <details className="mt-4">
+        <summary className="min-h-11 cursor-pointer py-2 font-semibold">현재 한·일 본문과 저장 원문 대조</summary>
+        <div className="grid min-w-0 gap-5 md:grid-cols-2 text-sm leading-7">
+          <div className="min-w-0"><h5 className="font-semibold">현재 한국어 본문</h5><p className="whitespace-pre-wrap break-words">{content.contentKo}</p></div>
+          <div className="min-w-0"><h5 className="font-semibold">현재 일본어 본문</h5><p lang="ja" className="whitespace-pre-wrap break-words">{content.contentJa}</p></div>
+        </div>
+        <h5 className="mt-4 font-semibold">저장된 원문 전체</h5><p className="whitespace-pre-wrap break-words text-sm leading-7">{review.source || '저장된 원문이 없습니다.'}</p>
+        {onChange && <div className="mt-3 flex flex-wrap gap-2">{(['contentKo', 'contentJa'] as const).map(field => <button key={field} type="button" className={secondaryButton} disabled={disabled} onClick={() => editAt(field, null)}>{fields[field]} 전체에서 확인·편집</button>)}</div>}
+      </details>}
+    </section>}
     {history.length > 0 && <details className="mt-6 border-t border-info-rule pt-3">
       <summary className="min-h-11 cursor-pointer py-2 font-semibold">수정 불필요 · 참고 이력 {count('equivalent')}개</summary>
       <p className="mt-2 max-w-prose text-sm leading-6">자동 검사가 감지했지만 AI가 원문과 같은 의미로 판단해 문구를 유지한 기록입니다. 이 기록에 대한 별도 수정·저장은 필요하지 않습니다. 본문 최종 검토는 그대로 진행해 주세요.</p>
