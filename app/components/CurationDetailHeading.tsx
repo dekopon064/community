@@ -27,7 +27,7 @@ export default function CurationDetailHeading({ url, title, locale, back, catego
       {period && <div className={styles.period}>{period}</div>}
       {hasImage && <button type="button" ref={trigger} className={styles.headerPoster} aria-haspopup="dialog"
         aria-label={`${locale === "ja" ? "提供元の画像を拡大" : "수집원 이미지 크게 보기"}: ${title}`}>
-        <Image src={src} alt="" fill unoptimized referrerPolicy="no-referrer" className={styles.image} onError={() => setFailed(src)} />
+        <Image src={src} alt="" width={180} height={240} unoptimized referrerPolicy="no-referrer" className={styles.image} onError={() => setFailed(src)} />
         <span className={styles.zoomCue}><ZoomIn size={16} aria-hidden="true" /></span>
       </button>}
     </div>}

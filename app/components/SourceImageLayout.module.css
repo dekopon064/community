@@ -27,7 +27,7 @@
 .headerPoster {grid-column:2;grid-row:1/4;position:relative;display:block;justify-self:center;align-self:start;width:180px;height:240px;padding:0;border:0;background:transparent;}
 .noImage {grid-template-rows:auto auto auto;}
 .zoomCue {position:absolute;right:-6px;bottom:-4px;display:flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--color-info-rule);border-radius:6px;background:var(--color-canvas-white);color:var(--color-primary-text);}
-.headerPoster .image {object-position:center top;}
+.headerPoster .image {display:block;width:100%;height:100%;object-position:center top;}
 @media(min-width:1024px){
   .withPeriod .headerPoster {align-self:end;}
   .withPeriod .headerPoster .image {object-position:center bottom;}
@@ -71,4 +71,13 @@
   .saveSlot,.headerPoster {position:relative;right:4px;}
   .noImage .lower {grid-template-columns:minmax(0,1fr);}
   .zoomCue {width:20px;height:20px;right:-5px;bottom:-3px;}
+}
+/* Phone heading: keep full titles and controls while bringing the summary closer. */
+@media(max-width:767px){
+  .back {padding-bottom:8px;}
+  .category {padding-top:8px;}
+  .heading h1 {margin-top:8px;}
+  .lower {margin-top:16px;}
+  .headerPoster {height:auto;min-height:44px;}
+  .headerPoster .image {height:auto;max-height:117px;}
 }

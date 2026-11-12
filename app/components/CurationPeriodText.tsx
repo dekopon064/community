@@ -1,5 +1,6 @@
 import { getCurationPeriodPresentation } from "@/app/lib/applicationDeadlineDisplay";
 import type { UserCategory } from "@/app/lib/userCategories";
+import type { FilterEndpoint } from '@/app/lib/contentFilters';
 
 export default function CurationPeriodText({
   category,
@@ -10,6 +11,7 @@ export default function CurationPeriodText({
   todayKst,
   locale,
   detail = false,
+  deadlineEndpoint,
 }: {
   category: UserCategory | null;
   deadlineKind: string | null;
@@ -19,6 +21,7 @@ export default function CurationPeriodText({
   todayKst: string;
   locale: string;
   detail?: boolean;
+  deadlineEndpoint?: FilterEndpoint | null;
 }) {
   const period = getCurationPeriodPresentation({
     category,
@@ -28,6 +31,7 @@ export default function CurationPeriodText({
     eventEndOn,
     todayKst,
     locale,
+    deadlineEndpoint,
   });
   if (!period) return null;
 
