@@ -178,6 +178,23 @@ class PipelineTests(unittest.TestCase):
         for instructions in (SUMMARY_SYSTEM, MYSEOUL_SUMMARY_SYSTEM, PROGRAM_SUMMARY_SYSTEM, translation_system_prompt()):
             self.assertEqual(instructions.count(BODY_FORMAT_RULES.strip()), 1)
 
+    def test_sentence_hard_breaks_survive_worker_and_fake_candidate_storage(self):
+        hard = "\\" + "\n"
+        ko = KO.replace('실습합니다. **', '실습합니다.' + hard + '**')
+        ja = JA.replace('実習します。**', '実習します。' + hard + '**')
+        c, result, calls, client, candidates = run_fixture(ko=ko, ja=ja)
+        self.assertEqual(result.completed, 1)
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(len(candidates), 1)
+        self.assertIn('실습합니다.' + hard + '**', candidates[0]['contentKo'])
+        self.assertEqual(candidates[0]['contentJa'].strip(), ja.strip())
+        for original, stored in ((ko, candidates[0]['contentKo']), (ja, candidates[0]['contentJa'])):
+            self.assertEqual([line for line in original.splitlines() if line.startswith('|')],
+                             [line for line in stored.splitlines() if line.startswith('|')])
+        for param, key in (('p_revision', 'revision'), ('p_facts_version', 'factsVersion'),
+                           ('p_claimed_at', 'claimedAt'), ('p_lease_until', 'leaseUntil')):
+            self.assertEqual(calls[-1][1][param], c[key])
+
 
 if __name__ == '__main__':
     if '--fixture' in sys.argv:

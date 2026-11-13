@@ -195,6 +195,46 @@ class PlanWorkerTests(unittest.TestCase):
                     self.assertIn('Address the reader directly', request['instructions'])
                     self.assertIn('planned vs confirmed', request['instructions'])
 
+    def test_sentence_lines_preserved_by_all_pro_prompt_paths(self):
+        # Injected responses prove prompt wiring and formatting preservation,
+        # not whether a live model will always obey the writing instruction.
+        hard = "\\" + "\n"
+        ko = ('[한 줄 요약]\n합성 탐방 안내입니다.\n\n[주요 내용]\n'
+              + hard.join(['출발 10분 전 집결합니다.', '운동화를 준비하세요.'])
+              + '\n\n| 코스 | 시간 |\n| --- | --- |\n| A | 10:00~11:30 |\n\n'
+              '[신청 방법]\n'
+              + hard.join(['희망일 3일 전까지 신청하세요.', '정원에 도달하면 마감합니다.'])
+              + '\n\n취소는 이용일 1일 전까지 가능합니다.\n\n'
+              + hard.join(['11월 4일 오전에 진행할 예정입니다.', '연도는 원문에 명시되지 않았습니다.'])
+              + '\n\n[문의](mailto:example@example.invalid)')
+        ja = ('[要約]\n合成探訪のご案内です。\n\n[主な内容]\n'
+              + hard.join(['出発10分前に集合してください。', '運動靴をご用意ください。'])
+              + '\n\n| コース | 時間 |\n| --- | --- |\n| A | 10時～11時30分 |\n\n'
+              '[申請方法]\n'
+              + hard.join(['希望日の3日前までにお申し込みください。', '定員に達し次第、締め切ります。'])
+              + '\n\nキャンセルは利用日の1日前まで可能です。\n\n'
+              + hard.join(['11月4日の午前に実施する予定です。', '年は原文に明記されていません。'])
+              + '\n\n[お問い合わせ](mailto:example@example.invalid)')
+        for method in ('summarize_ko', 'summarize_program_ko', 'summarize_myseoul_ko'):
+            with self.subTest(method=method):
+                client = streamed([
+                    response(json.dumps({**json.loads(SUMMARY_JSON), 'content_ko': ko})),
+                    response(json.dumps({'title_ja': '合成探訪', 'content_ja': ja})),
+                ])
+                adapter, _, _ = self.adapter(client)
+                body, _, _ = getattr(adapter, method)('synthetic only', None)
+                _, translated, _, _ = adapter.translate_ja('합성 탐방', body)
+                self.assertEqual(body, ko)
+                self.assertEqual(translated, ja)
+                self.assertEqual(len(client.calls), 2)
+                self.assertIn(ko, client.calls[1]['input'][0]['content'])
+                for request in client.calls:
+                    self.assertIn('start each complete sentence on a new rendered line', request['instructions'])
+                    self.assertIn('without a blank line', request['instructions'])
+                    self.assertIn('same paragraph', request['instructions'])
+                    self.assertIn('do not insert sentence breaks into table cells', request['instructions'])
+                    self.assertNotIn('do not break after every sentence', request['instructions'])
+
     def test_generation_budget_resets_for_new_jobs_but_no_repeated_stage_in_a_pair(self):
         client = streamed([response(SUMMARY_JSON),response(TRANSLATION_JSON)] * 2)
         adapter, _, _ = self.adapter(client)
