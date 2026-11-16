@@ -133,6 +133,7 @@ class MySeoulAssessment:
 
 
 def assess_myseoul(record: ObservationRecord, *, now: datetime) -> MySeoulAssessment:
+    from ingest.seoul_evidence import declares_walking_tour, label_values, variable_venue, without_booking_mode
     if now.tzinfo is None:
         raise MySeoulContractError("evaluation_time_requires_timezone")
     payload = record.normalized_payload or {}
@@ -143,6 +144,9 @@ def assess_myseoul(record: ObservationRecord, *, now: datetime) -> MySeoulAssess
     target = "\n".join(values(payload, "target"))
     purpose = "\n".join(values(payload, "purpose"))
     venue = "\n".join(values(payload, "venue"))
+    activity_sites = label_values(body, ('활동장소', '운영장소', '수업장소', '교육장소', '개최장소'))
+    if not venue and len(activity_sites) == 1 and not variable_venue(body):
+        venue = activity_sites[0]
     residence = "\n".join(values(payload, "residence"))
     mode_text = "\n".join(values(payload, "mode"))
     actor_text = "\n".join(values(payload, "actor"))
@@ -204,7 +208,14 @@ def assess_myseoul(record: ObservationRecord, *, now: datetime) -> MySeoulAssess
     if category is None:
         missing.append("category_unresolved")
 
-    if re.search(r"혼합|온\s*[·/+-]\s*오프라인|온라인과\s*오프라인\s*병행", mode_text):
+    walk = declares_walking_tour(body)
+    remote = re.search(r"온라인|비대면|원격|화상|Zoom|줌", without_booking_mode(body), re.I)
+    uncertain_site = re.search(r'미정|미확정|추후|별도\s*안내|온라인|비대면|원격|화상|zoom|줌', venue, re.I)
+    if (any(c['field'] == 'mode' for c in conflicts)
+            or walk and (remote or re.search(r'온라인|비대면|원격|화상|혼합|Zoom|줌', mode_text, re.I))):
+        mode = "unknown"
+        missing.append("delivery_mode_unknown")
+    elif re.search(r"혼합|온\s*[·/+-]\s*오프라인|온라인과\s*오프라인\s*병행", mode_text):
         mode = "mixed"
     elif "온라인" in mode_text and re.search(r"오프라인|현장", mode_text):
         mode = "course_unresolved"
@@ -213,15 +224,19 @@ def assess_myseoul(record: ObservationRecord, *, now: datetime) -> MySeoulAssess
         mode = "online"
     elif re.search(r"오프라인|현장", mode_text):
         mode = "offline"
-    elif mode_text or re.search(r"온라인|비대면|Zoom|줌", body, re.I):
+    elif mode_text or remote:
         mode = "unknown"
         missing.append("delivery_mode_unknown")
-    elif venue:
+    elif walk or (venue and not uncertain_site):
         mode = "offline"
     else:
         mode = "unknown"
         missing.append("delivery_mode_unknown")
     activity_region = _region(venue)
+    if uncertain_site or variable_venue(body + '\n' + venue) or any(c['field'] == 'venue' for c in conflicts):
+        activity_region = "unknown"
+    elif activity_sites and venue and not set(activity_sites).issubset(venue.splitlines()):
+        activity_region = "unknown"
     online_scope = residence or target
     unrestricted = bool(re.search(r"전국|지역\s*제한\s*없|거주\s*제한\s*없|국내\s*거주", online_scope))
     residence_region = _region(online_scope)

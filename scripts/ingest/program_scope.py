@@ -14,6 +14,7 @@ from ingest.connectors.seoul_reservation import KST
 from ingest.evaluate_gates import EvaluationResult
 from ingest.models import JobPlan, ObservationRecord
 from ingest.seoul_evidence import activity_locations, activity_text, activity_topic, physical_activity, group_itinerary, venue_filter, label_values, matching_place, period_proof, uncertain_activity
+from ingest.seoul_evidence import declares_walking_tour, variable_venue, without_booking_mode
 
 PROGRAM_SCHEMA = "program-scope-v1-local"
 PROGRAM_PROFILE = "program_capital_v1_local"
@@ -108,15 +109,13 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
 
     locations = activity_locations(body, payload.get('tables', ()))
     itinerary = group_itinerary(body)
+    onsite_tour = itinerary or declares_walking_tour(body)
     delivery_context = context
     online_pattern = r"온라인\s*(?:교육|프로그램|수업|참여)|비대면\s*(?:교육|수업|참여)|원격\s*(?:화상)?\s*(?:교육|수업)|ZOOM|줌\s*(?:수업|화상)"
     negation = r"불가|불가능|없음|아님|진행하지"
-    if itinerary:
+    if onsite_tour:
         # Online booking does not describe how the program takes place.
-        delivery_context = re.sub(
-            r"(?:온\s*[/·+]?\s*오프라인|온라인|오프라인|비대면)\s*(?:으로|에서)?\s*(?:사전\s*)?(?:(?:참여|참가)\s*)?(?:신청|예약|접수)",
-            "", f"{itinerary_title}\n{context}",
-        )
+        delivery_context = without_booking_mode(f"{itinerary_title}\n{context}")
         online_pattern += (
             r"|(?:온라인|비대면|화상)\s*(?:으로|에서)?\s*만?\s*(?:진행|운영|개최)"
             r"|(?:비대면\s*)?화상\s*(?:수업|교육|강의)|비대면\s*프로그램"
@@ -125,8 +124,8 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
     online = any(not re.match(rf"\s*(?:은|는|이|가)?\s*(?:{negation})", delivery_context[match.end():])
                  for match in re.finditer(online_pattern, delivery_context, re.I))
     hybrid = bool(re.search(r"온\s*[/·+]?\s*오프라인|온라인.*오프라인|오프라인.*온라인|혼합\s*(?:교육|수업|진행)", delivery_context))
-    mode = "hybrid" if hybrid else "online" if online else "offline" if itinerary or locations or physical_activity(body) else "unknown"
-    if itinerary:
+    mode = "hybrid" if hybrid else "online" if online else "offline" if onsite_tour or locations or physical_activity(body) else "unknown"
+    if onsite_tour:
         declared_modes = _label_values(body, ("진행방식", "교육방식", "운영방식"))
         mixed_with_onsite = r"(?:온라인|비대면)\s*(?:[/·+&]|과|와|및)\s*(?:현장|대면)"
         if (online or hybrid or re.search(mixed_with_onsite + r"\s*(?:혼합|병행)", delivery_context)
@@ -136,7 +135,7 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
             missing.append("delivery_mode_unknown")
             mode = "unknown"
     activity = "not_applicable" if mode == "online" else "unknown"
-    if mode in {"offline", "hybrid"}:
+    if mode in {"offline", "hybrid"} and not variable_venue(body + '\n' + str(raw.get('PLACENM', ''))):
         joined = "\n".join(locations)
         cap, noncap = bool(CAPITAL.search(joined)), bool(NONCAPITAL.search(joined))
         if cap and noncap:

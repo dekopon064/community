@@ -222,11 +222,53 @@ def physical_activity(text: str) -> bool:
                for line in main.splitlines())
 
 
+def declares_walking_tour(text: str) -> bool:
+    """An affirmative description of this session, including its participant notice."""
+    return any(re.match(
+        r'^(?:(?:본|이번)\s*(?:프로그램|답사|행사)(?:은|는)\s*)?도보\s*(?:답사|탐방)로\s*'
+        r'진행(?:합니다|됩니다|하므로|되므로)(?=[\s.,!]|$)', _clean(line))
+        for line in _venue_lines(text))
+
+
+def without_booking_mode(text: str) -> str:
+    return re.sub(r'(?:온\s*[/·+]?\s*오프라인|온라인|오프라인|비대면)\s*(?:으로|에서)?\s*'
+                  r'(?:사전\s*)?(?:(?:참여|참가)\s*)?(?:신청|예약|접수)', '', text)
+
+
+def variable_venue(text: str) -> bool:
+    return bool(re.search(r'(?:회차|코스|구간)\s*별(?:로)?\s*(?:(?:장소|집결지)\s*(?:가|는)?\s*)?'
+                          r'(?:상이|다[름르릅]|달라|변경|별도\s*안내)', text))
+
+
 def venue_filter(text: str, provider_fields=None, tables=()):
     """All explicit venues must be provable; never reuse an unbound old quote."""
     from ingest.content_filters import DISTRICTS, _location
     venues = activity_locations(text, tables)
     raw = provider_fields or {}
+    if variable_venue(text + '\n' + str(raw.get('PLACENM', ''))):
+        return None
+    # A room/entrance line can qualify the same fully addressed facility.
+    # Require the *same named facility* in every venue and one matching address.
+    place = raw.get('PLACENM')
+    if isinstance(place, str) and len(place) >= 4 and len(venues) > 1:
+        named = re.compile(r'(?<![가-힣A-Za-z0-9])' + re.escape(place) + r'(?![가-힣A-Za-z0-9])')
+        addresses = []
+        desks = []
+        for venue in venues:
+            match = named.search(venue)
+            if not match:
+                break
+            location = _location(venue)
+            if (location and location['scope'] == 'specific' and raw.get('AREANM')
+                    and location['venues'][0]['district'] == raw['AREANM']):
+                addresses.append((venue, location))
+            elif re.fullmatch(r'\s*(?:입구\s*)?(?:안내데스크|안내대)\s*앞', venue[match.end():]):
+                desks.append(venue[:match.start()].replace('빌딩', '').split())
+            else:
+                break
+        else:
+            if len(addresses) == 1 and all(token in addresses[0][0].split() for desk in desks for token in desk):
+                return addresses[0][1]
     resolved = []
     nationwide = False
     for venue in venues:
@@ -274,11 +316,10 @@ def activity_topic(text: str, base: str | None = None) -> str | None:
     main = activity_text(text)
     if uncertain_activity(main) or re.search(r'주거\s*정책|지원금|시설\s*(?:이용|소개|안내)|일반\s*관람\s*안내', main):
         return None
-    found = {base} if base else set()
-    # Recount generic competing purposes even when the base classifier returned
-    # no single choice. An additional vocabulary match cannot erase ambiguity.
-    if re.search(r'(?:문화|공예|미술|음악|창작|취미|요리)\s*(?:체험|활동|교육|수업|강좌)|(?:그림|공예품)\s*만들기',main):
-        found.add('culture_experience')
+    from ingest.content_filters import program_topics
+    found = program_topics(main)
+    if base:
+        found.add(base)
     if nature_topic(text): found.add('culture_experience')
     # An explicit arts lesson describes an activity, not just a course name.
     # No provider title or facility inventory is used as the positive proof.

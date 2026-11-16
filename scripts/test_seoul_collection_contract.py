@@ -104,14 +104,21 @@ class SeoulCollectionContractTests(unittest.TestCase):
             wrong=copy.deepcopy(c);wrong['activityConfirmation'][key]=value
             result,events,_=test.run_job(wrong)
             self.assertEqual(result.state_unknown,1,key);self.assertEqual(len(events),1,key)
-    def test_no_confirmation_or_real_conflict_keeps_ai_blocked(self):
+    def test_missing_region_or_conflicting_dates_block_but_optional_quote_does_not(self):
         c=context();c['facts']['activity_evidence']=[]
         result,events,_=ProgramAITests().run_job(c)
-        self.assertEqual(result.state_unknown,1);self.assertEqual(len(events),1)
+        self.assertEqual(result.completed,1)
+        self.assertEqual([name for name,_ in events],['claim_seoul_program_ai','finish_seoul_program_ai'])
+        unresolved=copy.deepcopy(c)
+        unresolved['facts']['activity_region']='unknown'
+        result,events,inputs=ProgramAITests().run_job(unresolved)
+        self.assertEqual(result.state_unknown,1);self.assertFalse(inputs)
+        self.assertEqual([name for name,_ in events],['claim_seoul_program_ai'])
         c['activityConfirmation']={k:c[k] for k in ('sourceItemId','revision','factsVersion','jobId','claimedAt','leaseUntil','workerId')}
         c['activityConfirmation'].update(confirmed=True,filterVersion=c['filterContext']['filterVersion'])
         c['facts']['periods']['SVCOPNENDDT']['value']='2019-01-01'
-        result,events,_=ProgramAITests().run_job(c)
-        self.assertEqual(result.state_unknown,1);self.assertEqual(len(events),1)
+        result,events,inputs=ProgramAITests().run_job(c)
+        self.assertEqual(result.state_unknown,1);self.assertFalse(inputs)
+        self.assertEqual([name for name,_ in events],['claim_seoul_program_ai'])
 
 if __name__=='__main__':unittest.main()

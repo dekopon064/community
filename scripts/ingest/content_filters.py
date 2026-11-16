@@ -276,21 +276,33 @@ def _primary(text: str) -> str:
     return "\n".join(_lines(text, "목적|주요 활동|주요 내용|교육 내용|프로그램 내용")) or text
 
 
-def _topic(text: str, category: str) -> str | None:
+def program_topics(text: str, *, collection: bool = True) -> set[str]:
+    patterns = {
+        "employment_career": r"취업\s*(?:목적|지원\s*(?:목적|프로그램)|준비\s*(?:교육|행사|활동|콘서트)|역량\s*(?:교육|강화))|직무\s*(?:교육|훈련|설명회|역량)|채용\s*설명회|(?:취업|구직)(?:을|를)?\s*위한",
+        "daily_safety": r"(?:생활|안전|재난|응급처치|교통안전)\s*(?:교육|훈련|학습)",
+        "language_learning": r"(?:한국어|일본어|영어|언어|시험|컴퓨터\s*기초|AI\s*도구)\s*(?:교육|학습|수업|강좌|활용)|(?:언어|시험)\s*준비",
+        "culture_experience": r"(?:문화|공예|미술|음악|창작|취미|요리)\s*(?:체험|활동|교육|수업|강좌)|(?:그림|공예품)\s*만들기",
+        "community_exchange": r"(?:주민|지역|이웃)\s*(?:교류|만남|활동)|교류\s*(?:활동|모임)",
+    }
+    text = re.sub(r"취업\s*목적(?:이)?\s*(?:없는|없음|아닌)", "", text)
+    if collection:
+        patterns["culture_experience"] += r"|전시\s*해설\s*(?:프로그램|운영)|(?:궁궐|지역)\s*역사\s*(?:문화\s*)?(?:답사|해설)"
+        # A language class explicitly for employment has one stated primary purpose.
+        text = re.sub(r"취업\s*지원\s*목적의\s*(?:한국어|일본어|영어)\s*(?:교육|수업)", "취업 지원 목적", text)
+    return {key for key, pattern in patterns.items() if re.search(pattern, text)}
+
+
+def _topic(text: str, category: str, *, collection: bool = True) -> str | None:
     t = _primary(text)
     t = re.sub(r"취업\s*목적(?:이)?\s*(?:없는|없음|아닌)", "", t)
     if re.search(r"불명확|확인 필요|미정|(?:교육|체험|교류|취업)\s*(?:은|는|이|가)?\s*(?:아님|아닌|제외|하지\s*않|없음)", t):
         return None
     if category == "program":
-        if re.search(r"취업\s*(?:목적|지원\s*(?:목적|프로그램)|준비\s*(?:교육|행사|활동|콘서트)|역량\s*(?:교육|강화))|직무\s*(?:교육|훈련|설명회|역량)|채용\s*설명회|(?:취업|구직)(?:을|를)?\s*위한", t):
-            return "employment_career"
-        if re.search(r"(?:생활|안전|재난|응급처치|교통안전)\s*(?:교육|훈련|학습)", t):
-            return "daily_safety"
-        if re.search(r"(?:한국어|일본어|영어|언어|시험|컴퓨터\s*기초|AI\s*도구)\s*(?:교육|학습|수업|강좌|활용)|(?:언어|시험)\s*준비", t):
-            return "language_learning"
-        matches = [name for name, pattern in (
-            ("culture_experience", r"(?:문화|공예|미술|음악|창작|취미|요리)\s*(?:체험|활동|교육|수업|강좌)|(?:그림|공예품)\s*만들기"),
-            ("community_exchange", r"(?:주민|지역|이웃)\s*(?:교류|만남|활동)|교류\s*(?:활동|모임)")) if re.search(pattern, t)]
+        matches = list(program_topics(t, collection=collection))
+        if not collection:
+            for priority in ("employment_career", "daily_safety", "language_learning"):
+                if priority in matches:
+                    return priority
     else:
         matches = [name for name, pattern in (
             ("festival_exchange", r"축제(?:를|가|에)?\s*(?:개최|진행)|교류회(?:를|가)?\s*(?:개최|진행)"),
@@ -301,7 +313,7 @@ def _topic(text: str, category: str) -> str | None:
     return "other" if re.fullmatch(r"\s*(?:대표 분야|분야)\s*[:：]\s*기타\s*", t) else None
 
 
-def _topic_excerpt(text: str, category: str, value: str | None) -> str | None:
+def _topic_excerpt(text: str, category: str, value: str | None, *, collection: bool = True) -> str | None:
     """Quote an exact bounded source span only after the full topic is settled.
 
     Do not remove negations/competing topics to make an excerpt pass. Markup
@@ -311,7 +323,7 @@ def _topic_excerpt(text: str, category: str, value: str | None) -> str | None:
         return None
     for span in re.finditer(r"[^<>\n.!?]+[.!?]?", text):
         quote = span[0].strip()
-        if 0 < len(quote) <= 1000 and _topic(quote, category) == value:
+        if 0 < len(quote) <= 1000 and _topic(quote, category, collection=collection) == value:
             return quote
     return None
 
@@ -500,8 +512,9 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
         if source == 'seoul_reservation' and not facts.get('purpose'):
             from ingest.seoul_evidence import activity_text
             topic_text = activity_text(body)
-        topic = _topic(topic_text, category)
-        quote = _topic_excerpt(topic_text, category, topic)
+        collection = source in {"seoul_reservation", "myseoul_program"}
+        topic = _topic(topic_text, category, collection=collection)
+        quote = _topic_excerpt(topic_text, category, topic, collection=collection)
         if source == 'seoul_reservation' and category == 'program' and not facts.get('purpose'):
             from ingest.seoul_evidence import activity_topic
             topic = activity_topic(body,topic)
@@ -515,7 +528,7 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
         mode = facts.get("delivery_mode")
         if mode in {"online", "offline", "hybrid", "mixed"}:
             put("delivery", {"offline": "onsite", "hybrid": "mixed"}.get(mode, mode), "delivery_mode", prefix="facts")
-        elif source != "seoul_reservation" or "delivery_mode_unknown" not in facts.get("missing", ()):
+        elif not {"delivery_mode_unknown", "course_modes_unresolved"}.intersection(facts.get("missing", ())):
             lines = _lines(body, "진행 방식|교육 방식")
             if len(lines) == 1:
                 mode = {"온라인": "online", "현장": "onsite", "온라인·현장 혼합": "mixed", "혼합": "mixed"}.get(lines[0])
@@ -568,6 +581,9 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
                 block = body[min(positions):max(p+len(v) for p,v in zip(positions,venues))] if min(positions)>=0 else ''
                 if block and all(v in block for v in venues):
                     if len(block)<=1000:put('location',location,excerpt=block)
+        elif source == 'myseoul_program' and (facts.get('activity_region') == 'unknown' or
+                any(c.get('field') == 'venue' for c in facts.get('conflicts', ()))):
+            pass  # Do not reintroduce a location the source assessment could not resolve.
         elif venue:
             put("location", _location(venue), "venue", prefix="facts")
         elif venues:
