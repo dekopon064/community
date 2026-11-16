@@ -96,7 +96,7 @@ def confirmed_temporal_context(state):
     c = temporal_context("my", state)
     from ingest.myseoul_db import evaluate_myseoul_facts
     server_result = evaluate_myseoul_facts(c["facts"], now=datetime.now().astimezone())
-    c["facts"]["activity_evidence"] = []
+    c["facts"].update(venue="", activity_evidence=[])
     # A fake protected server evaluation simulates an administrator venue
     # audit outside facts; no quotation or client confirmation flag is added.
     d = {"id": c["sourceItemId"], "revision": c["revision"], "factsVersion": c["factsVersion"],
@@ -454,6 +454,9 @@ class AIConnectionTests(NoNetwork):
         for source in ("my", "seoul"):
             for state in ("open", "not_started", "closed", "ended"):
                 c = bind_filters(temporal_context(source, state))
+                if source == "my":
+                    self.assertTrue(c["facts"]["venue"].strip())
+                    c["facts"]["activity_evidence"] = []
                 before = copy.deepcopy(c)
                 ko, ja = (my_providers(c) if source == "my" else seoul_providers(c))[:2]
                 calls = []
@@ -463,7 +466,8 @@ class AIConnectionTests(NoNetwork):
                 fn = process_myseoul_job if source == "my" else process_seoul_program_job
                 result = fn(ProgramAIAdapter(rpc), source_item_id=ID, revision=c["revision"], summarize_ko=ko, translate_ja=ja)
                 self.assertEqual(result.completed, 1, (source, state))
-                self.assertEqual(len(calls), 2)
+                prefix = "myseoul_program" if source == "my" else "seoul_program"
+                self.assertEqual([name for name, _ in calls], [f"claim_{prefix}_ai", f"finish_{prefix}_ai"])
                 self.assertEqual(c, before)
 
     def test_my_server_place_confirmation_matches_filter_and_facts_versions(self):
@@ -480,6 +484,7 @@ class AIConnectionTests(NoNetwork):
                 if mutate == "missing": detail["filterInfo"]["missing"] = ["topic"]
                 before = copy.deepcopy((c, detail))
                 ko, ja = my_providers(c)
+                ko, ja = Mock(wraps=ko), Mock(wraps=ja)
                 calls = []
                 def rpc(name, args):
                     calls.append(name)
@@ -488,6 +493,7 @@ class AIConnectionTests(NoNetwork):
                     return {"candidateId": ID, "outcome": "inserted"}
                 result = process_myseoul_job(ProgramAIAdapter(rpc), source_item_id=ID, revision=c["revision"], summarize_ko=ko, translate_ja=ja)
                 self.assertEqual(result.completed, int(mutate is None), (state, mutate))
+                self.assertEqual((ko.call_count, ja.call_count), (int(mutate is None),) * 2, (state, mutate))
                 self.assertEqual(calls, ["claim_myseoul_program_ai", "admin_myseoul_program_detail"] + (["finish_myseoul_program_ai"] if mutate is None else []))
                 self.assertEqual((c, detail), before)
 
