@@ -39,6 +39,10 @@ def verify(db):
     if sql("select to_regclass('machimoa_review.seoul_ai_candidate_reviews') is null")=='t':
         sql(MIGRATION.with_name('20261104031651_seoul_ai_candidate_review.sql').read_text(encoding='utf8'))
     sql(MIGRATION.with_name('20261117114501_program_private_ai_outputs.sql').read_text(encoding='utf8'))
+    if sql("select to_regprocedure('machimoa_review.admin_trash_current_item(uuid,text)') is null")=='t':
+        sql(MIGRATION.with_name('20261103121330_restore_review_in_one_step.sql').read_text(encoding='utf8'))
+    sql(MIGRATION.with_name('20261117130359_ai_queue_waiting_trash.sql').read_text(encoding='utf8'))
+    sql(MIGRATION.with_name('20261117132621_ai_queue_period_ended_reason.sql').read_text(encoding='utf8'))
     sql("""insert into machimoa_review.ingest_sources(source_id,provider,source_kind,connector_type,
         enabled,permission_status,legacy_curation_source) values
         ('myseoul_program','synthetic','content','rest',true,'approved_noncommercial','myseoul_program');
@@ -59,6 +63,9 @@ def verify(db):
         rpc('admin_myseoul_activity_confirm',sid,rev,d['version'],d['filterInfo']['filterVersion'],
             {'location':filters['location']},{},actor)
     claim = 'claim_myseoul_program_ai_no_retry'
+    trash_case = Path(__file__).parent / 'fixtures/ai_queue_waiting_trash.sql'
+    sql(f'\\set source_id {sid}\n' + trash_case.read_text(encoding='utf8'))
+    print('PASS: retry trash, active claim rejection, stale version, idempotency and protected restore')
     reject(lambda:rpc(claim,sid,rev,'test',600,role='authenticated'), 'permission denied')
     c, = json.loads(rpc(claim,sid,rev,'test',600))
     job, at, lease = c['jobId'], c['claimedAt'], c['leaseUntil']
