@@ -263,23 +263,28 @@ def process_ready_targets(targets,counts,process_one,*,policy_for,after_each=Non
         # The existing claim authoritatively rechecks facts/filters, revisions,
         # active attempts and duplicate candidates. A queue read is no claim.
         result=process_one(item)
+        no_retry,summarize_ko,translate_ja=policy_for(item)
+        confirmed = getattr(result,'termination_confirmed',False) is True
+        missing_receipt = no_retry and result.failed and getattr(result,'failure_scope',None)=='item' and not confirmed
+        unknown = result.state_unknown or int(result.status=='ai_state_unknown' or bool(missing_receipt))
         counts['completed']+=result.completed
-        counts['failed']+=result.failed+result.retried
+        failed = 0 if missing_receipt else result.failed
+        counts['failed']+=failed+result.retried
         counts['unavailable_skipped']+=int(result.status=='ai_no_jobs')
-        counts['state_unknown']+=result.state_unknown or int(result.status=='ai_state_unknown')
+        counts['state_unknown']+=unknown
         counts['items'].append(dict(sourceItemId=item['sourceItemId'], revision=item['revision'],sourceName=item.get('sourceName'),
-            status=result.status, completed=result.completed, failed=result.failed,retried=result.retried,
-            stateUnknown=result.state_unknown, errorCode=getattr(result,'error_code',None),
+            status='ai_state_unknown' if unknown else result.status, completed=result.completed, failed=failed,retried=result.retried,
+            stateUnknown=unknown, errorCode=getattr(result,'error_code',None),
             failureScope=getattr(result,'failure_scope',None),
             failureStage=getattr(result,'failure_stage',None),
-            terminationConfirmed=getattr(result,'termination_confirmed',False),
+            terminationConfirmed=confirmed,
             diagnostic=getattr(result,'diagnostic',None)))
-        stop = ('state_unknown' if result.status=='ai_state_unknown' or result.state_unknown else
+        stop = ('state_unknown' if unknown else
                 'retry_registered' if result.retried else
                 'common_failure' if result.failed else None)
-        no_retry,summarize_ko,translate_ja=policy_for(item)
-        if (no_retry and result.failed == 1 and not result.retried and not result.state_unknown
-                and result.status == 'processed' and getattr(result,'failure_scope',None)=='item'):
+        if (no_retry and failed == 1 and not result.retried and not unknown
+                and result.status == 'processed' and getattr(result,'failure_scope',None)=='item'
+                and confirmed):
             # Only an acknowledged terminal failure releases the per-item Pro
             # pair budget. Never reset a blocked provider or an uncertain attempt.
             owner = getattr(summarize_ko,'__self__',None)

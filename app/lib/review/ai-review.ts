@@ -29,7 +29,9 @@ export interface AiReviewStore {
  execute(jobId:string,command:AiRecheckCommand,actor:string):Promise<AiReview>;
 }
 const hash=/^[a-f0-9]{64}$/;
-function recheckStatus(v:Record<string,unknown>){return v.status==='queued'||v.status==='failed'&&v.sourceName==='seoul_reservation';}
+function recheckStatus(v:Record<string,unknown>){
+ return v.status==='queued'||v.status==='failed'&&['seoul_reservation','myseoul_program'].includes(String(v.sourceName));
+}
 function obj(x:unknown):Record<string,unknown>{if(!x||typeof x!=='object'||Array.isArray(x))throw new ReviewFailure('unavailable');return x as Record<string,unknown>;}
 function text(x:unknown,max=60000){if(typeof x!=='string'||x.length>max)throw new ReviewFailure('unavailable');return x;}
 export function aiRecheckCommand(raw:unknown):AiRecheckCommand {

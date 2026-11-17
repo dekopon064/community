@@ -93,7 +93,7 @@ class FrozenQueueTests(unittest.TestCase):
         def job(adapter,**args):
             identity=args['source_item_id'];index=next(i for i,r in enumerate(before) if r['sourceItemId']==identity)
             self.assertEqual(args['revision'],before[index]['revision']);self.assertTrue(args['worker_id'].startswith('pc-ai-'))
-            self.assertEqual(args.get('no_retry'),True if index%2==0 else None)
+            self.assertIs(args['no_retry'],True)
             q.claims.append(identity)
             if mutate_after_start and len(q.claims)==1:q.rows.append(item(999))
             row=dict(status='processed',completed=0,failed=0,retried=0,state_unknown=0,failure_scope=None)
@@ -101,7 +101,7 @@ class FrozenQueueTests(unittest.TestCase):
                 if mode[1]=='stale':return SimpleNamespace(**(row|{'status':'ai_no_jobs'}))
                 if mode[1]=='unknown':return SimpleNamespace(**(row|{'status':'ai_state_unknown','state_unknown':1}))
                 args['summarize_ko']('fake','fake')
-                if mode[1]=='item':return SimpleNamespace(**(row|{'failed':1,'failure_scope':'item'}))
+                if mode[1]=='item':return SimpleNamespace(**(row|{'failed':1,'failure_scope':'item','termination_confirmed':True}))
                 if mode[1]=='common':return SimpleNamespace(**(row|{'failed':1,'failure_scope':'batch'}))
                 if mode[1]=='retry':return SimpleNamespace(**(row|{'retried':1}))
             args['summarize_ko']('fake','fake');args['translate_ja']('fake','fake')
@@ -130,7 +130,7 @@ class FrozenQueueTests(unittest.TestCase):
         self.assertEqual(events.count('summary'),26);self.assertEqual(events.count('translation'),25);self.assertEqual(events.count('release'),1)
         self.assertEqual(result['counts']['failed'],1);self.assertEqual(result['counts']['chunks_done'],2)
 
-    def test_common_unknown_and_existing_myseoul_failure_stop_future_chunks(self):
+    def test_common_unknown_and_unexpected_retry_stop_future_chunks(self):
         for mode,expected in [((24,'common'),'stopped'),((24,'unknown'),'unknown'),((25,'retry'),'stopped')]:
             result,q,events,_=self.run_worker(mode=mode)
             self.assertEqual(result['state'],expected);self.assertEqual(len(q.claims),mode[0]+1)

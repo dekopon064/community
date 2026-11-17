@@ -222,7 +222,9 @@ class ExistingWorkerTests(unittest.TestCase):
         def rpc(name,args):
             calls.append((name,args))
             if name=='admin_review_ai_queue':return {'hasMore':False,'items':[dict(sourceName='myseoul_program',status='queued',currentRevision=True,leaseState='none',retryCount=0,nextRetryAt=None,sourceItemId=c['sourceItemId'],revision=c['revision'])]}
-            if name=='claim_myseoul_program_ai':claimed.update(copy.deepcopy(c));claimed['workerId']=args['p_worker_id'];return [claimed]
+            if name=='claim_myseoul_program_ai_no_retry':
+                claimed.update(copy.deepcopy(c),workerId=args['p_worker_id'],failurePolicy={'policy':'no_retry','attempt':'a'*64})
+                return [claimed]
             if name=='admin_myseoul_program_detail':return dict(id=c['sourceItemId'],revision=c['revision'],schema=c['schema'],profile=c['profile'],factsVersion=c['factsVersion'],status='resolved',aiStatus='claimed',source={'name':c['source'],'title':c['title'],'url':c['facts']['official_url']},facts=c['facts'],observedFacts=c['observedFacts'],result={'scope':'included','quality':'sufficient','public_category':'program','application':'open','decision':'in_scope','reasons':[]})
             if name=='finish_myseoul_program_ai':
                 self.assertEqual(args['p_worker_id'],claimed['workerId']);self.assertEqual(args['p_facts_version'],c['factsVersion']);return {'outcome':'inserted','candidateId':str(uuid4())}
@@ -257,6 +259,8 @@ class ExistingWorkerTests(unittest.TestCase):
                 if name.startswith('claim_'):
                     c=seoul if 'seoul_program' in name and 'myseoul' not in name else my
                     current=copy.deepcopy(c);current['workerId']=args['p_worker_id']
+                    self.assertTrue(name.endswith('_no_retry'))
+                    current['failurePolicy']={'policy':'no_retry','attempt':'a'*64}
                     for key in ('filterContext','activityConfirmation'):
                         if isinstance(current.get(key),dict):current[key]['workerId']=args['p_worker_id']
                     claimed[current['jobId']]=current;return [current]
@@ -283,7 +287,8 @@ class ExistingWorkerTests(unittest.TestCase):
             summarize_myseoul_ko=summarize_program_ko
             def translate_ja(self,*a):raise AssertionError('fake job does not call AI')
             def release_terminated_attempt(self):self.released+=1
-        cases=[(result(failed=1,failure_scope='item'),result(completed=1),2,'partial'),
+        cases=[(result(failed=1,failure_scope='item',termination_confirmed=True),result(completed=1),2,'partial'),
+               (result(failed=1,failure_scope='item'),result(completed=1),1,'unknown'),
                (result(failed=1,failure_scope='common'),result(completed=1),1,'stopped'),
                (result(state_unknown=1,status='ai_state_unknown'),result(completed=1),1,'unknown')]
         for seoul,my,expected,state in cases:
@@ -292,7 +297,7 @@ class ExistingWorkerTests(unittest.TestCase):
                  patch('ingest.myseoul_ai.process_myseoul_job',side_effect=lambda *a,**k:calls.append('my') or my):
                 out=ExistingWorkers(PROJECT,ai_context=lambda:(adapter,provider,lambda:None))(dict(source='all',kind='ai',limit=2))
             self.assertEqual(out['state'],state);self.assertEqual(len(calls),expected);self.assertEqual(provider.released,int(expected==2))
-        # My Seoul+'s existing retry registration stops before another source/job.
+        # An unexpected legacy retry receipt never authorizes continuation.
         adapter=ProgramAIAdapter(lambda name,args:{'items':list(reversed(rows)),'hasMore':False});provider=Provider()
         with patch('ingest.myseoul_ai.process_myseoul_job',return_value=result(retried=1)),\
              patch('ingest.program_ai.process_seoul_program_job',side_effect=AssertionError('must stop')):
