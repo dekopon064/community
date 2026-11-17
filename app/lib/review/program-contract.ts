@@ -6,7 +6,9 @@ export const patchFields = ["content_kind", "application_actor", "delivery_mode"
 export type ProgramField = typeof programFields[number];
 export type ProgramFacts = Record<ProgramField, string | string[] | Record<string, Period>>;
 export type Period = { raw: string | null; value: string | null; status: string; precision: string | null };
-export type ProgramCommand = { action: "save_facts" | "exclude"; revision: string; version: string; note: string; patch?: Partial<ProgramFacts>; resolve?: string[]; confirmRestored?: true };
+export const periodReasons = ["body_period_needs_confirmation", "body_api_period_conflict", "date_weekday_conflict", "invalid_body_date", "period_missing_or_unparsed", "period_order_conflict"];
+export type PeriodDecision = "keep" | "edit" | "hold";
+export type ProgramCommand = { action: "save_facts" | "exclude"; revision: string; version: string; note: string; patch?: Partial<ProgramFacts>; resolve?: string[]; confirmRestored?: true; periodDecision?: PeriodDecision };
 export const programReasonText: Record<string, string> = {
   event_cancelled: "취소된 행사입니다. 현재 공식 안내와 저장된 행사 상태를 확인해 주세요.",
   event_ended: "종료된 행사입니다. 현재 공식 안내와 저장된 행사 일정을 확인해 주세요.",
@@ -28,7 +30,14 @@ export const programReasonText: Record<string, string> = {
   fee_conflict: "무료·유료 안내가 다릅니다. 확인한 비용 구분·금액을 입력해 주세요. 추가 인용은 선택 입력입니다.",
   eligibility_document_unconfirmed: "필수 증빙 조건을 확인해 실제 요구사항을 입력해 주세요. 외국인 참여를 임의 보장하지 마세요. 추가 인용은 선택 입력입니다.",
 };
-for (const code of ["period_missing_or_unparsed", "body_period_needs_confirmation", "period_order_conflict", "body_api_period_conflict", "invalid_body_date", "date_weekday_conflict"]) programReasonText[code] = "신청 기간과 운영 기간·요일의 부족 또는 충돌을 확인해 각각의 날짜·시간을 확인해 주세요. 원문 인용은 선택 입력입니다.";
+Object.assign(programReasonText, {
+  period_missing_or_unparsed: "등록된 신청·운영 날짜 중 비어 있거나 읽을 수 없는 값이 있습니다.",
+  body_period_needs_confirmation: "본문 일정과 이번 예약에 등록된 기간을 대조해 주세요.",
+  period_order_conflict: "등록된 시작일과 종료일의 순서를 확인해 주세요.",
+  body_api_period_conflict: "본문의 기간과 등록된 날짜 또는 시각이 다릅니다.",
+  invalid_body_date: "본문에 달력에 없는 날짜가 있습니다.",
+  date_weekday_conflict: "본문에 적힌 날짜와 요일이 일치하지 않습니다.",
+});
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ReviewFailure("invalid_input");
@@ -76,7 +85,7 @@ export function programFacts(input: unknown): ProgramFacts {
 }
 export function programCommand(input: unknown): ProgramCommand {
   const obj = object(input); const action = obj.action;
-  const keys = action === "save_facts" ? ["action", "revision", "version", "note", "patch", "resolve", ...(obj.confirmRestored === true ? ["confirmRestored"] : [])] : ["action", "revision", "version", "note"];
+  const keys = action === "save_facts" ? ["action", "revision", "version", "note", "patch", "resolve", "periodDecision", ...(obj.confirmRestored === true ? ["confirmRestored"] : [])] : ["action", "revision", "version", "note"];
   if (!["save_facts", "exclude"].includes(String(action)) || Object.keys(obj).some((k) => !keys.includes(k))) throw new ReviewFailure("invalid_input");
   const revision = text(obj.revision, 64), version = text(obj.version, 64), note = text(obj.note, 4000).trim();
   if (!/^[a-f0-9]{64}$/.test(revision) || !/^[a-f0-9]{64}$/.test(version) || action === "exclude" && !note) throw new ReviewFailure("invalid_input");
@@ -86,6 +95,12 @@ export function programCommand(input: unknown): ProgramCommand {
     if ((!Object.keys(patch).length && obj.confirmRestored !== true) || Object.keys(patch).some((k) => !(patchFields as readonly string[]).includes(k))) throw new ReviewFailure("invalid_input");
     command.patch = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, value(k, v)]));
     command.resolve = strings(obj.resolve, 30);
+    if ("periodDecision" in obj) {
+      if (!["keep","edit","hold"].includes(String(obj.periodDecision)) || obj.confirmRestored || note ||
+          Object.keys(patch).length !== 1 || !Object.hasOwn(patch,"periods") ||
+          !command.resolve.length || !command.resolve.every(code => periodReasons.includes(code))) throw new ReviewFailure("invalid_input");
+      command.periodDecision = obj.periodDecision as PeriodDecision;
+    }
   }
   return command;
 }

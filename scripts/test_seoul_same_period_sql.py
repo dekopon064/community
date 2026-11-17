@@ -125,6 +125,64 @@ def main():
     ok(sum(x[0]=='ok' for x in results)==1 and all(x[0]=='ok' or x[1] for x in results),'concurrent same-version requests: one write only')
     ok(scalar("(select count(*) from machimoa_review.processing_jobs where processing_stage='ai_enrichment' and claimed_at is not null)")==0,'AI claims zero')
     ok(scalar('(select count(*) from machimoa_review.curation_candidates)')==1,'only the explicitly seeded existing candidate remains')
+    sql((ROOT/'supabase/migrations/20261117061332_seoul_period_review_decisions.sql').read_text(encoding='utf-8'))
+    def decide(d,choice,periods=None):
+        args=save_args(d)
+        if periods is not None: args[3]={'periods':periods}
+        return rpc('admin_program_period_decision',args+[choice])
+    def dates(f,*values):
+        for key,value in zip(('RCPTBGNDT','RCPTENDDT','SVCOPNBGNDT','SVCOPNENDDT'),values):
+            f['periods'][key]={'value':value+'+09:00','raw':value,'status':'ok','precision':'second'}
+    def annual(f):
+        dates(f,'2026-11-09T00:00:00','2026-12-30T00:00:00','2026-11-10T00:00:00','2026-12-31T00:00:00')
+        f['description']='1. 운영 기간 및 요일\n운영 기간: 연중(1월~12월)\n운영 요일: 화요일~금요일'
+        f['period_evidence']=['및 요일','연중(1월~12월)']
+    def tour(f):
+        dates(f,'2026-11-06T00:00:00','2026-11-23T00:00:00','2026-11-06T00:00:00','2026-11-23T00:00:00')
+        f['description']='운영기간: 2026년 11월 16일 14:00-16:00 / 2026년 11월 23일 14:00-16:00 (해당 일자 중 택 1)'
+        f['period_evidence']=[f['description'].split(': ',1)[1]]
+    def dance(f):
+        dates(f,'2026-11-04T16:01:00','2026-11-27T18:00:00','2026-11-04T00:00:00','2026-11-28T00:00:00')
+        f['description']='운영기간: 2026년 11월 7일(토) ~ 11월 28일(토), 매주 토요일 클래스당 총 4회'
+        f['period_evidence']=[f['description'].split(': ',1)[1]]
+    annual_row=insert('seonnongdan',annual)
+    known=packets()[0]['item']['filterFacts']['data']
+    rpc('admin_content_filter_save',[annual_row['id'],annual_row['revision'],annual_row['version'],annual_row['filterInfo']['filterVersion'],{key:known[key] for key in annual_row['filterInfo']['missing']},ACTOR])
+    annual_row=rpc('admin_program_detail',[annual_row['id']])
+    t=insert('tour',tour)
+    k=insert('kpop',dance)
+    a=save_args(annual_row)+['annual']
+    call='select public.admin_program_period_decision('+','.join(map(literal,a))+');'
+    for role in ('anon','authenticated'): deny('set role '+role+';'+call,'permission denied')
+    bad=copy.deepcopy(a);bad[1]='f'*64
+    deny('select public.admin_program_period_decision('+','.join(map(literal,bad))+');','source_revision_conflict')
+    b=snapshot()
+    deny('select public.admin_program_period_decision('+','.join(map(literal,save_args(t)+['annual']))+');','annual_review_ineligible')
+    ok(snapshot()==b,'unproven source has no automatic resolution')
+    # Run the same explicit id/revision/version-bound entry point used for an old observation.
+    script=(ROOT/'scripts/reconcile_seoul_annual_period.psql').read_text(encoding='utf-8')
+    variables={'item_id':annual_row['id'],'revision':annual_row['revision'],'version':annual_row['version'],'actor':ACTOR}
+    for name,value in variables.items(): script=script.replace(":'"+name+"'",literal(value))
+    sql('\n'+script)
+    after=rpc('admin_program_detail',[annual_row['id']])
+    ok(after['aiStatus']=='queued','all other facts and filters ready: enters AI waiting only')
+    ok('body_period_needs_confirmation' not in after['result']['reasons'] and after['facts']['periods']==annual_row['facts']['periods'],'legacy annual flag cleared with all registered endpoints intact')
+    ok(after['observedFacts']==annual_row['observedFacts'] and 'period:annual' in after['history'][0]['fields'],'annual source and history')
+    deny(call,'program_version_conflict')
+    held=decide(t,'hold')
+    ok(held['facts']==t['facts'] and held['result']==t['result'] and held['aiStatus']==t['aiStatus'] and 'period:hold' in held['history'][0]['fields'],'hold persists without changing facts or queue')
+    prior_hold=decide(insert('annual_hold',annual),'hold')
+    deny('select public.admin_program_period_decision('+','.join(map(literal,save_args(prior_hold)+['annual']))+');','annual_review_ineligible')
+    kept=decide(held,'keep')
+    ok(kept['facts']['periods']==t['facts']['periods'] and 'body_period_needs_confirmation' not in kept['result']['reasons'] and kept['history'][1]==held['history'][0],'keep resumes hold preserving its history')
+    updated=copy.deepcopy(k['facts']['periods'])
+    # Keep the application endpoints and the stored operating end exactly as observed.
+    updated['SVCOPNBGNDT']={'raw':'2026-11-07','value':'2026-11-07','precision':'day','status':'ok'}
+    changed=decide(k,'edit',updated)
+    ok(changed['facts']['periods']==updated and changed['observedFacts']==k['observedFacts'] and '2026-11-07' in changed['history'][0]['note'],'edit saves one endpoint with history')
+    ok(changed['aiStatus']=='blocked' and changed['filterInfo']['missing'],'unrelated open filters still block AI')
+    for row,expected in ((candidate,'program_reconfirmation_blocked'),(claimed,'program_already_processed')):
+        deny('select public.admin_program_period_decision('+','.join(map(literal,save_args(row)+['keep']))+');',expected)
     print(json.dumps({'checks':len(checks),'database':db,'network':'none','result':'passed','operating_db':0,'ai_calls':0}))
 
 
