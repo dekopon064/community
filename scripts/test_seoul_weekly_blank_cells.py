@@ -10,7 +10,7 @@ from ingest.body_markdown import read_body
 from ingest.program_ai import program_input
 from ingest.reclassification_ai import classification_input
 from ingest.seoul_fact_roles import weekly_input_evidence, validate_weekly_schedule
-from test_seoul_fact_roles import confirmed_case, replay_context, fake_translation
+from test_seoul_fact_roles import confirmed_case, replay_context, recorded, fake_translation as translate_fixture
 import test_seoul_ai_no_retry as no_retry_fixture
 import test_seoul_per_session_replay as worker_fixture
 
@@ -19,6 +19,15 @@ FIXTURE = Path(__file__).parent / 'testdata/seoul_weekly_blank_cells_recorded.js
 
 def bare_table():
     return json.loads(FIXTURE.read_text(encoding='utf-8'))['reviewed_table']
+
+
+def fake_translation(body):
+    # Exercise the same valid translated prose as the marked-empty fixture;
+    # only the representation of empty cells differs in this test.
+    if bare_table() not in body:
+        return translate_fixture(body)
+    canonical = read_body(recorded()['fake_translation_cleaned']['content_ko']).tables[0].markdown
+    return translate_fixture(body.replace(bare_table(), canonical)).replace(' — |', ' |')
 
 
 def bare_case():
@@ -97,7 +106,8 @@ class BlankCellTests(unittest.TestCase):
 
     def test_bare_cells_also_reach_no_retry_completion(self):
         with patch.object(no_retry_fixture, 'replay_context', side_effect=bare_context), patch.object(
-                no_retry_fixture, 'confirmed_case', side_effect=bare_case):
+                no_retry_fixture, 'confirmed_case', side_effect=bare_case), patch.object(
+                no_retry_fixture, 'fake_translation', side_effect=fake_translation):
             for classified in (False, True):
                 result, calls, stages, count = no_retry_fixture.NoRetryTests.replay(self, classified)
                 self.assertEqual((result.completed, result.failed, result.retried), (1, 0, 0))
@@ -115,8 +125,9 @@ class BlankCellTests(unittest.TestCase):
                 result, calls, stages, count = no_retry_fixture.NoRetryTests.replay(self, classified)
                 self.assertEqual((result.failed, result.retried, result.completed), (1, 0, 0))
                 self.assertEqual(stages, ['summary', 'translation']); self.assertEqual(count, 2)
-                self.assertEqual(calls[-1][0], 'fail_seoul_ai_no_retry')
-                self.assertEqual(sum(n == 'fail_seoul_ai_no_retry' for n, _ in calls), 1)
+                self.assertEqual(calls[-1][0], 'fail_seoul_ai_with_draft')
+                self.assertEqual(calls[-1][1]['p_diagnostic']['rule'], 'weekday_cell')
+                self.assertEqual(sum(n.startswith('fail_') for n, _ in calls), 1)
                 self.assertFalse(any(n.startswith('finish_') for n, _ in calls))
 
     def test_width_header_time_duplicates_and_flattening_remain_invalid(self):
@@ -149,8 +160,8 @@ class BlankCellTests(unittest.TestCase):
     def test_translation_cannot_fill_blanks_even_with_nonnumeric_prose_or_move_languages(self):
         mutations = [lambda s: s.replace('| | |', '| 中止 | |', 1),
                      lambda s: s.replace('| | |', '| なし | |', 1),
-                     lambda s: s.replace('第5回(日本語)', '第5回'),
-                     lambda s: s.replace('第5回(日本語) | 第5回(中国語)', '第5回(中国語) | 第5回(日本語)')]
+                     lambda s: s.replace('第5回（日本語）', '第5回'),
+                     lambda s: s.replace('第5回（日本語） | 第5回（中国語）', '第5回（中国語） | 第5回（日本語）')]
         for classified in (False, True):
             for index, mutation in enumerate(mutations):
                 with self.subTest(classified=classified, index=index):
@@ -189,7 +200,7 @@ class BlankCellTests(unittest.TestCase):
         from ingest.translation_validation import validate_translation_fidelity
         source = '| 시간 | 수요일 | 금요일 |\n| --- | --- | --- |\n| 16:00 | 5회차(일본어) | |'
         for label in ('時間', '時刻', '時間 / 曜日'):
-            target = f'| {label} | 水曜日 | 金曜日 |\n| --- | --- | --- |\n| 16:00 | 第5回(日本語) | |'
+            target = f'| {label} | 水曜日 | 金曜日 |\n| --- | --- | --- |\n| 16:00 | 第5回（日本語） | |'
             validate_translation_fidelity('합성', source, '合成', target)
             self.assertEqual(read_body(target).tables[0].rows[0][-1], '')
 

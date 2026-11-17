@@ -62,7 +62,7 @@ def validated_output(draft, facts, title, classification=None):
     validate_public_guidance(ja, 'ja')
     summary_ja = extract_summary_section(ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
     validate_japanese_output(title_ja, ja, korean_source=title + '\n' + ko)
-    validate_translation_fidelity(title, ko, title_ja, ja)
+    validate_translation_fidelity(title, ko, title_ja, ja, seoul_grouped=True)
     return dict(titleKo=title, contentKo=ko, summaryKo=summary, titleJa=title_ja,
                 contentJa=ja, summaryJa=summary_ja, aiModel=draft['model'])
 

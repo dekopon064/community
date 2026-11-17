@@ -15,13 +15,8 @@ from typing import Any, Iterator
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from ingest.application_links import normalize_application_link
 
-import requests
-
 from ingest.connectors.base import BatchConnector
-from ingest.http_client import (
-    HttpBudgetExhausted, HttpClient, HttpRequestFailed, HttpStatusError,
-    ResponseTooLarge,
-)
+from ingest.http_client import HttpClient, read_html_once
 from ingest.models import BatchMeta, BatchResult, Checkpoint, ObservationRecord
 from ingest.source_images import source_image_url
 
@@ -490,62 +485,10 @@ def normalize_detail(html: str, url: str) -> ObservationRecord:
 def _read_html(http: HttpClient, url: str) -> tuple[str, int, int]:
     if url != HOME:
         detail_identity(url)
-    if http.request_count >= http.budget:
-        raise HttpBudgetExhausted()
-    http.request_count += 1
-    response = None
-    failure: str | None = None
-    content: bytes | None = None
-    status = 0
     try:
-        try:
-            sender = http.transport or requests.get
-            response = sender(url, timeout=http.timeout_seconds, allow_redirects=False,
-                              stream=True, headers={"Accept": "text/html"})
-            status = int(response.status_code)
-            if 300 <= status < 400:
-                failure = "redirect_blocked"
-            elif status != 200:
-                failure = f"status_{status}"
-            elif "text/html" not in response.headers.get("Content-Type", "").lower():
-                failure = "non_html"
-            else:
-                chunks, size = [], 0
-                for chunk in response.iter_content(chunk_size=65_536):
-                    if not isinstance(chunk, bytes):
-                        failure = "response_invalid"
-                        break
-                    size += len(chunk)
-                    if size > min(http.max_response_bytes, 1_000_000):
-                        failure = "response_too_large"
-                        break
-                    chunks.append(chunk)
-                if not failure:
-                    content = b"".join(chunks)
-        except requests.Timeout:
-            failure = "timeout"
-        except Exception:
-            failure = "request_failed"
-    finally:
-        # Never let an unsafe underlying URL/response exception escape.
-        try:
-            if response is not None:
-                response.close()
-        except Exception:
-            failure = "response_close_failed"
-    if failure == "response_too_large":
-        raise ResponseTooLarge()
-    if failure and failure.startswith("status_"):
-        raise HttpStatusError(status)
-    if failure or content is None:
-        raise HttpRequestFailed(failure or "response_invalid")
-    try:
-        html = content.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
-        html = None
-    if html is None:
-        raise MySeoulContractError("html_encoding_invalid")
-    return html, status, len(content)
+        return read_html_once(http, url)
+    except UnicodeError:
+        raise MySeoulContractError("html_encoding_invalid") from None
 
 
 class MySeoulProgramConnector(BatchConnector):

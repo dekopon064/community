@@ -46,6 +46,8 @@ export function failureLines(d:FailureDetail):string[] {
   const common:Record<string,string>={ai_http_401:'Pro 인증 실패',ai_http_403:'Pro 접근 권한 부족',ai_http_429:'사용량 또는 호출 한도',ai_timeout:'AI 응답 시간 초과',ai_network:'AI 연결 결과 불명',ai_call_budget:'호출 상한 도달',ai_blocked_cost_cap:'비용 상한 도달',ai_http_5xx:'AI 서비스 장애'};
   const lines=[labels.stage[d.stage]+' · '+labels.rule[d.rule],(common[d.code]??labels.reason[d.reason])+' ('+d.code+')'];
   if(position)lines.push(position);
+  if(d.stage==='claim' && d.rule==='weekly_schedule_cell' && d.reason==='missing')
+    lines.push('요약 호출 전 · 요일별 셀 위치 확인 필요. 공식 시간표의 빈칸까지 대조해 주세요.');
   if(d.stage==='japanese_validation' && ['schedule_dates','schedule_times','schedule_counts','schedule_weekdays','schedule_years'].includes(d.rule))
     lines.push('비교 근거: 확인된 일정·집결 안내와 일본어 본문');
   if('expected' in d || 'actual' in d)lines.push('기준값 '+displayComparison(d.expected,d.rule)+' / 검사값 '+displayComparison(d.actual,d.rule));

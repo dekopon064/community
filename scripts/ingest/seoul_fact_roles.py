@@ -7,7 +7,7 @@ calendar expansion, source lookup or generated replacement facts.
 from dataclasses import dataclass
 import re
 from ingest.ai_errors import AiJobError, ValidationError
-from ingest.body_markdown import inline_text, read_body
+from ingest.body_markdown import inline_text, read_body, is_weekday_matrix
 
 ORDINAL = r'(?:제\s*)?\d+\s*회차'
 WEEKDAY = r'[월화수목금토일](?:요일)?'
@@ -48,7 +48,7 @@ def weekly_schedule(description):
     matrices = []
     for table in tables:
         headers = tuple(plain(h) for h in table.headers)
-        if re.fullmatch(r'시간(?:\s*[/·]\s*요일)?', headers[0]) and all(re.fullmatch(WEEKDAY, h) for h in headers[1:]):
+        if re.fullmatch(r'시간(?:\s*[/·]\s*요일)?', headers[0]) and is_weekday_matrix(headers, grouped=True):
             if not all(re.fullmatch(CLOCK, plain(r[0])) for r in table.rows):
                 raise AiJobError('ai_schema_error')
             days = tuple(key(h).replace('요일', '') for h in headers[1:])
@@ -65,16 +65,16 @@ def weekly_schedule(description):
         if not re.fullmatch(r'시간\s*[/·]\s*요일', line):
             continue
         index = start + 1; days = []
-        while index < len(lines) and re.fullmatch(WEEKDAY, lines[index]):
+        while index < len(lines) and (re.fullmatch(WEEKDAY, lines[index]) or lines[index] in ('평일', '주말')):
             days.append(lines[index]); index += 1
-        if len(days) < 2 or len(days) != len(set(days)):
+        if len(days) < 2 or len(days) != len(set(days)) or not is_weekday_matrix(("시간", *days), grouped=True):
             raise AiJobError('ai_schema_error')
         rows = []
         while index < len(lines) and re.fullmatch(CLOCK, lines[index]):
             clock = lines[index]; index += 1; cells = []
             while index < len(lines):
                 value = lines[index]
-                if re.fullmatch(ORDINAL, value):
+                if re.fullmatch(ORDINAL + r'(?:\s*[（(][^()（）]+[）)])?', value):
                     cells.append(value)
                 elif cells and re.fullmatch(r'[（(][^()（）]+[）)]', value):
                     cells[-1] += value
@@ -85,7 +85,13 @@ def weekly_schedule(description):
                 raise AiJobError('ai_schema_error')
             rows.append((clock, *cells))
         if rows:
-            return WeeklySchedule(('시간', *days), tuple(rows), True)
+            # Fully occupied grouped rows retain both positions even in plain text.
+            # Require an uninterrupted matrix; unknown trailing cell material
+            # before a later time row cannot establish a complete table.
+            complete = (days == ['평일', '주말'] and all(len(r) == 3 for r in rows)
+                        and len({r[0] for r in rows}) == len(rows)
+                        and not any(re.fullmatch(CLOCK, v) for v in lines[index:]))
+            return WeeklySchedule(('시간', *days), tuple(rows), not complete)
         raise AiJobError('ai_schema_error')
     return None
 
@@ -101,9 +107,31 @@ def weekly_input_evidence(description):
     if not source:
         return None
     if source.flattened:
-        raise AiJobError('ai_schema_error')
-    return {'headers': list(source.headers),
+        error = ValidationError('weekly_schedule_source', 'missing_cell_positions')
+        error.failure_stage = 'claim'  # Input preparation, before any model call.
+        raise error
+    evidence = {'headers': list(source.headers),
             'rows': [[None if plain(c) in EMPTY_CELL else c for c in row] for row in source.rows]}
+    if source.headers[1:] == ('평일', '주말'):
+        # Keep the original columns and local exceptions. Only expand a weekly
+        # view when an explicit open-day range AND closure qualify this matrix.
+        days = '월화수목금토일'
+        hours = re.findall(r'(?:관람|해설|운영)\s*시간\s*[:：]\s*([월화수목금토일])(?:요일)?\s*[~～]\s*'
+                           r'([월화수목금토일])요일\s*\(\s*([월화수목금토일])요일\s*휴관\s*\)', description)
+        cells = [c for row in source.rows for c in row[1:]]
+        simple = all(plain(c) in EMPTY_CELL or re.fullmatch(ORDINAL + r'(?:\s*\([월화수목금토일]요일\s*제외\))?', c) for c in cells)
+        if len(hours) == 1 and simple:
+            start, end, closed = hours[0]
+            ordered = days[days.index(start):] + days[:days.index(start)]
+            open_days = ordered[:ordered.index(end) + 1]
+            if closed not in open_days:
+                evidence['closedDays'] = [closed]
+                evidence['sessionsByDay'] = {
+                    day: [row[0] for row in source.rows
+                          if plain(cell := row[2 if day in '토일' else 1]) not in EMPTY_CELL
+                          and not re.search(day + r'요일\s*제외', cell)]
+                    for day in open_days}
+    return evidence
 
 
 def public_roles(facts):
@@ -124,7 +152,8 @@ def public_roles(facts):
                 {key(target[1]),key(facts['target_raw'])} <= {'제한없음','누구나'}):
             continue  # Same bare audience; qualified restrictions never match.
         if matrix and (re.fullmatch(ORDINAL, text) and any(key(text) == re.sub(r'[（(].*', '', c) for c in cells)
-                       or key(text) in annotations):
+                       or key(text) in cells and re.fullmatch(ORDINAL + r'\s*[（(][^()（）]+[）)]', text)
+                     or key(text) in annotations):
             continue  # Kept in the source and schedule table, not eligibility.
         extra_role = additional_role(text)
         if extra_role:
@@ -147,7 +176,7 @@ def validate_weekly_schedule(content, description):
     """Bind each generated clock row to its source cells, not a number bag."""
     source = weekly_schedule(description)
     generated = [t for t in read_body(content).tables if re.fullmatch(r'시간(?:\s*[/·]\s*요일)?',plain(t.headers[0]))
-                 and all(re.fullmatch(WEEKDAY, plain(h)) for h in t.headers[1:])]
+                 and is_weekday_matrix(t.headers, grouped=True)]
     if not source:
         if generated:
             raise ValidationError('weekly_schedule_table', 'unsupported', expected=0, actual=len(generated))

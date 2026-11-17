@@ -31,7 +31,7 @@ class CollectionPlan:
     counters: dict
 
 
-def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_end: bool) -> CollectionPlan:
+def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_end: bool, supplement=None) -> CollectionPlan:
     if type(rows) is not list or len(rows) > MAX_SCAN_ITEMS or type(existing_keys) is not frozenset or type(natural_end) is not bool:
         raise ValueError('seoul_collection_limits_invalid')
     counts = dict(scanned=len(rows), culture_count=0, target=0, other_category=0, existing_skipped=0,
@@ -82,6 +82,8 @@ def plan_collection(rows: list[dict], *, existing_keys: frozenset[str], natural_
             if record.external_key in seen:
                 raise ValueError('duplicate_in_scan')
             seen.add(record.external_key)
+            if supplement is not None:
+                record = supplement(record)
             payload_bytes = new_only_payload_bytes([program_rpc_item(record)])
             if payload_bytes > NEW_ONLY_BATCH_BYTES:
                 raise SeoulContractError('seoul_store_item_too_large')
@@ -148,7 +150,9 @@ def process_seoul_collection(store, adapter, connector) -> dict:
         page = read_culture_collection(connector)
         counts.update(total_count=page.progress['total_count'], pages=page.progress['page_num'])
         stage = 'planning'
-        plan = plan_collection(list(page.items), existing_keys=frozenset(), natural_end=page.natural_end)
+        from ingest.seoul_schedule_detail import supplement_weekly_table
+        plan = plan_collection(list(page.items), existing_keys=frozenset(), natural_end=page.natural_end,
+                               supplement=lambda record: supplement_weekly_table(record, connector.http))
         counts.update(plan.counters, review_waiting=0, ai_waiting=0)
         # An entirely filtered page still acknowledges only its bounded scan.
         batches = plan.batches or ((),)

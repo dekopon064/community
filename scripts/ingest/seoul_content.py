@@ -152,8 +152,10 @@ def validation_view(facts: dict) -> dict:
         # Separate validation evidence from public rendering: bare table cells
         # are never independently appended as sessions or participation rules.
         table_rows = {key('| '+' | '.join(row)+' |') for row in matrix.rows}
+        annotated_cells = {key(plain(cell)) for row in matrix.rows for cell in row[1:]
+                           if re.fullmatch(r'(?:제\s*)?\d+\s*회차\s*[（(][^()（）]+[）)]', plain(cell))}
         records = [line for line in schedule_lines(view)
-                   if not re.fullmatch(r'(?:제\s*)?\d+\s*회차', plain(line))
+                   if key(plain(line)) not in annotated_cells and not re.fullmatch(r'(?:제\s*)?\d+\s*회차', plain(line))
                    and key(plain(line)) not in table_rows]
         matrix_records = ['해설회차: ' + ' '.join(row) for row in matrix.rows]
         view['session_evidence'] = list(dict.fromkeys(records + roles['schedule'] + matrix_records))

@@ -158,6 +158,98 @@ class WeeklyInputTests(unittest.TestCase):
         self.assertEqual(weekly_input_evidence(description), expected)
         self.assertEqual(original, before)
 
+    def test_no_retry_missing_positions_confirm_receipt_before_continuing(self):
+        from ingest.program_ai import ProgramAIAdapter, process_seoul_program_job
+        from ingest.rpc_errors import RpcTimeout
+        for unknown in (False, True):
+            _, ctx = replay_context()
+            ctx['facts']['description'] = recorded()['facts']['description']
+            ctx['failurePolicy'] = {'policy': 'no_retry', 'attempt': 'c'*64}
+            calls = []
+            def rpc(name,args):
+                calls.append(name)
+                if name == 'claim_seoul_program_ai_no_retry':
+                    return [ctx]
+                self.assertEqual(name, 'fail_seoul_ai_weekly_input')
+                self.assertEqual(args['p_attempt'], ctx['failurePolicy']['attempt'])
+                if unknown:
+                    raise RpcTimeout()
+                return 'failed'
+            def forbidden(*args,**kw):
+                self.fail('input failure must precede provider calls')
+            result = process_seoul_program_job(ProgramAIAdapter(rpc),source_item_id=ctx['sourceItemId'],
+                revision=ctx['revision'],worker_id=ctx['workerId'],summarize_ko=forbidden,translate_ja=forbidden,no_retry=True)
+            self.assertEqual(calls, ['claim_seoul_program_ai_no_retry','fail_seoul_ai_weekly_input'])
+            self.assertEqual(result.termination_confirmed, not unknown)
+            self.assertEqual(result.failure_scope, 'batch' if unknown else 'item')
+            if not unknown:
+                self.assertEqual(result.failure_stage, 'claim')
+
+    def test_group_columns_facility_closure_and_one_session_exception(self):
+        grouped = '시간 / 요일\n평일\n주말\n11:00\n1 회차\n1 회차\n14:00\n2 회차\n2 회차\n16:00\n3 회차\n3 회차(일요일 제외)'
+        text = '○ 관람시간 : 화~일요일 (월요일 휴관), 09:00~18:00\n' + grouped
+        _, ctx = replay_context()
+        ctx['facts']['description'] = text
+        ctx['facts']['conditions'] = ['3 회차(일요일 제외)', '보호자 동반 필수']
+        packet = json.loads(program_input(ctx))
+        self.assertEqual(packet['publicConditionRoles']['eligibility'], ['보호자 동반 필수'])
+        self.assertNotIn('3 회차(일요일 제외)', packet['sessionEvidence'])
+        evidence = packet['weeklyScheduleEvidence']
+        self.assertEqual(evidence['closedDays'], ['월'])
+        self.assertEqual(evidence['sessionsByDay'], {day: ['11:00','14:00'] + ([] if day == '일' else ['16:00'])
+                                                    for day in '화수목금토일'})
+        self.assertNotIn('closedDays', weekly_input_evidence(grouped))
+        self.assertNotIn('sessionsByDay', weekly_input_evidence(grouped))
+        self.assertEqual(evidence['rows'][-1], ['16:00','3 회차','3 회차(일요일 제외)'])
+        with self.assertRaisesRegex(AiJobError, 'ai_schema_error'):
+            weekly_input_evidence(grouped.replace('2 회차\n2 회차', '2 회차'))
+        matrix = '| 시간 | 평일 | 주말 |\n| --- | --- | --- |\n' + '\n'.join(
+            '| ' + ' | '.join(row) + ' |' for row in evidence['rows'])
+        validate_weekly_schedule(matrix, text)
+        from ingest.translation_validation import _validate_markdown
+        import re
+        japanese = matrix.replace('시간','時間').replace('평일','平日').replace('주말','週末')
+        japanese = re.sub(r'(\d) 회차',r'第\1回',japanese).replace('일요일 제외','日曜日を除く')
+        _validate_markdown(matrix, japanese, seoul_grouped=True)
+        with self.assertRaises(AiJobError):
+            _validate_markdown(matrix, japanese.replace('日曜日を除く','土曜日を除く'), seoul_grouped=True)
+        with self.assertRaises(AiJobError):
+            validate_weekly_schedule(matrix.replace('3 회차(일요일 제외)', '3 회차'), text)
+
+    def test_official_supplement_matches_nonempty_cells_without_reassigning_weekdays(self):
+        from ingest.connectors.seoul_reservation import normalize_seoul_item
+        from ingest.program_db import program_rpc_item
+        from ingest.seoul_schedule_detail import supplement_weekly_table
+        from ingest.http_client import HttpClient
+        from test_seoul_reservation import Response, row
+        flat = recorded()['facts']['description']
+        source = normalize_seoul_item(row(DTLCONT=flat), culture_external_links=True)
+        expected = weekly_input_evidence(latest()['reviewed_table'])
+        rows = [expected['headers'], *expected['rows']]
+        html = '<table>' + ''.join('<tr>'+''.join('<td>'+(cell or '')+'</td>' for cell in row)+'</tr>' for row in rows) + '</table>'
+        def read(content, status=200):
+            calls = []
+            def send(url, **kwargs):
+                calls.append(url)
+                self.assertFalse(kwargs['allow_redirects'])
+                return Response(status=status, headers={'Content-Type':'text/html'}, data=content.encode())
+            result = supplement_weekly_table(source, HttpClient(budget=1, transport=send))
+            self.assertEqual(calls, [source.normalized_payload['source_url'].replace('http:', 'https:')])
+            return result
+        enriched = read(html)
+        self.assertNotEqual(enriched.revision_hash,source.revision_hash)
+        self.assertEqual(enriched.normalized_payload['source_body_html'], flat)
+        storage = program_rpc_item(enriched)['program_facts']['description']
+        self.assertEqual(weekly_input_evidence(storage), expected)
+        self.assertIn('해설시간', storage)
+        for bad in (html+html, html.replace('일본어', '중국어'), '<p>표 없음</p>'):
+            self.assertIs(read(bad), source)
+        self.assertIs(read(html,302), source)
+        self.assertIs(supplement_weekly_table(source,HttpClient(budget=0)),source)
+        with self.assertRaises(AiJobError) as err:
+            weekly_input_evidence(source.normalized_payload['program_text'])
+        self.assertEqual(err.exception.diagnostic['reason'], 'missing_cell_positions')
+
     def test_no_weekday_table_does_not_create_one_or_change_dated_schedules(self):
         for description in ('1회차: 10월 18일 10:00~12:00 공예 체험',
                             '진행기간: 10월 18일~25일\n1회차: 10월 18일\n2회차: 10월 25일',

@@ -16,7 +16,7 @@ class SeoulCandidateReview(ProgramCandidateReview):
         self.stage = 'japanese_validation'
         self.check(validate_public_guidance, japanese, 'ja')
         self.check(validate_japanese_output, title_ja, japanese, korean_source=title + '\n' + korean)
-        validate_translation_fidelity(title, korean, title_ja, japanese, report=self.record)
+        validate_translation_fidelity(title, korean, title_ja, japanese, report=self.record, seoul_grouped=True)
 
     def prepare(self, output, facts):
         from ingest.seoul_content import source_description

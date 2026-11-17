@@ -26,6 +26,8 @@ def comparison(value, depth=0):
 
 def safe_detail(stage, code, diagnostic):
     d = diagnostic if isinstance(diagnostic, dict) else {}
+    if stage == 'claim' and d == {'rule': 'weekly_schedule_source', 'reason': 'missing_cell_positions'}:
+        d = {'rule': 'weekly_schedule_cell', 'reason': 'missing'}
     location = d.get('location')
     result = {'stage': stage if stage in LABELS['stage'] else 'unknown',
               'code': code if code in ALLOWED_AI_ERROR_CODES else 'unknown',
