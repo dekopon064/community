@@ -7,6 +7,7 @@ from uuid import UUID
 from ingest.ai_errors import AiJobError, ValidationError
 from ingest.ai_failure_policy import (terminal_failure_result, terminate_no_retry, uncertain_failure,
                                      unknown_failure_result, validate_no_retry_context)
+from ingest.program_failure_diagnostic import program_failure_detail
 from ingest.content_filters import validate_claim_filter, validate_program_filter_snapshot
 from ingest.ai_worker import AiWorkerResult
 from ingest.program_ai import ProgramAIAdapter
@@ -99,7 +100,9 @@ def process_program_job(adapter: ProgramAIAdapter, *, source_item_id: str, revis
             validate_claim_filter(c["filterContext"], worker=worker_id, fence=c,
                                   category=c.get("publicCategory", "program"))
             validate_program_filter_snapshot(c["filterContext"]["data"], c["facts"])
-    except Exception:
+    except Exception as exc:
+        if no_retry:
+            return unknown_failure_result(exc, "claim")
         # Malformed claim context must not be used to fail/complete some other job.
         return AiWorkerResult(status="ai_state_unknown", state_unknown=1)
     fence = {"p_job_id": c["jobId"], "p_claimed_at": c["claimedAt"], "p_lease_until": c["leaseUntil"], "p_worker_id": worker_id}
@@ -116,17 +119,19 @@ def process_program_job(adapter: ProgramAIAdapter, *, source_item_id: str, revis
         except (KeyError, TypeError, ValueError, AttributeError):
             raise RpcAmbiguous() from None
         return AiWorkerResult(status="processed", claimed=1, completed=1)
-    except (RpcAmbiguous, RpcTimeout):
-        return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
     except Exception as exc:
+        stage = getattr(exc, "failure_stage", stage)
         if no_retry:
             if stage == "candidate_completion" or uncertain_failure(exc):
                 return unknown_failure_result(exc, stage)
             try:
-                terminate_no_retry(adapter, c, exc, failure_rpc=PROGRAM_FAILURE_ENDPOINTS[rpc_source])
+                terminate_no_retry(adapter, c, exc, failure_rpc=PROGRAM_FAILURE_ENDPOINTS[rpc_source],
+                                   failure_detail=program_failure_detail(stage, exc))
             except Exception as finish_error:
-                return unknown_failure_result(finish_error, "failure_termination")
+                return unknown_failure_result(finish_error, "failure_termination", validation_error=exc, validation_stage=stage)
             return terminal_failure_result(exc, stage)
+        if isinstance(exc, (RpcAmbiguous, RpcTimeout)):
+            return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
         error = exc.code if isinstance(exc, AiJobError) else "ai_or_enqueue_failed"
         try:
             status = adapter.invoke(f"fail_{rpc_source}_ai", {**fence, "p_error_code": error})

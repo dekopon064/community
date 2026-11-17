@@ -33,6 +33,7 @@ def verify(db):
     sql(schema.replace('CREATE SCHEMA public;', '', 1))
     sql(PURPOSE.read_text(encoding='utf8'))
     sql(MIGRATION.read_text(encoding='utf8'))
+    sql(MIGRATION.with_name('20261117114500_program_ai_failure_detail.sql').read_text(encoding='utf8'))
     sql("""insert into machimoa_review.ingest_sources(source_id,provider,source_kind,connector_type,
         enabled,permission_status,legacy_curation_source) values
         ('myseoul_program','synthetic','content','rest',true,'approved_noncommercial','myseoul_program');
@@ -67,7 +68,13 @@ def verify(db):
     reject(lambda:sql(f"begin;update machimoa_review.source_item_program_facts set facts_version=facts_version+1 "
                       f"where source_item_id='{sid}';select public.{fail}(" + ','.join(map(literal,args)) + ');'),
            'no_retry_attempt_conflict')
-    assert rpc(fail,*args) == rpc(fail,*args) == 'failed'
+    detail=dict(stage='japanese_validation',code='ai_schema_error',rule='schedule_times',reason='missing',
+                location={'field':'content_ja'},expected=[[600,690]],actual=[[600,750]])
+    reject(lambda:rpc(fail,*args,detail,role='authenticated'),'permission denied')
+    reject(lambda:rpc(fail,*args,dict(detail,actual=['private raw text'])),'invalid_failure_detail')
+    assert rpc(fail,*args,detail) == rpc(fail,*args,detail) == rpc(fail,*args) == 'failed'
+    reject(lambda:rpc(fail,*args,dict(detail,actual=[[5,6]])),'failure_detail_conflict')
+    assert json.loads(rpc('admin_ai_queue_review_detail',job))['failureDetail']==detail
     assert sql(f"select status||':'||retry_count||':'||(next_retry_at is null)::text from "
                f"machimoa_review.processing_jobs where id='{job}';") == 'failed:0:true'
     assert json.loads(rpc('admin_ai_queue_review_detail',job))['canRecheck']

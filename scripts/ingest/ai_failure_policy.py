@@ -32,10 +32,11 @@ def terminal_failure_result(error, stage):
 
 def unknown_failure_result(error, stage, *, validation_error=None, validation_stage=None):
     diagnostic = getattr(error, 'diagnostic', None)
-    if isinstance(validation_error, ValidationError):
-        diagnostic = {'validation': validation_error.diagnostic, 'validationStage': validation_stage,
+    if validation_error is not None:
+        diagnostic = {'validation': getattr(validation_error, 'diagnostic', None), 'validationStage': validation_stage,
                       'termination': diagnostic}
     return NoRetryResult(status='ai_state_unknown', claimed=1, state_unknown=1,
+        error_code=getattr(validation_error or error, 'code', None),
         failure_scope='batch', failure_stage=stage, diagnostic=diagnostic)
 
 
@@ -54,7 +55,7 @@ def uncertain_failure(exc: Exception) -> bool:
 
 
 def terminate_no_retry(adapter, context: dict, error: Exception, *, draft=None, stage=None,
-                       failure_rpc='fail_seoul_ai_no_retry') -> None:
+                       failure_rpc='fail_seoul_ai_no_retry', failure_detail=None) -> None:
     """One fenced write; ambiguous responses are never followed by another write."""
     validate_no_retry_context(context)
     args = {
@@ -65,6 +66,8 @@ def terminate_no_retry(adapter, context: dict, error: Exception, *, draft=None, 
     }
     if draft is not None:
         args.update(p_draft=draft, p_stage=stage, p_diagnostic=error.diagnostic)
+    if failure_detail is not None:
+        args["p_failure_detail"] = failure_detail
     status = adapter.invoke('fail_seoul_ai_with_draft' if draft is not None else failure_rpc, args)
     if status != 'failed':
         raise RpcAmbiguous()

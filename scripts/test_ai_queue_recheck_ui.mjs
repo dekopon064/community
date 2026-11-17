@@ -9,7 +9,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 let states=[],refs=[],cursor=0,refCursor=0,focuses=0,effects=[];
 const fakeReact={...React,useState(initial){const i=cursor++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return [states[i],v=>states[i]=typeof v==='function'?v(states[i]):v];},useRef(initial){return refs[refCursor++]??={current:initial};},useEffect(fn){effects.push(fn);},useCallback(fn){return fn;}};
 const cache=new Map();
-function load(name){const filename=path.join(root,name);if(cache.has(filename))return cache.get(filename);if(filename.endsWith('.css'))return {};const exports={};cache.set(filename,exports);
+function load(name){const filename=path.join(root,name);if(cache.has(filename))return cache.get(filename);if(filename.endsWith('.json'))return {default:JSON.parse(fs.readFileSync(filename,'utf8'))};if(filename.endsWith('.css'))return {};const exports={};cache.set(filename,exports);
  const code=ts.transpileModule(fs.readFileSync(filename,'utf8'),{fileName:filename,compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText;
  new Function('require','exports',code)(s=>{if(s==='react')return fakeReact;if(s==='next/link')return {default:()=>null};
   if(s.startsWith('@/')||s.startsWith('.')){const file=s.startsWith('@/')?path.join(root,s.slice(2)):path.resolve(path.dirname(filename),s);for(const suffix of ['.ts','.tsx',''])if(fs.existsSync(file+suffix))return load(path.relative(root,file+suffix));}return require(s);},exports);return exports;}
@@ -82,15 +82,15 @@ row.props.action.props.onClick();eq(states[0],null);eq(myChanged,null);eq(myDraf
 // Actual workspace callback routes each source to its existing facts panel.
 const Workspace=load('app/components/admin/ReviewWorkspace.tsx').default;
 function workspace(){cursor=0;refCursor=0;effects=[];return Workspace();}
-function resetWorkspace(){states=[];refs=[];workspace();states[0]='ai';states[10]=false;}
+function resetWorkspace(){states=[];refs=[];workspace();states[0]='ai';states[13]=false;}
 for(const [source,slot,other] of [['seoul_reservation',3,4],['myseoul_program',4,3]]){
  resetWorkspace();const ai=nodes(workspace()).find(n=>n?.type?.name==='AiQueuePanel');ok(ai);
- ai.props.onReview({...initial,sourceName:source,recheckPending:true,status:'cancelled'});eq(states[0],'facts');eq(states[slot],initial.sourceItemId);eq(states[other],null);states[10]=false;
+ ai.props.onReview({...initial,sourceName:source,recheckPending:true,status:'cancelled'});eq(states[0],'facts');eq(states[slot],initial.sourceItemId);eq(states[other],null);states[13]=false;
  ok(nodes(workspace()).some(n=>n?.type?.name===(source==='seoul_reservation'?'ProgramReviewPanel':'MySeoulReviewPanel')));
 }
 resetWorkspace();let ai=nodes(workspace()).find(n=>n?.type?.name==='AiQueuePanel');ai.props.onReview(initial);eq(states[0],'ai');
 ai.props.onBusy(true);ai=nodes(workspace()).find(n=>n?.type?.name==='AiQueuePanel');ai.props.onReview({...initial,recheckPending:true});eq(states[0],'ai');
-resetWorkspace();states[18]='다른 초안';ai=nodes(workspace()).find(n=>n?.type?.name==='AiQueuePanel');ai.props.onReview({...initial,recheckPending:true});eq(states[0],'ai');eq(states[18],'다른 초안');
+resetWorkspace();states[21]='다른 초안';ai=nodes(workspace()).find(n=>n?.type?.name==='AiQueuePanel');ai.props.onReview({...initial,recheckPending:true});eq(states[0],'ai');eq(states[21],'다른 초안');
 // Only the authoritative failed-Seoul capability exposes the existing recheck
 // controls. No quick exclusion or automatic POST/AI execution is introduced.
 seed({...initial,status:'failed',canRecheck:true,canExclude:false});
@@ -100,5 +100,8 @@ ok(!text(render()).includes('빠른 제외'));
 seed({...initial,status:'failed',canRecheck:false,canExclude:false});
 ok(text(render()).includes('현재 상태에서는 재검토 전환 불가'));
 ok(!text(render()).includes('AI 대기 보류·재검토로 보내기'));
+seed({...initial,status:'failed',canRecheck:true,canExclude:false,
+ failureDetail:{stage:'japanese_validation',code:'ai_schema_error',rule:'schedule_times',reason:'missing',expected:[[600,690]],actual:[[600,750]]}});
+ok(text(render()).includes('정식 실패 저장 당시 진단'));ok(text(render()).includes('10:00–11:30 / 검사값 10:00–12:30'));
 globalThis.fetch=oldFetch;
 console.log(`AI queue component handlers: ${checks} checks passed. Fake fetch only; no DB/AI.`);

@@ -10,6 +10,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit,parse_qs
 from uuid import UUID, uuid4
+from ingest.program_failure_diagnostic import LABELS, safe_detail
 from ingest.pc_worker_sources import SOURCES,CATALOG
 
 SCHEMA = 'machimoa-pc-worker-v3'
@@ -118,7 +119,7 @@ class PcWorkerControl:
 
     @staticmethod
     def public(run):
-        return None if run is None else {k:run[k] for k in ('requestId','command','state','code','counts','sourceResults')}
+        return None if run is None else {k:run[k] for k in ('requestId','command','state','code','counts','sourceResults','failures') if k in run}
 
     def submit(self,token,ticket):
         actor=self.actor(token);value=self.verify(ticket,'run')
@@ -150,7 +151,8 @@ class PcWorkerControl:
     def _execute(self,run):
         try:
             result=self.execute(dict(run['command']))
-            if (not isinstance(result,dict) or set(result) not in ({'state','code','counts'},{'state','code','counts','sourceResults'})
+            if (not isinstance(result,dict) or set(result) not in ({'state','code','counts'},{'state','code','counts','sourceResults'},
+                    {'state','code','counts','sourceResults','failures'})
                 or result['state'] not in {'completed','partial','failed','stopped','unknown','auth_required'}
                 or result['code'] not in {'','completed','worker_failed','state_unknown','reauth_required','auth_unavailable','batch_stopped','contract_unavailable','common_failure','retry_registered','provider_not_reusable','queue_snapshot_changed','queue_snapshot_invalid','queue_snapshot_limit'}
                 or not isinstance(result['counts'],dict) or len(result['counts'])>30
@@ -168,6 +170,21 @@ class PcWorkerControl:
                     or any(not re.fullmatch('[a-z_]{1,40}',k) or type(v) is not int or v<0 for k,v in source['counts'].items())):
                     raise ValueError()
                 seen.add(source['source'])
+            if 'failures' in result:
+                failures = result['failures']
+                if run['command']['kind'] != 'ai' or not isinstance(failures,list) or len(failures)>5000:
+                    raise ValueError('invalid_failure_list')
+                for item in failures:
+                    if (set(item) != {'source','sourceItemId','sequence','detail','stopStage','terminationConfirmed','flow'}
+                        or item['source'] not in SOURCES or str(UUID(item['sourceItemId'])) != item['sourceItemId']
+                        or type(item['sequence']) is not int or not 1 <= item['sequence'] <= 5000
+                        or type(item['terminationConfirmed']) is not bool
+                        or item['flow'] not in ('continued','stopped','last')
+                        or item['stopStage'] is not None and item['stopStage'] not in LABELS['stage']):
+                        raise ValueError('invalid_failure')
+                    detail = item['detail']
+                    if safe_detail(detail['stage'],detail['code'],detail) != detail:
+                        raise ValueError('invalid_failure_detail')
             result={**result,'sourceResults':sources}
         except Exception:
             # No SDK exception strings, tokens, URLs or response bodies in public diagnostics.
