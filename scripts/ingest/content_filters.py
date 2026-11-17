@@ -581,6 +581,13 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
                 block = body[min(positions):max(p+len(v) for p,v in zip(positions,venues))] if min(positions)>=0 else ''
                 if block and all(v in block for v in venues):
                     if len(block)<=1000:put('location',location,excerpt=block)
+            elif not venues and facts.get('delivery_mode') == 'offline':
+                from ingest.seoul_evidence import reservation_start_route
+                raw = payload.get('provider_fields', {})
+                route = reservation_start_route(body, raw)
+                if route and list(facts.get('activity_evidence') or ()) == [raw['PLACENM']]:
+                    start = dict(province='11', district=raw['AREANM'], facility=raw['PLACENM'], address='')
+                    put('location', {'scope':'specific', 'venues':[start]}, excerpt=route)
         elif source == 'myseoul_program' and (facts.get('activity_region') == 'unknown' or
                 any(c.get('field') == 'venue' for c in facts.get('conflicts', ()))):
             pass  # Do not reintroduce a location the source assessment could not resolve.

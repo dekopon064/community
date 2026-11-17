@@ -41,13 +41,14 @@ def label_match(line: str, labels) -> tuple[str, str] | None:
     return None
 
 
-def _venue_lines(text: str) -> list[str]:
+def _venue_lines(text: str, *, exclude_directions: bool = False) -> list[str]:
     """Keep line positions, but exclude facility/directions sections as venues."""
     lines = []
     guide = False
     for line in text.splitlines():
         heading = _clean(line).strip('[<>【】] ')
-        if _FACILITY.search(heading) or re.match(r'^(?:주차(?:\s*및\s*위치)?|오시는\s*길|위치)\s*안내', heading):
+        if (_FACILITY.search(heading) or re.match(r'^(?:주차(?:\s*및\s*위치)?|오시는\s*길|위치)\s*안내', heading)
+                or (exclude_directions and label_match(line, ('오시는길', '가는길', '교통편', '주차안내')))):
             guide = True
         else:
             section = label_match(line, ACTIVITY_LABELS)
@@ -216,18 +217,83 @@ def group_itinerary(text: str) -> bool:
 
 def physical_activity(text: str) -> bool:
     """Physical activity evidence, independent of whether its district is known."""
-    main = activity_text(text)
+    main = activity_text('\n'.join(_venue_lines(text, exclude_directions=True)))
     return any(re.search(r'도보\s*(?:관광|탐방|여행|답사)|트레킹|노르딕워킹|현장\s*(?:대면\s*수업|견학|투어)|(?:공원|숲길|도성|정원|수목원)[^\n.]{0,40}(?:걷|걸|거닐|산책|탐방|돌아보|방문)', line)
                and not re.search(r'진행하지|아님|불가|검색|다른\s*프로그램|취소|준비|미취학|주의사항|온라인|비대면|영상', line)
                for line in main.splitlines())
 
 
-def declares_walking_tour(text: str) -> bool:
+def declares_walking_tour(text: str, *, exclude_directions: bool = False) -> bool:
     """An affirmative description of this session, including its participant notice."""
     return any(re.match(
         r'^(?:(?:본|이번)\s*(?:프로그램|답사|행사)(?:은|는)\s*)?도보\s*(?:답사|탐방)로\s*'
         r'진행(?:합니다|됩니다|하므로|되므로)(?=[\s.,!]|$)', _clean(line))
-        for line in _venue_lines(text))
+        for line in _venue_lines(text, exclude_directions=exclude_directions))
+
+
+def reservation_walking_program(text: str) -> bool:
+    """The course itself involves walking; walking directions describe access."""
+    statement = re.compile(
+        r'^(?:(?:이번|본)\s*)?(?:답사|탐방|투어)\s*(?:코스|프로그램)(?:는|은)\s*'
+        r'(?:약\s*)?(?:\d+\s*(?:시간|분)\s*)+(?:(?:정도|동안)\s*)?걷는\s*도보\s*프로그램'
+        r'(?:입니다\b|으로(?=\s))')
+    for line in _venue_lines(text, exclude_directions=True):
+        if statement.match(_clean(line)) and not re.search(r'아닙니다|아님|않습|취소|예시|변경\s*전', line):
+            return True
+    return False
+
+
+def reservation_start_route(text: str, raw: dict) -> str | None:
+    """Quote the selected session's route when its first stop is the registered venue."""
+    from ingest.content_filters import DISTRICTS
+    place = raw.get('PLACENM')
+    if (not isinstance(place, str) or not matching_place(place, (place,)) or re.search(r'[,/;|]', place)
+            or raw.get('AREANM') not in DISTRICTS['11'] or variable_venue(text + '\n' + place)):
+        return None
+    # Bind the announcement to its named course in the introduction. A later
+    # calendar can repeat that name while describing a different session.
+    course = None
+    selected = False
+    intro = True
+    starts = set()
+    evidence = None
+    route_separator = r'\s*[→⇒]\s*|\s+[-–—]\s+'
+    awaiting_route = False
+    for line in _venue_lines(text):
+        value = _clean(line)
+        if not value:
+            continue
+        if label_match(line, ('오시는길', '가는길', '교통편', '주차안내')):
+            break
+        start = label_match(line, ('출발지', '출발장소', '집결장소', '집합장소'))
+        if start and start[1] != place:
+            return None
+        if course and value.startswith('['):
+            intro = False
+        announcement = re.fullmatch(
+            r'제?\s*\d+\s*회차\s*(?:답사|탐방|투어)는\s+(?:[^.\n]{1,40}의\s+)?'
+            r'([가-힣\w ]{2,30}?)\s+(?:지역|코스)입니다[.!]?', value)
+        if intro and announcement:
+            if course:
+                return None
+            course = announcement[1].strip()
+        elif course and (heading := re.fullmatch(r'([^:：]+?)\s*[:：]\s*[^:：]+(?:해설사|가이드)', value)):
+            selected = intro and heading[1].strip() == course
+            if intro and not selected:
+                return None
+            awaiting_route = True
+        elif awaiting_route:
+            if not selected and re.match(r'^\d{1,2}[./]\d{1,2}', _BULLET.sub('', line)):
+                continue  # Calendar date between a course heading and its itinerary.
+            stops = re.split(route_separator, value)
+            if (len(stops) < 2 or not re.search(r'[가-힣A-Za-z]{2}', stops[1]) or stops[1] == stops[0]
+                    or re.search(r'예시|가상|미정|변경\s*전', value)):
+                return None
+            starts.add(stops[0])
+            if selected:
+                evidence = line.strip()
+            awaiting_route = False
+    return evidence if starts == {place} else None
 
 
 def without_booking_mode(text: str) -> str:
@@ -318,6 +384,15 @@ def activity_topic(text: str, base: str | None = None) -> str | None:
         return None
     from ingest.content_filters import program_topics
     found = program_topics(main)
+    # The cultural resource is the object of the tour, not the setting of an
+    # unrelated class. Require an actual activity rather than an interest list.
+    cultural_tour = re.compile(
+        r'(?:한옥|문화유산|역사\s*자원|건축\s*유산)(?:을|를)?\s*(?:도보\s*)?'
+        r'(?:답사|탐방|해설)(?:합니다|하는\s*(?:프로그램|투어)|'
+        r'(?:를|을)\s*(?:진행합니다|운영합니다|\d+개\s*코스[^.\n]{0,35}준비했습니다))')
+    if any(cultural_tour.search(sentence) and not re.search(r'아닙니다|아닌|하지\s*않|예시|다른\s*프로그램', sentence)
+           for sentence in re.split(r'[.!?\n]', main)):
+        found.add('culture_experience')
     if base:
         found.add(base)
     if nature_topic(text): found.add('culture_experience')

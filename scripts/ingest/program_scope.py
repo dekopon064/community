@@ -14,7 +14,7 @@ from ingest.connectors.seoul_reservation import KST
 from ingest.evaluate_gates import EvaluationResult
 from ingest.models import JobPlan, ObservationRecord
 from ingest.seoul_evidence import activity_locations, activity_text, activity_topic, physical_activity, group_itinerary, venue_filter, label_values, matching_place, period_proof, uncertain_activity
-from ingest.seoul_evidence import declares_walking_tour, variable_venue, without_booking_mode
+from ingest.seoul_evidence import declares_walking_tour, reservation_start_route, reservation_walking_program, variable_venue, without_booking_mode
 
 PROGRAM_SCHEMA = "program-scope-v1-local"
 PROGRAM_PROFILE = "program_capital_v1_local"
@@ -109,7 +109,7 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
 
     locations = activity_locations(body, payload.get('tables', ()))
     itinerary = group_itinerary(body)
-    onsite_tour = itinerary or declares_walking_tour(body)
+    onsite_tour = itinerary or declares_walking_tour(body, exclude_directions=True) or reservation_walking_program(body)
     delivery_context = context
     online_pattern = r"온라인\s*(?:교육|프로그램|수업|참여)|비대면\s*(?:교육|수업|참여)|원격\s*(?:화상)?\s*(?:교육|수업)|ZOOM|줌\s*(?:수업|화상)"
     negation = r"불가|불가능|없음|아님|진행하지"
@@ -135,6 +135,8 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
             missing.append("delivery_mode_unknown")
             mode = "unknown"
     activity = "not_applicable" if mode == "online" else "unknown"
+    if not locations and mode == 'offline' and onsite_tour and reservation_start_route(body, raw):
+        locations = (raw['PLACENM'],)
     if mode in {"offline", "hybrid"} and not variable_venue(body + '\n' + str(raw.get('PLACENM', ''))):
         joined = "\n".join(locations)
         cap, noncap = bool(CAPITAL.search(joined)), bool(NONCAPITAL.search(joined))
