@@ -126,6 +126,11 @@ def recorded_packet():
     return c
 
 
+def maximum_job_cost(summary_input, cost):
+    translation_input = summary_input + SUMMARY_MAX_TOKENS + CLAUDE_TRANSLATION_INPUT_RESERVE_TOKENS
+    return cost(summary_input, SUMMARY_MAX_TOKENS) + cost(translation_input, TRANSLATION_MAX_TOKENS)
+
+
 class RecordedFeeReplayTests(unittest.TestCase):
     def setUp(self):
         guard = patch.object(socket.socket, 'connect', side_effect=AssertionError('network forbidden'))
@@ -255,35 +260,45 @@ class RecordedFeeReplayTests(unittest.TestCase):
         classified = classified_context('program')
         classified['nativeConfirmedFacts']['programFacts'] = c['facts']
         for body, native in ((myseoul_input(c), True), (classification_input(classified), False)):
+            expected_prompt = MYSEOUL_SUMMARY_SYSTEM if native else SUMMARY_SYSTEM.rstrip() + '\n\n' + MYSEOUL_FEE_RULES
             for transport in ('claude','openai','plan'):
                 with self.subTest(transport=transport, native=native):
                     if transport == 'claude':
                         client = ClaudeClient()
                         client.messages.messages[0] = _message(json.dumps(RECORDED_SUMMARY))
                         adapter = ClaudeAdapter(api_key='synthetic-unused', client=client)
+                        counts, creates = client.messages.count_calls, client.messages.create_calls
+                        prompt_key, limit_key = 'system', 'max_tokens'
+                        blocked = maximum_job_cost(client.messages.count_values[0], conservative_cost_usd) > CLAUDE_JOB_USD_CAP
                     elif transport == 'openai':
                         client = FakeClient()
                         client.responses.results[0] = response(json.dumps(RECORDED_SUMMARY))
                         adapter = OpenAIAdapter(client=client)
+                        counts, creates = client.responses.counts, client.responses.requests
+                        prompt_key, limit_key = 'instructions', 'max_output_tokens'
+                        blocked = maximum_job_cost(client.responses.count_values[0], bounded_cost) > GPT_JOB_USD_CAP
                     else:
                         adapter, client = self.plan_pair()
+                        blocked = False
                     method = adapter.summarize_myseoul_ko if native else adapter.summarize_ko
-                    # Keep the recorded raw response unchanged, while respecting
-                    # the already deployed legacy-heading normalization.
-                    self.assertEqual(method(body, 'https://synthetic.invalid', '합성')[0],
-                                     normalize_schedule_heading(RECORDED_SUMMARY['content_ko'], 'ko'))
-                    if transport == 'claude':
-                        request = client.messages.create_calls[0]
-                        instructions = request['system']
-                        self.assertEqual(client.messages.count_calls[0]['system'], instructions)
-                        self.assertEqual(request['max_tokens'], SUMMARY_MAX_TOKENS)
-                    elif transport == 'openai':
-                        request = client.responses.requests[0]
-                        instructions = request['instructions']
-                        self.assertEqual(client.responses.counts[0]['instructions'], instructions)
-                        self.assertEqual(request['max_output_tokens'], SUMMARY_MAX_TOKENS)
+                    if blocked:
+                        with self.assertRaises(AiJobError) as failure:
+                            method(body, 'https://synthetic.invalid', '합성')
+                        self.assertEqual(failure.exception.code, 'ai_blocked_cost_cap')
+                        self.assertEqual(creates, [])
                     else:
+                        self.assertEqual(method(body, 'https://synthetic.invalid', '합성')[0],
+                                         normalize_schedule_heading(RECORDED_SUMMARY['content_ko'], 'ko'))
+                    if transport == 'plan':
                         instructions = client.calls[0]['instructions']
+                    else:
+                        self.assertEqual(len(counts), 1)
+                        instructions = counts[0][prompt_key]
+                        if not blocked:
+                            self.assertEqual(len(creates), 1)
+                            self.assertEqual(creates[0][prompt_key], instructions)
+                            self.assertEqual(creates[0][limit_key], SUMMARY_MAX_TOKENS)
+                    self.assertEqual(instructions, expected_prompt)
                     self.assertEqual(instructions.count(MYSEOUL_FEE_RULES), 1)
 
     def test_other_sources_keep_base_prompt_and_existing_budget_still_blocks(self):
@@ -291,22 +306,6 @@ class RecordedFeeReplayTests(unittest.TestCase):
             adapter, client = self.plan_pair()
             adapter.summarize_ko(body, None)
             self.assertEqual(client.calls[0]['instructions'], SUMMARY_SYSTEM)
-        # Bytes are a conservative diagnostic bound, not a token counter result.
-        # It need not fit every provider's budget; an overflow must block creation.
-        input_bound = 1136 + len(MYSEOUL_FEE_RULES.encode('utf-8')) + 2  # Joining newlines too.
-        translation_bound = input_bound + SUMMARY_MAX_TOKENS + CLAUDE_TRANSLATION_INPUT_RESERVE_TOKENS
-        self.assertLessEqual(conservative_cost_usd(input_bound, SUMMARY_MAX_TOKENS)
-            + conservative_cost_usd(translation_bound, TRANSLATION_MAX_TOKENS), CLAUDE_JOB_USD_CAP)
-        self.assertGreater(bounded_cost(input_bound, SUMMARY_MAX_TOKENS)
-            + bounded_cost(translation_bound, TRANSLATION_MAX_TOKENS), GPT_JOB_USD_CAP)
-        client = FakeClient()
-        client.responses.count_values[0] = input_bound
-        adapter = OpenAIAdapter(client=client)
-        with self.assertRaises(AiJobError) as failure:
-            adapter.summarize_myseoul_ko(myseoul_input(recorded_packet()), None)
-        self.assertEqual(failure.exception.code, 'ai_blocked_cost_cap')
-        self.assertEqual(client.responses.requests, [])
-        self.assertEqual(len(client.responses.counts), 1)
         for factory, client in ((ClaudeAdapter, ClaudeClient()), (OpenAIAdapter, FakeClient())):
             if factory is ClaudeAdapter:
                 client.messages.count_values[0] = 100000
@@ -318,17 +317,16 @@ class RecordedFeeReplayTests(unittest.TestCase):
                 adapter.summarize_myseoul_ko(myseoul_input(recorded_packet()), None)
             self.assertEqual(failure.exception.code, 'ai_blocked_cost_cap')
             self.assertFalse(client.messages.create_calls if factory is ClaudeAdapter else client.responses.requests)
+            self.assertEqual(len(client.messages.count_calls if factory is ClaudeAdapter else client.responses.counts), 1)
 
     def test_current_myseoul_request_token_boundary_protects_both_paid_providers(self):
         self.assertEqual(GPT_JOB_USD_CAP, .10)
         self.assertEqual(CLAUDE_JOB_USD_CAP, .10)
-        reserve = SUMMARY_MAX_TOKENS + CLAUDE_TRANSLATION_INPUT_RESERVE_TOKENS
         for factory, cost in ((ClaudeAdapter, conservative_cost_usd), (OpenAIAdapter, bounded_cost)):
-            total = lambda n: cost(n, SUMMARY_MAX_TOKENS) + cost(n + reserve, TRANSLATION_MAX_TOKENS)
-            boundary = next(n for n in range(100000) if total(n) > .10)
-            self.assertLessEqual(total(boundary - 1), .10)
-            self.assertGreater(total(boundary), .10)
-            for tokens, blocked in ((boundary - 1, False), (boundary, True), (boundary + 1, True)):
+            boundary = next(n for n in range(100001) if maximum_job_cost(n, cost) > .10)
+            # The fixed translation reserve alone may exceed the cap at zero input.
+            for tokens in range(max(0, boundary - 1), boundary + 2):
+                blocked = tokens >= boundary
                 with self.subTest(provider=factory.__name__, tokens=tokens):
                     if factory is ClaudeAdapter:
                         client = ClaudeClient()

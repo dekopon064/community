@@ -26,7 +26,7 @@ export function failureDetail(raw:unknown):FailureDetail {
   return d;
 }
 const tags:Record<string,string>={people:'명',families:'가족',age:'나이',minimum:'최소',maximum:'최대',under:'미만',over:'초과',approximately:'약',count:'수량'};
-function display(v:Value|undefined,rule:string):string {
+export function displayComparison(v:Value|undefined,rule:string):string {
   if(v==null)return '확인값 없음';
   if(Array.isArray(v)){
     if(!v.length)return '검출값 없음';
@@ -35,8 +35,8 @@ function display(v:Value|undefined,rule:string):string {
     if(rule==='schedule_times' && v.length===2 && v.every(n=>typeof n==='number'))
       return (v as number[]).map(n=>Math.floor(n/60)+':'+String(n%60).padStart(2,'0')).join('–');
     if(rule==='schedule_dates' && v.length===2 && v.every(n=>typeof n==='number'))return v[0]+'월 '+v[1]+'일';
-    if(rule==='reviewed_fee' && typeof v[1]==='boolean')return [v[1]?'무료':'',Array.isArray(v[0])&&v[0].length?display(v[0],rule)+'원':''].filter(Boolean).join(' · ')||'금액 미검출';
-    return v.map(x=>display(x,rule)).join(' · ');
+    if(rule==='reviewed_fee' && typeof v[1]==='boolean')return [v[1]?'무료':'',Array.isArray(v[0])&&v[0].length?displayComparison(v[0],rule)+'원':''].filter(Boolean).join(' · ')||'금액 미검출';
+    return v.map(x=>displayComparison(x,rule)).join(' · ');
   }
   if(typeof v==='number' && ['schedule_weekdays','dated_schedule_weekday'].includes(rule))return '월화수목금토일'[v]+'요일';
   return tags[String(v)]??String(v);
@@ -48,6 +48,6 @@ export function failureLines(d:FailureDetail):string[] {
   if(position)lines.push(position);
   if(d.stage==='japanese_validation' && ['schedule_dates','schedule_times','schedule_counts','schedule_weekdays','schedule_years'].includes(d.rule))
     lines.push('비교 근거: 확인된 일정·집결 안내와 일본어 본문');
-  if('expected' in d || 'actual' in d)lines.push('기준값 '+display(d.expected,d.rule)+' / 검사값 '+display(d.actual,d.rule));
+  if('expected' in d || 'actual' in d)lines.push('기준값 '+displayComparison(d.expected,d.rule)+' / 검사값 '+displayComparison(d.actual,d.rule));
   return lines;
 }

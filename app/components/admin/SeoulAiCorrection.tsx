@@ -66,12 +66,12 @@ const outcomeText: Record<string, string> = {
   invalid_suggestion: '수정 제안이 요청 범위에 맞지 않아 비공개 초안을 유지했습니다.',
 };
 
-export function SeoulFailedDraft({ jobId, sourceItemId }: { jobId: string; sourceItemId: string }) {
+export function SeoulFailedDraft({ jobId, sourceItemId, programDraft = false }: { programDraft?: boolean; jobId: string; sourceItemId: string }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
   const [loaded, setLoaded] = useState(false);
-  const endpoint = '/api/admin/seoul-ai-correction/' + jobId;
+  const endpoint = '/api/admin/seoul-ai-correction/' + jobId + (programDraft ? '?view=private-draft' : '');
 
   async function read() {
     setPending(true);

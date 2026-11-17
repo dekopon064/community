@@ -34,6 +34,11 @@ def verify(db):
     sql(PURPOSE.read_text(encoding='utf8'))
     sql(MIGRATION.read_text(encoding='utf8'))
     sql(MIGRATION.with_name('20261117114500_program_ai_failure_detail.sql').read_text(encoding='utf8'))
+    if sql("select to_regclass('machimoa_review.seoul_ai_correction_drafts') is null")=='t':
+        sql(MIGRATION.with_name('20261104004126_seoul_ai_correction.sql').read_text(encoding='utf8'))
+    if sql("select to_regclass('machimoa_review.seoul_ai_candidate_reviews') is null")=='t':
+        sql(MIGRATION.with_name('20261104031651_seoul_ai_candidate_review.sql').read_text(encoding='utf8'))
+    sql(MIGRATION.with_name('20261117114501_program_private_ai_outputs.sql').read_text(encoding='utf8'))
     sql("""insert into machimoa_review.ingest_sources(source_id,provider,source_kind,connector_type,
         enabled,permission_status,legacy_curation_source) values
         ('myseoul_program','synthetic','content','rest',true,'approved_noncommercial','myseoul_program');
@@ -72,6 +77,30 @@ def verify(db):
                 location={'field':'content_ja'},expected=[[600,690]],actual=[[600,750]])
     reject(lambda:rpc(fail,*args,detail,role='authenticated'),'permission denied')
     reject(lambda:rpc(fail,*args,dict(detail,actual=['private raw text'])),'invalid_failure_detail')
+    finish='finish_program_ai_candidate_review'
+    source='myseoul_program'
+    output=dict(titleKo=c['title'],titleJa='合成',summaryKo='안내',summaryJa='案内',
+                contentKo='오전 10시',contentJa='午前11時',aiModel='fake')
+    review={'source':'오전 10시','issues':[{'stage':'japanese_validation','rule':'clock','reason':'mismatch',
+            'disposition':'change','field':'contentJa','before':'11時','after':'10時','evidence':'오전 10시'}]}
+    finish_args=[source,job,rev,at,lease,'test',c['factsVersion'],output,review]
+    reject(lambda:rpc(finish,*finish_args,role='authenticated'),'permission denied')
+    reject(lambda:rpc(finish,*finish_args[:6],c['factsVersion']+1,output,review),'stale')
+    reject(lambda:rpc(finish,*finish_args[:-2],dict(output,titleJa=''),review),'invalid')
+    statement='select public.'+finish+'('+','.join(map(literal,finish_args))+');'
+    results=sql("begin; set local role service_role;"+statement+statement+"reset role;"
+                "select review_status from machimoa_review.curation_candidates;"
+                "select public.admin_seoul_ai_candidate_review(id) from machimoa_review.curation_candidates;rollback;").splitlines()
+    assert json.loads(results[0])['outcome']=='inserted' and json.loads(results[1])['outcome']=='duplicate'
+    assert results[2]=='pending' and json.loads(results[3])['review']==dict(review,matchesSavedOutput=True)
+    draft={'ko':'합성 한국어','ja':'合成本文'}
+    save='fail_program_ai_with_draft'
+    reject(lambda:rpc(save,source,*args,detail,draft,role='authenticated'),'permission denied')
+    reject(lambda:rpc(save,source,*args,detail,{**draft,'token':'forbidden'}),'invalid_failure_draft')
+    assert rpc(save,source,*args,detail,draft)==rpc(save,source,*args,detail,draft)=='failed'
+    reject(lambda:rpc(save,source,*args,detail,dict(draft,ko='다른 문구')),'failure_draft_conflict')
+    reject(lambda:rpc('admin_program_ai_private_draft',job,role='anon'),'permission denied')
+    assert json.loads(rpc('admin_program_ai_private_draft',job))['output']==draft
     assert rpc(fail,*args,detail) == rpc(fail,*args,detail) == rpc(fail,*args) == 'failed'
     reject(lambda:rpc(fail,*args,dict(detail,actual=[[5,6]])),'failure_detail_conflict')
     assert json.loads(rpc('admin_ai_queue_review_detail',job))['failureDetail']==detail

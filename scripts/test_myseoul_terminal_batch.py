@@ -32,7 +32,7 @@ class MySeoulTerminalBatch(unittest.TestCase):
                         raise RpcAmbiguous()
                     if mode in ('auth', 'quota'):
                         raise AiJobError('ai_http_401' if mode == 'auth' else 'ai_http_429')
-                    if mode not in ('unknown_candidate', 'ok', 'clock', 'lost_clock_receipt', 'ko_schedule'):
+                    if mode not in ('unknown_candidate', 'ok', 'clock', 'lost_clock_receipt', 'ko_schedule', 'draft', 'lost_draft', 'no_evidence'):
                         raise AiJobError('ai_schema_error')
                 body, status, model=summarize(*args, **kwargs)
                 if len(claims)==1 and mode=='ko_schedule':
@@ -42,9 +42,20 @@ class MySeoulTerminalBatch(unittest.TestCase):
             def translate_ja(self, *args):
                 events.append('translation')
                 title, body, status, model = translate(*args)
-                if len(claims)==1 and mode in ('clock','lost_clock_receipt'):
+                if len(claims)==1 and mode in ('clock','lost_clock_receipt','no_evidence'):
                     body=body.replace('10:00〜11:30','10:00〜12:30')
+                if len(claims)==1 and mode in ('draft','lost_draft'):
+                    body = '[対象]\n合成テキスト'  # Japanese summary and required sections missing
                 return title, body, status, model
+
+            def suggest_program_review(self, *, output, source, issues):
+                events.append('suggest')
+                if mode == 'ko_schedule':
+                    return {'findings': []}
+                index = next(i for i, v in enumerate(issues, 1) if v['rule']=='schedule_times')
+                return {'findings':[dict(issue=index, decision='change', field='contentJa',
+                    before='12:30', after='11:30', evidence='missing source excerpt' if mode=='no_evidence'
+                    else '10월 3일 (토) 10:00~11:30, 총 3회')]}
 
             def release_terminated_attempt(self):
                 events.append('release')
@@ -66,12 +77,40 @@ class MySeoulTerminalBatch(unittest.TestCase):
             if name == 'fail_myseoul_ai_no_retry':
                 self.assertEqual(args['p_attempt'], c['failurePolicy']['attempt'])
                 events.append('fail')
-                if mode in ('clock','lost_clock_receipt'):
-                    self.assertEqual(args['p_failure_detail'], dict(stage='japanese_validation',rule='schedule_times',
-                        code='ai_schema_error',reason='missing',location={'field':'content_ja'},expected=[[600,690]],actual=[[600,750]]))
                 if mode in ('lost_receipt','lost_clock_receipt'):
                     raise RpcAmbiguous()
                 return 'queued' if mode == 'wrong_receipt' else 'failed'
+            if name == 'fail_program_ai_with_draft':
+                self.assertEqual(args['p_source'], c['source'])
+                self.assertEqual(args['p_attempt'], c['failurePolicy']['attempt'])
+                self.assertEqual(args['p_failure_detail']['stage'], 'japanese_validation')
+                self.assertEqual(set(args['p_draft']), {'ko','ja','jaTitle'})
+                self.assertIn('[주요 내용]', args['p_draft']['ko'])
+                self.assertIn('合成テキスト', args['p_draft']['ja'])
+                events.append('draft+fail')
+                if mode=='lost_draft':
+                    raise RpcAmbiguous()
+                return 'failed'
+            if name == 'finish_program_ai_candidate_review':
+                self.assertEqual(args['p_source'], c['source'])
+                self.assertEqual(args['p_facts_version'], c['factsVersion'])
+                issues=args['p_review']['issues']
+                if mode=='ko_schedule':
+                    self.assertTrue(any(i['stage']=='korean_validation' for i in issues))
+                else:
+                    issue=next(i for i in issues if i['rule']=='schedule_times')
+                    self.assertEqual((issue['expected'],issue['actual']), ([[600,690]],[[600,750]]))
+                    if mode=='no_evidence':
+                        self.assertEqual(issue['reviewOutcome'],'evidence_not_matched')
+                        self.assertNotIn('after',issue)
+                    else:
+                        self.assertEqual((issue['before'],issue['after']),('12:30','11:30'))
+                        self.assertIn(issue['evidence'],args['p_review']['source'])
+                    self.assertIn('12:30',args['p_output']['contentJa'])
+                events.append('review')
+                if mode=='lost_clock_receipt':
+                    raise RpcAmbiguous()
+                return {'outcome':'inserted', 'candidateId': c['sourceItemId']}
             self.assertEqual(name, 'finish_myseoul_program_ai')
             events.append('finish')
             if mode == 'unknown_candidate':
@@ -82,19 +121,71 @@ class MySeoulTerminalBatch(unittest.TestCase):
             worker = ExistingWorkers('synthetic', ai_context=lambda: (ProgramAIAdapter(rpc), Pro(), lambda: None))
             return worker({'kind':'ai', 'source':'all', 'limit':'all'}), events
 
+    def test_pro_stream_retains_completed_fields_before_schema_validation(self):
+        import json
+        from ingest.ai_provider import create_provider_adapter
+        from ingest.myseoul_ai import process_myseoul_job
+        from test_ingest_ai_chatgpt_plan import streamed, verified_session
+        from test_ingest_ai_openai import response
+
+        for incomplete in (False, True):
+            with self.subTest(incomplete=incomplete):
+                c = context()
+                c['failurePolicy'] = {'policy':'no_retry', 'attempt':'c'*64}
+                ko = '[한 줄 요약]\n체험 안내입니다.\n[주요 내용]\n문화 체험입니다.'
+                summary = {'content_ko':ko, 'facts':dict.fromkeys(
+                    ('audience','geo_age_income','amount_period_deadline','how_to_apply'),'공식 안내')}
+                _, translate = providers(c)
+                _, ja, _, _ = translate(c['title'],'진행 일정: 집결 안내: 3회')
+                ja = ja.replace('11:30','12:30')
+                translation = {'content_ja':ja}
+                if not incomplete:
+                    translation['title_ja']='家族体験'
+                responses=[summary, translation]
+                if not incomplete:
+                    responses.append({'findings':[]})
+                client=streamed([response(json.dumps(value, ensure_ascii=False)) for value in responses])
+                pro=create_provider_adapter('chatgpt_plan', None, client=client, plan_session=verified_session())
+                self.addCleanup(pro.close)
+                calls=[]
+                def rpc(name,args):
+                    calls.append((name,args))
+                    if name.startswith('claim_'):
+                        return [c]
+                    if name=='fail_program_ai_with_draft':
+                        return 'failed'
+                    if name=='finish_program_ai_candidate_review':
+                        return {'candidateId':c['sourceItemId'],'outcome':'inserted'}
+                    raise AssertionError(name)
+                with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
+                    result=process_myseoul_job(ProgramAIAdapter(rpc), source_item_id=c['sourceItemId'],
+                        revision=c['revision'],worker_id=c['workerId'],no_retry=True,
+                        summarize_ko=pro.summarize_myseoul_ko,translate_ja=pro.translate_ja)
+                self.assertEqual(len(calls),2)
+                name,args=calls[-1]
+                if incomplete:
+                    self.assertEqual((name,result.termination_confirmed,len(client.calls)),
+                                     ('fail_program_ai_with_draft',True,2))
+                    self.assertEqual(args['p_draft']['ja'],ja)
+                    self.assertEqual(set(args['p_draft']),{'ko','ja'})
+                else:
+                    self.assertEqual((name,result.completed,len(client.calls)),
+                                     ('finish_program_ai_candidate_review',1,3))
+                    self.assertIn('schedule_times',[issue['rule'] for issue in args['p_review']['issues']])
+
     def test_first_failure_receipt_allows_next_candidate(self):
         result, events = self.run_case('item')
         self.assertEqual(events, ['claim','summary','fail','release','claim','summary','translation','finish'])
         self.assertEqual((result['state'], result['counts']['failed'], result['counts']['completed'],
                           result['counts']['unprocessed']), ('partial',1,1,0))
 
-    def test_korean_failure_has_comparison_before_translation(self):
-        run, events=self.run_case('ko_schedule')
-        row,=run['failures']
-        self.assertEqual(row['detail']['stage'],'korean_validation')
-        self.assertIn('expected',row['detail'])
-        self.assertIn('actual',row['detail'])
-        self.assertEqual(events,['claim','summary','fail','release','claim','summary','translation','finish'])
+    def test_advisory_outputs_can_continue_after_candidate_receipt(self):
+        for mode in ('clock','ko_schedule','no_evidence'):
+            with self.subTest(mode=mode):
+                run, events=self.run_case(mode)
+                self.assertEqual(run['counts']['completed'], 2)
+                self.assertEqual(events,['claim','summary','translation','suggest','review',
+                                         'claim','summary','translation','finish'])
 
     def test_authenticated_bridge_keeps_only_safe_diagnostics(self):
         from ingest.pc_worker_bridge import PcWorkerControl
@@ -108,15 +199,19 @@ class MySeoulTerminalBatch(unittest.TestCase):
         self.assertTrue(status['busy'])
         self.assertEqual(status['run']['failures'],run['failures'])
 
-    def test_observed_difference_and_batch_decision(self):
-        for mode,flow,confirmed in [('clock','continued',True),('lost_clock_receipt','stopped',False)]:
+    def test_private_draft_and_terminal_receipt_are_one_write(self):
+        for mode,confirmed in [('draft', True), ('lost_draft', False)]:
             run, events=self.run_case(mode)
             row,=run['failures']
-            self.assertEqual((row['flow'],row['terminationConfirmed']), (flow,confirmed))
-            self.assertEqual((row['detail']['expected'],row['detail']['actual']), ([[600,690]],[[600,750]]))
-            self.assertEqual(row['stopStage'], None if confirmed else 'failure_termination')
+            self.assertEqual((row['flow'],row['terminationConfirmed']),
+                             ('continued' if confirmed else 'stopped', confirmed))
             self.assertEqual(events.count('claim'), 2 if confirmed else 1)
-            self.assertEqual(events.count('fail'), 1)
+            self.assertEqual(events.count('draft+fail'), 1)
+            self.assertNotIn('suggest',events)
+            self.assertNotIn('合成テキスト', str(run))
+        run, events=self.run_case('lost_clock_receipt')
+        self.assertEqual(events, ['claim','summary','translation','suggest','review'])
+        self.assertEqual(run['failures'][0]['stopStage'], 'candidate_completion')
 
     def test_stop_without_another_claim_or_write(self):
         for mode, code, events in [

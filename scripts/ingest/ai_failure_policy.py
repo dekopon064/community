@@ -55,7 +55,7 @@ def uncertain_failure(exc: Exception) -> bool:
 
 
 def terminate_no_retry(adapter, context: dict, error: Exception, *, draft=None, stage=None,
-                       failure_rpc='fail_seoul_ai_no_retry', failure_detail=None) -> None:
+                       failure_rpc='fail_seoul_ai_no_retry', failure_detail=None, draft_source=None) -> None:
     """One fenced write; ambiguous responses are never followed by another write."""
     validate_no_retry_context(context)
     args = {
@@ -64,10 +64,14 @@ def terminate_no_retry(adapter, context: dict, error: Exception, *, draft=None, 
         'p_worker_id': context['workerId'], 'p_attempt': context['failurePolicy']['attempt'],
         'p_error_code': error.code if isinstance(error, AiJobError) else 'ai_or_enqueue_failed',
     }
-    if draft is not None:
+    if draft is not None and draft_source is not None:
+        failure_rpc = 'fail_program_ai_with_draft'
+        args.update(p_source=draft_source, p_draft=draft)
+    elif draft is not None:
+        failure_rpc = 'fail_seoul_ai_with_draft'
         args.update(p_draft=draft, p_stage=stage, p_diagnostic=error.diagnostic)
     if failure_detail is not None:
         args["p_failure_detail"] = failure_detail
-    status = adapter.invoke('fail_seoul_ai_with_draft' if draft is not None else failure_rpc, args)
+    status = adapter.invoke(failure_rpc, args)
     if status != 'failed':
         raise RpcAmbiguous()

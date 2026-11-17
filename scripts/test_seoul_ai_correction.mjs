@@ -50,6 +50,11 @@ assert.equal(calls.length, 0);
 const detail = await seoulCorrectionRequest(new Request(base), id, deps);
 assert.match(detail.headers.get('cache-control'), /no-store/);
 assert.deepEqual(calls.pop(), ['admin_seoul_ai_draft', { p_job: id }]);
+const privateDraft = new Request(base + '?view=private-draft');
+assert.equal((await seoulCorrectionRequest(privateDraft, id, blocked)).status, 403);
+const privateResponse = await seoulCorrectionRequest(privateDraft, id, deps);
+assert.match(privateResponse.headers.get('cache-control'), /no-store/);
+assert.deepEqual(calls.pop(), ['admin_program_ai_private_draft', { p_job: id }]);
 const saved = await seoulCorrectionRequest(post(), id, deps);
 assert.equal(saved.status, 200);
 assert.deepEqual(calls.pop(), ['admin_request_seoul_ai_correction', {
@@ -191,3 +196,14 @@ assert.match(reviewOutcomeText({...captured,reviewOutcome:'ai_needs_review'}),/A
 assert.match(reviewOutcomeText({...captured,reviewOutcome:'unsafe_patch'}),/위치·범위/);
 assert.match(reviewOutcomeText({...captured,reviewOutcome:'no_finding'}),/응답에 없었습니다/);
 console.log('Seongbuk + counterexamples passed: immutable 9 historical findings, current money detection, bounded matching context, truthful AI outcomes, no false resolution of unlinked records');
+
+// A newly saved MySeoul finding without a unique excerpt is actionable until the candidate changes.
+const missingLink = { stage:'japanese_validation',rule:'schedule_times',reason:'missing',
+  disposition:'needs_review',reviewOutcome:'evidence_not_matched',location:{field:'content_ja'},expected:[[600,690]],actual:[[600,750]] };
+const newReview = {source:'10:00~11:30',matchesSavedOutput:true,issues:[missingLink]};
+const newHtml = renderToStaticMarkup(createElement(SeoulCandidateFindings,{review:newReview,content}));
+assert.ok(newHtml.includes('근거 확인 필요 1개') && newHtml.includes('회차 시각'));
+assert.ok(newHtml.includes('10:00–11:30') && newHtml.includes('10:00–12:30'));
+const changedHtml = renderToStaticMarkup(createElement(SeoulCandidateFindings,{
+  review:newReview,content:{...content,contentJa:'別の文'},savedContent:content}));
+assert.ok(changedHtml.includes('과거 진단 1개'));
