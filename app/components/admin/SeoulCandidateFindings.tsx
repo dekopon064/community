@@ -1,5 +1,6 @@
 'use client';
 
+import { displayComparison } from '@/app/lib/pc-worker/failure-detail';
 import { useState } from 'react';
 import type { CandidateContent } from '@/app/lib/review/contracts';
 import { secondaryButton } from './ReviewEditors';
@@ -15,9 +16,10 @@ export type ReviewIssue = {
   context?: { field: Field; candidate?: string; reference?: string };
   reviewOutcome?: string;
 };
-export type CandidateReview = { source: string; issues: ReviewIssue[] };
+export type CandidateReview = { matchesSavedOutput?: boolean; source: string; issues: ReviewIssue[] };
 const fields = { contentKo: '한국어 본문', contentJa: '일본어 본문', titleJa: '일본어 제목' };
 const checks: Record<string, string> = {
+  schedule_times: '회차 시각', required_numeric_facts: '원문 수치', dated_schedule_clock: '날짜별 회차 시각',
   cell_date_time: '일정표 날짜·시간', period_date_time: '기간 날짜·시간', clock: '시간',
   calendar_session_date: '회차 날짜', calendar_session_clock: '회차 시간',
   per_session: '회차당 조건', per_person: '1인당 조건', quantity: '인원·수량',
@@ -123,7 +125,8 @@ function locationText(issue: ReviewIssue) {
   if (loc.line) return `${loc.line}번째 줄`;
   return '세부 위치 기록 없음';
 }
-function readableValue(value?: Value): string | null {
+function readableValue(value?: Value, rule = ''): string | null {
+  if (rule.startsWith('schedule_') && Array.isArray(value)) return displayComparison(value, rule);
   if (typeof value === 'number') return String(value);
   if (!Array.isArray(value)) return null;
   if (value[0] === 'time' && value.length === 3) return value.slice(1).map(n => String(n).padStart(2, '0')).join(':');
@@ -162,7 +165,8 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
   const [kept, setKept] = useState<Record<number, boolean>>({});
   const groups = groupReviewIssues(review.issues, savedContent);
   const currencyAbsent = (issue: ReviewIssue) => issue.disposition !== 'change' && issue.rule === 'translation_currency' && currentYenLines(content).length === 0;
-  const isPast = (issue: ReviewIssue) => issue.disposition === 'needs_review' && (currencyAbsent(issue) || !issueExcerpt(content, issue));
+  const original = review.matchesSavedOutput === true && (Object.keys(savedContent) as (keyof CandidateContent)[]).every(key => content[key] === savedContent[key]);
+  const isPast = (issue: ReviewIssue) => issue.disposition === 'needs_review' && (currencyAbsent(issue) || (!original && !issueExcerpt(content, issue)));
   const past = groups.map((group, index) => ({ ...group, index })).filter(g => isPast(g.issue));
   const actionable = groups.map((group, index) => ({ ...group, index })).filter(g => g.issue.disposition !== 'equivalent' && !isPast(g.issue));
   const history = groups.filter(g => g.issue.disposition === 'equivalent');
@@ -187,7 +191,7 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
           <p className="text-info-muted">{field ? fields[field] : issue.stage === 'korean_validation' ? '한국어 결과' : '일본어 결과'} · {occurrences.length > 1 ? `${occurrences.length}곳에서 같은 내용 감지` : `검사 당시 위치: ${locationText(issue)}`}</p>
           <p className="mt-3 font-semibold">왜 확인이 필요한가요?</p>
           <p className="max-w-prose">{reasons[issue.reason ?? ''] ?? '검사에서 확인이 필요한 표현을 감지했습니다. 검사 상세와 원문을 함께 확인해 주세요.'} 검사의 감지 결과이며, 실제 오류인지는 원문과 비교해 판단합니다.</p>
-          {readableValue(issue.expected) !== null && readableValue(issue.actual) !== null && <p className="mt-2 font-semibold">검사 비교 · 기준 {readableValue(issue.expected)} / 결과 {readableValue(issue.actual)}</p>}
+          {readableValue(issue.expected, issue.rule) !== null && readableValue(issue.actual, issue.rule) !== null && <p className="mt-2 font-semibold">검사 비교 · 기준 {readableValue(issue.expected, issue.rule)} / 결과 {readableValue(issue.actual, issue.rule)}</p>}
           {issue.context?.reference && <p className="mt-3 whitespace-pre-wrap break-words"><strong>검사 당시 대조한 한국어</strong><br/>{issue.context.reference}</p>}
           <dl className="mt-4">
             <dt className="font-semibold">수집된 원문 근거</dt>
@@ -234,7 +238,7 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
           <p>{currencyAbsent(issue) ? '현재 제목·본문에서 엔화 금액 표기를 찾지 못했습니다. 円滑처럼 일반 단어에 포함된 円은 통화로 검사하지 않습니다. 이 과거 경고만으로 문구를 수정할 필요는 없습니다.' : historicalHint(issue)}</p>
           {(issue.context?.candidate || issue.before) && <p className="whitespace-pre-wrap break-words"><strong>검사 당시 문구</strong><br/>{issue.context?.candidate ?? issue.before}</p>}
           {issue.context?.reference && <p className="whitespace-pre-wrap break-words"><strong>검사 당시 대조한 한국어</strong><br/>{issue.context.reference}</p>}
-          {readableValue(issue.expected) !== null && readableValue(issue.actual) !== null && <p>당시 추출값 · 기준 {readableValue(issue.expected)} / 결과 {readableValue(issue.actual)} — 실제 문장의 의미와 다를 수 있습니다.</p>}
+          {readableValue(issue.expected, issue.rule) !== null && readableValue(issue.actual, issue.rule) !== null && <p>당시 추출값 · 기준 {readableValue(issue.expected, issue.rule)} / 결과 {readableValue(issue.actual, issue.rule)} — 실제 문장의 의미와 다를 수 있습니다.</p>}
           <p className="whitespace-pre-wrap break-words"><strong>연결된 원문 근거</strong><br/>{issue.evidence || '개별 인용이 저장되지 않았습니다. 아래 저장 원문 전체와 비교할 수 있습니다.'}</p>
           <p><strong>AI 검토 결과</strong><br/>{reviewOutcomeText(issue)}</p>
           {!currencyAbsent(issue) && <p>과거 위치로 다른 문장을 표시하지 않습니다. 아래는 현재 본문 전체이며 당시 문제 문장을 특정한 것이 아닙니다.</p>}

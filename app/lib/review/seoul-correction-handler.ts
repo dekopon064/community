@@ -44,6 +44,9 @@ export async function seoulCorrectionRequest(request: Request, id: string, deps:
       if (query === '?view=candidate') return privateResponse(Response.json(
         await deps.invoke('admin_seoul_ai_candidate_review', { p_candidate: id }),
       ));
+      if (query === '?view=private-draft') return privateResponse(Response.json({
+        draft: await deps.invoke('admin_program_ai_private_draft', { p_job: id }),
+      }));
       if (query) throw new ReviewFailure('invalid_input');
       return privateResponse(Response.json({ draft: await deps.invoke('admin_seoul_ai_draft', { p_job: id }) }));
     }

@@ -15,7 +15,9 @@ from ingest.ai_worker import (KO_SUMMARY_HEADER, KO_SECTION_HEADERS, JA_SUMMARY_
                              JA_SECTION_HEADERS, extract_summary_section)
 from ingest.myseoul_db import SCHEMA, evaluate_myseoul_facts
 from ingest.program_ai import ProgramAIAdapter, reviewed_temporal_ready
-from ingest.myseoul_ai_support import section_body, schedule_values, process_program_job
+from ingest.myseoul_ai_support import section_body, schedule_values
+from ingest.program_job import process_program_job
+from ingest.seoul_ai_correction import current_output
 from ingest.region_ja_glossary import validate_japanese_output
 from ingest.myseoul_content import (schedule_lines, schedule_block, announcement_lines, without_replaced_announcements,
     validate_summary_period, participation_constraints, validate_participant_quantities, deduplicate_summary_fees,
@@ -137,6 +139,17 @@ def myseoul_input(c: dict[str, Any]) -> str:
         "수강료와 부대비, 신청기간과 진행기간, 실제 회차와 집결을 구별하고 일본인 참여 보장을 만들지 마세요."}, ensure_ascii=False)
 
 
+def myseoul_review_source(context):
+    """Only public observations, excluding operator supplements and processing metadata."""
+    facts = context['observedFacts']
+    excerpts = [facts.get('description', ''), *facts.get('session_evidence', []),
+                *facts.get('meeting_evidence', []), *facts.get('conditions', []),
+                *facts.get('capacity_raw', [])]
+    for fee in facts.get('fees', []):
+        excerpts.extend(fee.get('evidence', []))
+    return '\n'.join(dict.fromkeys(v for v in excerpts if isinstance(v, str) and v.strip()))[:32000]
+
+
 def period_text(f: dict, key: str) -> str:
     periods = f["periods"][key]
     if not periods:
@@ -171,13 +184,35 @@ def fact_sections(f: dict) -> dict[str, str]:
     return {"[대상]": f["target"], "[일정 안내]": period, "activity": activity, "[신청 방법]": method}
 
 
-def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, translate_ja: Callable) -> dict[str, str]:
+def _check_schedule_values(schedule, content_ja, report):
+    expected = schedule_values(schedule)
+    actual = schedule_values(content_ja, japanese=True)
+    for key, values in expected.items():
+        if missing := values - actual[key]:
+            error = ValidationError('schedule_' + key, 'missing', location={'field':'content_ja'},
+                                    expected=sorted(missing), actual=sorted(actual[key] - values))
+            if report is None:
+                raise error
+            report(error)
+
+
+def _check_numbers(required, actual, field):
+    if not required.issubset(actual):
+        raise ValidationError('required_numeric_facts', 'missing', location={'field':field},
+                              expected=len(required), actual=len(required & actual))
+
+
+def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, translate_ja: Callable, review=None) -> dict[str, str]:
+    check = review.check if review else lambda validator, *args, **kwargs: validator(*args, **kwargs)
+    draft = current_output.get()
     links = c["facts"].get('application_links', [])
     f = application_link_facts_view(c["facts"])
     owner = getattr(summarize_ko, "__self__", None)
     summarize = getattr(owner, "summarize_myseoul_ko", summarize_ko)
     with failure_stage('summary'):
         content, status, model = summarize(myseoul_input(c), f["official_url"], title=c["title"])
+        if draft is not None and isinstance(content, str):
+            draft['ko'] = content
         if status != "success" or not isinstance(content, str):
             raise ValidationError('summary_result', 'missing_or_invalid')
     with failure_stage('korean_validation'):
@@ -185,19 +220,24 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
         summary = extract_summary_section(content, KO_SUMMARY_HEADER, KO_SECTION_HEADERS)
         main = section_body(content, "[주요 내용]", KO_SECTION_HEADERS)
         parts = fact_sections(f)
-        validate_summary_period(content, parts["[일정 안내]"], f)
+        check(validate_summary_period, content, parts["[일정 안내]"], f)
         tables = retained_schedule_tables(content)
         if tables:
             parts["[일정 안내]"] += '\n\n' + tables
         main = without_replaced_announcements(main, f)
-        main = deduplicate_summary_fees(main, parts["activity"])
+        try:
+            main = deduplicate_summary_fees(main, parts["activity"])
+        except ValidationError as error:
+            if review is None:
+                raise
+            review.record(error)  # Keep the disputed sentence for the operator.
         main = deduplicate_summary_venue(main, f["venue"])
         conditions = [v for v in participation_constraints(f) if v not in comparison_text(main) and v not in f["target"]]
         if conditions:
             main += "\n참가 조건: " + " / ".join(conditions)
         # Reviewed limits are added deterministically below. Validate the assembled
         # activity, rather than requiring the model to repeat each value in prose.
-        validate_participant_quantities(f, main + "\n" + parts["activity"])
+        check(validate_participant_quantities, f, main + "\n" + parts["activity"])
         parts = {key: format_reviewed_block(value) for key, value in parts.items()}
         main = format_reviewed_block(main)
         # Preserve generated contact/payment/application instructions. Reviewed
@@ -213,12 +253,18 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
         numbers = lambda s: {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", s)}
         constraints = "\n".join([f["target"], *participation_constraints(f)])
         required = numbers("\n".join(parts.values()) + "\n" + constraints)
-        if not required.issubset(numbers(content)):
-            raise ValidationError('required_numeric_facts', 'missing', location={'field':'content_ko'},
-                                  expected=len(required), actual=len(required & numbers(content)))
-        validate_assembled_fees(content, parts["activity"])
+        check(_check_numbers, required, numbers(content), 'content_ko')
+        check(validate_assembled_fees, content, parts["activity"])
+        if draft is not None:
+            draft['ko'] = content
     with failure_stage('translation'):
-        title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content)
+        translate_review = getattr(getattr(translate_ja, '__self__', None), 'translate_for_review', None)
+        if review is not None and translate_review:
+            title_ja, content_ja, status_ja, _ = translate_review(c["title"], content, review)
+        else:
+            title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content)
+        if draft is not None:
+            draft.update(jaTitle=title_ja, ja=content_ja)
         if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
             raise ValidationError('translation_result', 'missing_or_invalid')
     with failure_stage('japanese_validation'):
@@ -226,18 +272,16 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
         for h in JA_SECTION_HEADERS:
             section_body(content_ja, h, JA_SECTION_HEADERS)
         summary_ja = extract_summary_section(content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
-        validate_japanese_output(title_ja, content_ja, korean_source=c["title"] + "\n" + content)
-        # Reuse only the small explicit schedule-value check; no new schedule engine.
+        if review is not None:
+            review.stage = 'japanese_validation'
+        check(validate_japanese_output, title_ja, content_ja, korean_source=c["title"] + "\n" + content)
+        if review is not None and translate_review:
+            # The Pro adapter deferred this content check until the candidate exists.
+            from ingest.translation_validation import validate_translation_fidelity
+            validate_translation_fidelity(c["title"], content, title_ja, content_ja, report=review.record)
         schedule = "\n".join(schedule_lines(f) + f["meeting_evidence"])
-        expected = schedule_values(schedule)
-        actual = schedule_values(content_ja, japanese=True)
-        for key, values in expected.items():
-            if missing := values - actual[key]:
-                raise ValidationError('schedule_' + key, 'missing', location={'field':'content_ja'},
-                                      expected=sorted(missing), actual=sorted(actual[key] - values))
-        if not required.issubset(numbers(content_ja)):
-            raise ValidationError('required_numeric_facts', 'missing', location={'field':'content_ja'},
-                                  expected=len(required), actual=len(required & numbers(content_ja)))
+        check(_check_schedule_values, schedule, content_ja, review.record if review else None)
+        check(_check_numbers, required, numbers(content_ja), 'content_ja')
     return {"titleKo": c["title"], "titleJa": title_ja, "summaryKo": summary,
             "summaryJa": summary_ja, "contentKo": content, "contentJa": content_ja, "aiModel": model}
 
@@ -248,4 +292,4 @@ def process_myseoul_job(adapter: ProgramAIAdapter, **kwargs):
             read_detail=lambda identity: adapter.invoke("admin_myseoul_program_detail", {"p_id": identity}))
 
     return process_program_job(adapter, rpc_source="myseoul_program", validate=validate,
-                               generate=generate_myseoul_output, **kwargs)
+                               generate=generate_myseoul_output, review_source=myseoul_review_source, **kwargs)

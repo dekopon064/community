@@ -212,8 +212,8 @@ class ChatGPTPlanAdapter:
             raise ValidationError('correction_payload', 'invalid_object')
         return payload['replacement']
 
-    def suggest_seoul_review(self, *, output, source, issues):
-        from ingest.seoul_candidate_review import correction_prompt
+    def suggest_program_review(self, *, output, source, issues):
+        from ingest.program_candidate_review import correction_prompt
         if self._create_calls != 2 or not self._summary_ready or not self._translation_attempted:
             raise AiJobError('ai_call_budget')
         return self._create('review_correction', correction_prompt(output, source, issues),
@@ -225,6 +225,12 @@ class ChatGPTPlanAdapter:
             'Markdown and headings. Mark equivalent when the wording preserves the source meaning. '
             'Use needs_review if evidence is insufficient or a safe local edit cannot be proposed. '
             'Use empty strings for inapplicable fields. Never invent evidence.')
+
+    # Existing Seoul workers use this name as the review capability.
+    suggest_seoul_review = suggest_program_review
+
+    def translate_for_review(self, title, content_ko, review):
+        return self.translate_ja(title, content_ko, review=review)
 
     def translate_ja(self, title, content_ko, *, review=None):
         if not self._summary_ready or self._translation_attempted:
