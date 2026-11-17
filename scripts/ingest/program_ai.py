@@ -226,7 +226,7 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         else:
             validate_public_guidance(content_ja, 'ja')
             validate_japanese_output(title_ja, content_ja, korean_source=c["title"] + "\n" + content_ko)
-            validate_translation_fidelity(c['title'], content_ko, title_ja, content_ja)
+            validate_translation_fidelity(c['title'], content_ko, title_ja, content_ja, seoul_grouped=True)
         output = {"titleKo": c["title"], "summaryKo": summary_ko, "contentKo": content_ko,
             "titleJa": title_ja, "summaryJa": summary_ja, "contentJa": content_ja, "aiModel": model}
         stage = 'correction'
@@ -248,6 +248,8 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
     except Exception as exc:
         if no_retry:
+            if not draft and getattr(exc, 'failure_stage', None) == 'claim':
+                stage = 'claim'
             from ingest.ai_failure_policy import (terminate_no_retry, uncertain_failure,
                 terminal_failure_result, unknown_failure_result)
             if uncertain_failure(exc):

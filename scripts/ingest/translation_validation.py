@@ -459,7 +459,7 @@ def _validate_cell(korean: str, japanese: str, *, known_years: frozenset = froze
             raise ValidationError('participation_constraint', 'missing')
 
 
-def _validate_markdown(korean: str, japanese: str, *, report=None) -> None:
+def _validate_markdown(korean: str, japanese: str, *, report=None, seoul_grouped=False) -> None:
     ko, ja = read_body(korean), read_body(japanese)
     known_years = _date_year_context(korean)
     with _advisory(report, field='body'):
@@ -475,15 +475,22 @@ def _validate_markdown(korean: str, japanese: str, *, report=None) -> None:
             with _advisory(report, field='body', table=table):
                 raise ValidationError('table_shape', 'mismatch', expected=expected_shape, actual=actual_shape)
             continue
+        grouped = seoul_grouped and is_weekday_matrix(source.headers, grouped=True) and tuple(map(inline_text, source.headers[1:])) == ("평일", "주말")
         for column, (source_header, target_header) in enumerate(zip(source.headers, target.headers), 1):
             with _advisory(report, field='body', table=table, row=0, column=column):
                 _validate_role_label(source_header, target_header)
+                if grouped and column > 1:
+                    valid = {'平日'} if column == 2 else {'週末', '土日', '土・日'}
+                    if inline_text(target_header).strip() not in valid:
+                        raise ValidationError('weekday_label', 'mismatch')
         for row, (source_row, target_row) in enumerate(zip(source.rows, target.rows), 1):
             for column, (source_cell, target_cell) in enumerate(zip(source_row, target_row), 1):
                 with _advisory(report, field='body', table=table, row=row, column=column):
                     if column == 1:
                         _validate_role_label(source_cell, target_cell)
-                    if is_weekday_matrix(source.headers):
+                    if grouped:
+                        _validate_session_exclusion(source_cell, target_cell)
+                    if grouped or is_weekday_matrix(source.headers):
                         _validate_weekday_cell(source_cell, target_cell)
                     _validate_cell(source_cell, target_cell, known_years=known_years)
     for index, (source, target) in enumerate(zip(ko.items, ja.items), 1):
@@ -526,6 +533,14 @@ def _validate_weekday_cell(korean: str, japanese: str) -> None:
             raise ValidationError('session_language', 'mismatch', expected=len(re.findall(ko_pattern, source)), actual=len(re.findall(ja_pattern, target)))
 
 
+def _validate_session_exclusion(source, target):
+    for ko_day, ja_day in zip('월화수목금토일', '月火水木金土日'):
+        excluded = bool(re.search(ko_day + r'요일\s*제외', source))
+        translated = bool(re.search(ja_day + r'曜(?:日)?(?:を|は)?(?:除く|除外|以外|休み)', target))
+        if excluded != translated:
+            raise ValidationError('weekday_cell', 'mismatch')
+
+
 def _validate_role_label(korean: str, japanese: str) -> None:
     source = inline_text(korean).strip()
     day = re.fullmatch(r'([월화수목금토일])(?:요일)?', source)
@@ -539,14 +554,14 @@ def _validate_role_label(korean: str, japanese: str) -> None:
                 raise ValidationError('table_role_label', 'mismatch')
 
 
-def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str, content_ja: str, *, report=None) -> None:
+def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str, content_ja: str, *, report=None, seoul_grouped=False) -> None:
     content_ko = normalize_schedule_heading(content_ko, 'ko')
     content_ja = normalize_schedule_heading(content_ja, 'ja')
     with _advisory(report, field='title'):
         _validate_field(title_ko, title_ja, known_years=_date_year_context(title_ko), report=report, field='title')
     with _advisory(report, field='body'):
         # Structured cells are checked before the body-wide inventory.
-        _validate_markdown(content_ko, content_ja, report=report)
+        _validate_markdown(content_ko, content_ja, report=report, seoul_grouped=seoul_grouped)
     with _advisory(report, field='body'):
         _validate_field(content_ko, content_ja, known_years=_date_year_context(content_ko), report=report, field='body')
     expected = [_HEADERS[h] for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ko) if h in _HEADERS]

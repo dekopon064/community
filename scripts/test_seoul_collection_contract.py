@@ -15,7 +15,7 @@ class SeoulCollectionContractTests(unittest.TestCase):
     def setUp(self):
         guard=patch.object(socket.socket,'connect',side_effect=AssertionError('network forbidden'))
         guard.start();self.addCleanup(guard.stop)
-    def flow(self,rows=None,fail=None,natural=False):
+    def flow(self,rows=None,fail=None,natural=False,detail=None):
         events=[]
         class Store:
             def start_ingest_run(self,*a,**kw):events.append('start');return SimpleNamespace(run_id='synthetic-run',skipped=False)
@@ -32,9 +32,21 @@ class SeoulCollectionContractTests(unittest.TestCase):
             self.fail(name)
         items=rows if rows is not None else [row(sid=f'synthetic_{n}') for n in range(50)]
         connector=SeoulCultureConnector(HttpClient(budget=2,max_attempts=1,
-            transport=lambda *_a,**_k:Response(envelope(items,service=CULTURE_SERVICE))),api_key_provider=lambda:TEST_KEY)
+            transport=lambda url,**kw: detail if detail is not None and url.startswith('https://yeyak.seoul.go.kr/')
+            else Response(envelope(items,service=CULTURE_SERVICE))),api_key_provider=lambda:TEST_KEY)
         result=process_seoul_collection(Store(),ProgramNewOnlyObservationAdapter(rpc),connector)
         return result,events
+    def test_only_positionless_table_gets_one_same_item_official_lookup(self):
+        html = '<table><tr><th>시간 / 요일</th><th>화</th><th>수</th></tr><tr><td>11:00</td><td></td><td>1회차</td></tr></table>'
+        flat = '상세내용\n시간 / 요일\n화\n수\n11:00\n1회차\n\n기타 고유 조건'
+        result, events = self.flow([row(sid='ordinary'),row(sid='flattened',DTLCONT=flat)],
+            detail=Response(data=html.encode(),headers={'Content-Type':'text/html'}))
+        self.assertEqual((result['request_count'],result['new_saved'],result['ai_calls']), (2,2,0))
+        packet = next(e[1]['p_items'] for e in events if isinstance(e,tuple) and e[0]=='observe_seoul_program_new_only')
+        description = next(v['program_facts']['description'] for v in packet if v['external_key']=='flattened')
+        self.assertIn('| 11:00 | — | 1회차 |',description)
+        self.assertIn('기타 고유 조건',description)
+
     def test_fifty_split_authoritative_counts_and_no_ai(self):
         result,events=self.flow()
         self.assertEqual(result['new_saved'],49);self.assertEqual(result['existing_skipped'],1)

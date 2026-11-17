@@ -16,7 +16,8 @@ const held={...raw,status:'cancelled',canRecheck:false,recheckPending:true,versi
 let checks=0;const eq=(a,b)=>{assert.deepEqual(a,b);checks++;};
 const view=aiReview(raw,job);eq(aiReviewView(view,job),view);eq(JSON.stringify(view).includes('PRIVATE_SENTINEL'),false);
 eq(aiReview({...raw,canRecheck:false},job).canRecheck,false);
-for(const bad of [{...view,status:'completed'},{...view,status:'claimed'},{...view,recheckPending:true},{...view,canExclude:true},{...view,sourceName:'myseoul_program'}]){assert.throws(()=>aiReviewView(bad,job),e=>e.code==='unavailable');checks++;}
+eq(aiReviewView({...view,sourceName:'myseoul_program'},job).canRecheck,true);
+for(const bad of [{...view,status:'completed'},{...view,status:'claimed'},{...view,recheckPending:true},{...view,canExclude:true},{...view,sourceName:'youthcenter_policy'}]){assert.throws(()=>aiReviewView(bad,job),e=>e.code==='unavailable');checks++;}
 const command={action:'request_recheck',revision:raw.revision,version:raw.version,requestId:'40000000-0000-4000-8000-000000000001',note:''};
 const url=`https://example.test/api/admin/ai-queue/${job}`;
 const post=(body=command,origin='https://example.test')=>new Request(url,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify(body)});

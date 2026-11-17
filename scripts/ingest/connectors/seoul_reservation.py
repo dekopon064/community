@@ -130,7 +130,8 @@ def parse_body(raw: str) -> dict[str, Any]:
         table = parser.tables[index]
         weekly = bool(table and len(table[0]) >= 3
             and re.fullmatch(r'시간(?:\s*[/·]\s*요일)?', table[0][0]['text'])
-            and all(re.fullmatch(r'[월화수목금토일](?:요일)?', c['text']) for c in table[0][1:]))
+            and ([c['text'] for c in table[0][1:]] == ['평일', '주말']
+                 or all(re.fullmatch(r'[월화수목금토일](?:요일)?', c['text']) for c in table[0][1:])))
         if (len(table) < 2 or not table[0] or not (weekly or all(cell['header'] for cell in table[0]))
                 or any(len(row) != len(table[0]) for row in table)
                 or any((not cell['text'] and not (weekly and row_index > 0 and cell_index > 0))

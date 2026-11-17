@@ -64,6 +64,9 @@ def terminate_no_retry(adapter, context: dict, error: Exception, *, draft=None, 
         'p_worker_id': context['workerId'], 'p_attempt': context['failurePolicy']['attempt'],
         'p_error_code': error.code if isinstance(error, AiJobError) else 'ai_or_enqueue_failed',
     }
+    if (failure_rpc == 'fail_seoul_ai_no_retry' and draft is None and
+            getattr(error, 'diagnostic', {}) == {'rule': 'weekly_schedule_source', 'reason': 'missing_cell_positions'}):
+        failure_rpc = 'fail_seoul_ai_weekly_input'
     if draft is not None and draft_source is not None:
         failure_rpc = 'fail_program_ai_with_draft'
         args.update(p_source=draft_source, p_draft=draft)

@@ -311,7 +311,7 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         if native.get('schema_version')=='program-scope-v1-local':
             if review is None:
                 from ingest.translation_validation import validate_translation_fidelity
-                validate_translation_fidelity(c['title'],content,title_ja,content_ja)
+                validate_translation_fidelity(c['title'],content,title_ja,content_ja, seoul_grouped=True)
         else:
             numbers=lambda v:{int(x.replace(',','')) for x in re.findall(r'\d[\d,]*',v)}
             if not numbers(verified).issubset(numbers(content_ja)):raise ValueError()
@@ -327,6 +327,8 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
         return AiWorkerResult(status='processed',claimed=1,completed=1)
     except Exception as exc:
         if no_retry:
+            if not draft and getattr(exc, 'failure_stage', None) == 'claim':
+                stage = 'claim'
             from ingest.ai_failure_policy import (terminate_no_retry,uncertain_failure,
                 terminal_failure_result,unknown_failure_result)
             if not uncertain_failure(exc):

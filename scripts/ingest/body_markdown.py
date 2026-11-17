@@ -44,7 +44,7 @@ def _cells(line: str) -> tuple[str, ...]:
     return tuple(cell.strip() for cell in re.split(r'(?<!\\)\|', text))
 
 
-def is_weekday_matrix(headers: tuple[str, ...]) -> bool:
+def is_weekday_matrix(headers: tuple[str, ...], *, grouped=False) -> bool:
     """Only explicit time-by-weekday columns allow unoccupied session cells.
 
     Recognize both sides of the translation contract; don't infer weekdays
@@ -53,9 +53,9 @@ def is_weekday_matrix(headers: tuple[str, ...]) -> bool:
     labels = tuple(inline_text(h).strip() for h in headers)
     return len(labels) >= 2 and (
         bool(re.fullmatch(r'시간(?:\s*[/·]\s*요일)?', labels[0]))
-        and all(re.fullmatch(r'[월화수목금토일](?:요일)?', h) for h in labels[1:])
+        and (grouped and labels[1:] == ('평일', '주말') or all(re.fullmatch(r'[월화수목금토일](?:요일)?', h) for h in labels[1:]))
         or bool(re.fullmatch(r'(?:時間|時刻)(?:\s*[/・·]\s*曜日)?', labels[0]))
-        and all(re.fullmatch(r'[月火水木金土日](?:曜日)?', h) for h in labels[1:]))
+        and (grouped and labels[1:] in (('平日', '週末'), ('平日', '土日')) or all(re.fullmatch(r'[月火水木金土日](?:曜日)?', h) for h in labels[1:])))
 
 
 @dataclass(frozen=True)

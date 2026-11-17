@@ -120,3 +120,33 @@ seed({...initial,status:'failed',canRecheck:true,canExclude:false,
 ok(text(render()).includes('정식 실패 저장 당시 진단'));ok(text(render()).includes('10:00–11:30 / 검사값 10:00–12:30'));
 globalThis.fetch=oldFetch;
 console.log(`AI queue component handlers: ${checks} checks passed. Fake fetch only; no DB/AI.`);
+
+// Use the real failed-item component with a frozen attempt and a fake GET.
+const {SeoulFailedDraft}=load('app/components/admin/SeoulAiCorrection.tsx');
+const {sessionDecision}=load('app/lib/review/seoul-session-decision.ts');
+const commonLine='❏ 운영일시 : 2026. 9. 12.(토) - 12. 31.(토) ※남은 기간 내 매주 토요일 11~13시 운영';
+for (const day of [21,28]) {
+  const sessionLine='- 답사 일시는 11.'+day+'(토) 11~13시입니다.';
+  const description=sessionLine+'\n'+commonLine;
+  const facts={description,conditions:[commonLine,'고유 조건'],periods:Object.fromEntries(
+    ['SVCOPNBGNDT','SVCOPNENDDT'].map(k=>[k,{value:'2026-11-'+day}]))};
+  const decision=sessionDecision(facts);
+  eq(decision.conflict.expected,'목');eq(decision.conflict.actual,'토');
+  ok(decision.patch.description.includes(sessionLine));ok(decision.patch.description.includes('12. 31.'));
+  eq(decision.patch.conditions,[decision.conflict.corrected,'고유 조건']);ok(facts.description.includes('31.(토)'));
+  eq(sessionDecision({...facts,description:description.replace(sessionLine,'날짜 미정')}),null);
+  states=[];effects=[];cursor=0;
+  const snapshot={description,observed:description,draft:{stage:'korean_validation',diagnostic:{
+    rule:'calendar_weekday',reason:'mismatch',expected:4,actual:6,location:{field:'content_ko'}},output:{ko:'합성 요약'}}};
+  globalThis.fetch=async(url,init)=>{ok(url.endsWith('?view=failed-schedule'));ok(!init.method);return Response.json({snapshot});};
+  const props={jobId:id,sourceItemId:id};
+  SeoulFailedDraft(props);const cleanup=effects[0]();await new Promise(resolve=>setTimeout(resolve,0));
+  cursor=0;const rendered=text(SeoulFailedDraft(props));cleanup();
+  for(const v of [sessionLine,commonLine,'수집 원문의 전체 운영 안내','안내 토요일 / 달력 목요일','한국어 본문 검증','한국어 있음','일본어 없음']) ok(rendered.includes(v));
+}
+console.log('PASS: both frozen session conflicts, retained outputs, operator decision and original facts.');
+
+const {recordedWeekTable}=load('app/lib/review/seoul-session-decision.ts');
+const flat=recordedWeekTable('시간 / 요일\n화\n수\n목\n금\n토\n일\n16:00\n5회차\n(일본어)\n5회차(중국어)\n5회차(영어)\n4회차\n4회차');
+eq(flat.headers.length,6);eq(flat.rows[0].cells.length,5);eq(flat.rows[0].cells[0],'5회차(일본어)');eq(flat.grouped,false);
+ok(recordedWeekTable('시간 / 요일\n평일\n주말\n16:00\n3 회차\n3 회차(일요일 제외)').grouped);

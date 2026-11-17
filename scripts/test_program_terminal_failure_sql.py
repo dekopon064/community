@@ -43,6 +43,7 @@ def verify(db):
         sql(MIGRATION.with_name('20261103121330_restore_review_in_one_step.sql').read_text(encoding='utf8'))
     sql(MIGRATION.with_name('20261117130359_ai_queue_waiting_trash.sql').read_text(encoding='utf8'))
     sql(MIGRATION.with_name('20261117132621_ai_queue_period_ended_reason.sql').read_text(encoding='utf8'))
+    sql(MIGRATION.with_name('20261117143835_seoul_failed_schedule_review.sql').read_text(encoding='utf8'))
     sql("""insert into machimoa_review.ingest_sources(source_id,provider,source_kind,connector_type,
         enabled,permission_status,legacy_curation_source) values
         ('myseoul_program','synthetic','content','rest',true,'approved_noncommercial','myseoul_program');
@@ -134,6 +135,16 @@ def verify(db):
     c, = json.loads(rpc('claim_seoul_program_ai_no_retry',sid,d['revision'],'test',600))
     args = [c['jobId'],c['revision'],c['claimedAt'],c['leaseUntil'],'test',c['failurePolicy']['attempt'],'ai_schema_error']
     reject(lambda:rpc(fail,*args),'no_retry_attempt_conflict')
+    reject(lambda:rpc('admin_seoul_ai_failed_schedule',c['jobId'],role='authenticated'),'permission denied')
+    assert not rpc('admin_seoul_ai_failed_schedule',c['jobId'])
+    reject(lambda:rpc('fail_seoul_ai_weekly_input',*args,role='anon'),'permission denied')
+    reject(lambda:rpc('fail_seoul_ai_weekly_input',*args[:4],'wrong',*args[5:]),'no_retry_attempt_conflict')
+    assert rpc('fail_seoul_ai_weekly_input',*args) == rpc('fail_seoul_ai_weekly_input',*args) == 'failed'
+    receipt = json.loads(rpc('admin_ai_queue_review_detail',c['jobId']))['failureDetail']
+    assert (receipt['stage'],receipt['rule'],receipt['reason']) == ('claim','weekly_schedule_cell','missing')
+    snapshot = json.loads(rpc('admin_seoul_ai_failed_schedule',c['jobId']))
+    assert snapshot['description'] == c['facts']['description'] and snapshot['draft'] is None
+    assert set(snapshot) == {'description','observed','draft','code'} and snapshot['code'] == 'ai_schema_error'
     assert rpc('fail_seoul_ai_no_retry',*args) == 'failed'
     print('PASS: both source receipts, role/source/worker/version guards, legacy retry fenced, idempotent terminal receipt, recheck')
 

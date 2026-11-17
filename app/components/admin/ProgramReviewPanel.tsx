@@ -1,4 +1,5 @@
 "use client";
+import {sessionDecision} from "@/app/lib/review/seoul-session-decision";
 import ProgramPeriodDecision from "./ProgramPeriodDecision";
 import type { PeriodMap } from "@/app/lib/review/seoul-period-review";
 import FilterReviewPanel from './FilterReviewPanel';
@@ -92,6 +93,8 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  const busy=operationBusy||filterBlocked||classificationBlocked;
  const unsaved=dirty||factEditing||Boolean(note||excludeNote||resolve.length);
  const processed=item?.status!=="open";
+ const session = draft && item?.result.reasons.includes("ai_recheck_requested")
+   && item.editableFields.includes("description") && item.editableFields.includes("conditions") ? sessionDecision(draft) : null;
  function moveToField(key:string){if(activityFilters&&['delivery_mode','activity_region','activity_evidence'].includes(key)){const field=document.getElementById(key==='delivery_mode'?'review-filter-delivery':'review-filter-location');focus(field?.querySelector<HTMLElement>('select,input,button')??field);return;}const input=document.getElementById(`program-${key}`);if(input){const optional=input.closest<HTMLDetailsElement>('[data-optional-review-input]');if(optional)optional.open=true;focus(input);return;}const button=document.querySelector<HTMLButtonElement>(`[data-edit-program="${key}"]`);if(button&&!button.disabled){button.closest('details')?.setAttribute('open','');button.click();requestAnimationFrame(()=>{const input=document.getElementById(`program-saved-${key}`);const optional=input?.closest<HTMLDetailsElement>('[data-optional-review-input]');if(optional)optional.open=true;focus(input);});}}
  useEffect(()=>{onBlocked(busy||unsaved||confirm);return()=>onBlocked(false);},[busy,unsaved,confirm,onBlocked]);
  useEffect(()=>{if(!unsaved)return;const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue="";};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn);},[unsaved]);
@@ -126,6 +129,20 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
      disabled={busy||confirm||factEditing||otherDraft||Boolean(note||excludeNote||resolve.length)}
      onChange={periods=>setDraft({...draft,periods})}
      onDecide={(periodDecision,periods)=>void submit({action:"save_facts",revision:item.revision,version:item.version,note:"",periodDecision,resolve:dateCodes,patch:{periods}})}/>}
+   {session && draft && <section className="my-4 space-y-2" aria-label="이번 회차 일시 판단">
+     <h4 className="font-semibold">전체 운영 안내의 종료 요일을 확인해 주세요</h4>
+     <p>{session.conflict.line}</p><p>이번 회차 근거 · {session.session}</p>
+     <p>회차 일시는 유지하고 전체 운영 종료일의 요일만 확인값에서 뺍니다. 적용할 문구는 다음과 같습니다.</p>
+     <p>{session.conflict.corrected}</p>
+     <button type="button" className={secondaryButton} disabled={busy||confirm||factEditing||processed}
+       onClick={()=>{
+         setDraft({...draft,...session.patch});
+         if (!note.trim()) setNote("이번 회차 일시 사용 · "+session.session+" · 전체 운영 종료일의 충돌 요일만 제외");
+       }}>이번 회차 일시 사용 · 초안에 적용</button>
+     <button type="button" className={secondaryButton} disabled={busy||confirm||factEditing||processed}
+       onClick={()=>moveToField("description")}>직접 수정</button>
+     <p>보류하려면 재검토 상태를 유지하세요. 적용한 확인값은 사실 저장 후 다음 작업에 사용됩니다.</p>
+   </section>}
    <ReviewReasonList>
      {reviewReasons.map(({code,text})=>{
       const shownInFilters=activityFilters&&["activity_location_unknown","delivery_mode_unknown"].includes(code);
