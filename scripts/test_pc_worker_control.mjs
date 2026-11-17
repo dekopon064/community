@@ -5,7 +5,7 @@ import {createHmac} from 'node:crypto';
 import http from 'node:http';import https from 'node:https';import net from 'node:net';
 const deny=()=>{throw Error('real_network_forbidden');};globalThis.fetch=http.request=http.get=https.request=https.get=net.Socket.prototype.connect=deny;
 registerHooks({resolve(specifier,context,next){try{return next(specifier,context);}catch(error){if(specifier.startsWith('.')&&!/\.[a-z]+$/i.test(specifier))return next(specifier+'.ts',context);throw error;}},
- load(url,context,next){if(url.startsWith('file:')&&url.endsWith('.json'))return{format:'module',source:'export default '+fs.readFileSync(new URL(url),'utf8'),shortCircuit:true};if(url.startsWith('file:')&&url.endsWith('.ts'))return{format:'module',source:ts.transpileModule(fs.readFileSync(new URL(url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText,shortCircuit:true};return next(url,context);}});
+ load(url,context,next){if(url.startsWith('file:')&&url.endsWith('.json'))return{format:'module',source:'export default '+fs.readFileSync(new URL(url),'utf8'),shortCircuit:true};if(url.startsWith('file:')&&/\.tsx?$/.test(url))return{format:'module',source:ts.transpileModule(fs.readFileSync(new URL(url),'utf8'),{fileName:new URL(url).pathname,compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText,shortCircuit:true};return next(url,context);}});
 const {workerGrantRequest}=await import('../app/lib/pc-worker/handler.ts');
 const {issueWorkerGrant}=await import('../app/lib/pc-worker/grants.ts');
 const {PcWorkerClient}=await import('../app/lib/pc-worker/client.ts');
@@ -107,5 +107,21 @@ await test('all AI scope is explicit and signed; numeric bounds and collection b
  assert.throws(()=>workerCommand({source:'all',kind:'collect',limit:'all'}));
  const f=fixture({unknown:true});await f.client.connect();await f.client.run({...cmd,limit:'all'});await f.client.run({...cmd,limit:'all'});
  assert.equal(f.ai,1);assert.equal(f.view.unknown,true);f.finish();await f.client.refresh();assert.equal(f.view.run.command.limit,'all');assert.equal(f.ai,1);
+});
+await test('confirmed, ambiguous and last-item reports render through the real status parser',async()=>{
+ const {renderToStaticMarkup}=await import('react-dom/server'), {createElement}=await import('react');
+ const {RunFailures}=await import('../app/components/admin/RunFailures.tsx');
+ const detail={stage:'japanese_validation',code:'ai_schema_error',rule:'schedule_times',reason:'missing',
+   location:{field:'content_ja'},expected:[[600,690]],actual:[[600,750]]};
+ const row={source:'myseoul_program',sourceItemId:id(),sequence:1,detail,terminationConfirmed:true,flow:'continued',stopStage:null};
+ const base={requestId:id(),command:{...cmd,limit:'all'},state:'partial',code:'worker_failed',counts:{}};
+ function render(run){return renderToStaticMarkup(createElement(RunFailures,{run:workerStatus({busy:false,run}).run}));}
+ const normal=render({...base,failures:[row]});
+ for(const value of ['일본어 본문 검증','기준값 10:00–11:30 / 검사값 10:00–12:30','정식 실패 저장 확인','다음 항목 처리 진행'])assert.ok(normal.includes(value));
+ const stopped=render({...base,code:'state_unknown',state:'unknown',failures:[{...row,flow:'stopped',stopStage:'failure_termination',terminationConfirmed:false}]});
+ assert.ok(stopped.includes('정식 실패 저장 결과를 확인할 수 없어'));assert.ok(!stopped.includes('다음 항목 처리 진행'));
+ assert.ok(render({...base,failures:[{...row,flow:'last'}]}).includes('마지막 항목'));
+ assert.throws(()=>render({...base,failures:[{...row,detail:{...detail,actual:'private content'}}]}));
+ assert.equal(render(base),'');
 });
 console.log(JSON.stringify({passed,real_auth:0,real_ai:0,db:0,external_network:0}));

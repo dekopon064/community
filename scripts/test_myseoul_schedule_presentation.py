@@ -224,7 +224,6 @@ ZOOMのオンライン授業です。TOPIKクラス1のみ申し込めます。�
         def rpc(name, args):
             calls.append(name)
             if name == 'claim_myseoul_program_ai': return [copy.deepcopy(c)]
-            if name == 'admin_myseoul_program_detail': return reviewed_detail(c)
             if name == 'finish_myseoul_program_ai':
                 output.append(args['p_output'])
                 return {'outcome':'inserted', 'candidateId':c['sourceItemId']}
@@ -235,7 +234,8 @@ ZOOMのオンライン授業です。TOPIKクラス1のみ申し込めます。�
             revision=c['revision'], worker_id=c['workerId'], summarize_ko=ko, translate_ja=ja)
         self.assertEqual(result.completed, 1)
         self.assertEqual((ko.call_count, ja.call_count), (1, 1))
-        self.assertEqual(calls, ['claim_myseoul_program_ai','admin_myseoul_program_detail','finish_myseoul_program_ai'])
+        # The claim already says nationwide; a separate residence quotation is optional.
+        self.assertEqual(calls, ['claim_myseoul_program_ai', 'finish_myseoul_program_ai'])
         self.assertIn(schedule_block([PERIOD]), output[0]['contentKo'])
         self.assertNotIn(TITLE, output[0]['contentKo'])
         self.assertNotIn(INVITATION, output[0]['contentKo'])

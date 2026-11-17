@@ -32,13 +32,19 @@ class MySeoulTerminalBatch(unittest.TestCase):
                         raise RpcAmbiguous()
                     if mode in ('auth', 'quota'):
                         raise AiJobError('ai_http_401' if mode == 'auth' else 'ai_http_429')
-                    if mode not in ('unknown_candidate', 'ok'):
+                    if mode not in ('unknown_candidate', 'ok', 'clock', 'lost_clock_receipt', 'ko_schedule'):
                         raise AiJobError('ai_schema_error')
-                return summarize(*args, **kwargs)
+                body, status, model=summarize(*args, **kwargs)
+                if len(claims)==1 and mode=='ko_schedule':
+                    body+='\n[일정 안내]\n진행 일정: 10월 3일 (토) 10:00~12:30'
+                return body, status, model
 
             def translate_ja(self, *args):
                 events.append('translation')
-                return translate(*args)
+                title, body, status, model = translate(*args)
+                if len(claims)==1 and mode in ('clock','lost_clock_receipt'):
+                    body=body.replace('10:00〜11:30','10:00〜12:30')
+                return title, body, status, model
 
             def release_terminated_attempt(self):
                 events.append('release')
@@ -60,7 +66,10 @@ class MySeoulTerminalBatch(unittest.TestCase):
             if name == 'fail_myseoul_ai_no_retry':
                 self.assertEqual(args['p_attempt'], c['failurePolicy']['attempt'])
                 events.append('fail')
-                if mode == 'lost_receipt':
+                if mode in ('clock','lost_clock_receipt'):
+                    self.assertEqual(args['p_failure_detail'], dict(stage='japanese_validation',rule='schedule_times',
+                        code='ai_schema_error',reason='missing',location={'field':'content_ja'},expected=[[600,690]],actual=[[600,750]]))
+                if mode in ('lost_receipt','lost_clock_receipt'):
                     raise RpcAmbiguous()
                 return 'queued' if mode == 'wrong_receipt' else 'failed'
             self.assertEqual(name, 'finish_myseoul_program_ai')
@@ -79,6 +88,36 @@ class MySeoulTerminalBatch(unittest.TestCase):
         self.assertEqual((result['state'], result['counts']['failed'], result['counts']['completed'],
                           result['counts']['unprocessed']), ('partial',1,1,0))
 
+    def test_korean_failure_has_comparison_before_translation(self):
+        run, events=self.run_case('ko_schedule')
+        row,=run['failures']
+        self.assertEqual(row['detail']['stage'],'korean_validation')
+        self.assertIn('expected',row['detail'])
+        self.assertIn('actual',row['detail'])
+        self.assertEqual(events,['claim','summary','fail','release','claim','summary','translation','finish'])
+
+    def test_authenticated_bridge_keeps_only_safe_diagnostics(self):
+        from ingest.pc_worker_bridge import PcWorkerControl
+        from test_pc_worker import PROJECT, ORIGIN, ACTOR, KEY, ticket
+        run,_=self.run_case('lost_clock_receipt')
+        command={'source':'all','kind':'ai','limit':'all'}
+        control=PcWorkerControl(project=PROJECT,origin=ORIGIN,key=lambda:KEY,execute=lambda cmd:run,clock=lambda:1001)
+        token=control.connect(ticket(control,actor=ACTOR))['token']
+        control.submit(token,ticket(control,'run',cmd=command));control.wait()
+        status=control.status(token)
+        self.assertTrue(status['busy'])
+        self.assertEqual(status['run']['failures'],run['failures'])
+
+    def test_observed_difference_and_batch_decision(self):
+        for mode,flow,confirmed in [('clock','continued',True),('lost_clock_receipt','stopped',False)]:
+            run, events=self.run_case(mode)
+            row,=run['failures']
+            self.assertEqual((row['flow'],row['terminationConfirmed']), (flow,confirmed))
+            self.assertEqual((row['detail']['expected'],row['detail']['actual']), ([[600,690]],[[600,750]]))
+            self.assertEqual(row['stopStage'], None if confirmed else 'failure_termination')
+            self.assertEqual(events.count('claim'), 2 if confirmed else 1)
+            self.assertEqual(events.count('fail'), 1)
+
     def test_stop_without_another_claim_or_write(self):
         for mode, code, events in [
                 ('lost_receipt','state_unknown',['claim','summary','fail']),
@@ -91,3 +130,8 @@ class MySeoulTerminalBatch(unittest.TestCase):
             with self.subTest(mode=mode):
                 result, actual = self.run_case(mode)
                 self.assertEqual((result['code'], result['counts']['unprocessed'], actual), (code,1,events))
+                row,=result['failures']
+                self.assertEqual(row['flow'],'stopped')
+                self.assertEqual(row['terminationConfirmed'],mode in ('auth','quota'))
+                self.assertEqual(row['stopStage'],{'unknown_candidate':'candidate_completion','missing_policy':'claim',
+                    'lost_receipt':'failure_termination','wrong_receipt':'failure_termination'}.get(mode,'summary'))

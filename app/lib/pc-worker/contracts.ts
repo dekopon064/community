@@ -1,4 +1,7 @@
 // Browser-safe control protocol. Credentials and worker implementations stay on the server/PC.
+import {failureDetail} from './failure-detail';
+import type {FailureDetail} from './failure-detail';
+import labels from './failure-labels.json';
 import sourceCatalog from './sources.json';
 export const pcWorkerSchema = 'machimoa-pc-worker-v3';
 export const pcWorkerEndpoint = 'http://127.0.0.1:14621';
@@ -9,7 +12,9 @@ export type WorkerCommand = { source: string; kind: 'collect' | 'ai'; limit: num
 export type WorkerHello = { schema: typeof pcWorkerSchema; instance: string; challenge: string; project: string; catalog: string };
 export type WorkerResult = { state: 'running' | 'completed' | 'partial' | 'failed' | 'stopped' | 'unknown' | 'auth_required'; code: string; counts: Record<string, number> };
 export type WorkerSourceResult = WorkerResult & {source:string};
-export type WorkerRun = WorkerResult & { requestId: string; command: WorkerCommand; sourceResults?:WorkerSourceResult[] };
+export type WorkerFailure = {source:string;sourceItemId:string;sequence:number;terminationConfirmed:boolean;
+  flow:'continued'|'last'|'stopped';stopStage:keyof typeof labels.stage|null;detail:FailureDetail};
+export type WorkerRun = WorkerResult & { requestId: string; command: WorkerCommand; sourceResults?:WorkerSourceResult[];failures?:WorkerFailure[] };
 export type WorkerStatus = { busy: boolean; run: WorkerRun | null };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function object(value: unknown): Record<string, unknown> {
@@ -47,7 +52,22 @@ export function workerStatus(value: unknown): WorkerStatus {
   const sourceResults=sources.map(value=>{const s=object(value);
     if(typeof s.source!=='string'||!Object.hasOwn(workerSources,s.source)||seen.has(s.source))throw Error('invalid_worker_response');
     seen.add(s.source);return{source:s.source,...workerResult(s)};});
-  return { busy: v.busy, run: { requestId: workerUuid(r.requestId), command: workerCommand(r.command), ...result, sourceResults } };
+  const command=workerCommand(r.command);
+  let failures:WorkerFailure[]|undefined;
+  if(r.failures!==undefined){
+    if(command.kind!=='ai'||!Array.isArray(r.failures)||r.failures.length>5000)throw Error('invalid_worker_response');
+    failures=r.failures.map(raw=>{
+      const f=object(raw);
+      if(typeof f.source!=='string'||!Object.hasOwn(workerSources,f.source)||typeof f.sourceItemId!=='string'
+        || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(f.sourceItemId)
+        || typeof f.sequence!=='number'||!Number.isInteger(f.sequence)||f.sequence<1||f.sequence>5000
+        || typeof f.terminationConfirmed!=='boolean'||!['continued','last','stopped'].includes(String(f.flow))
+        || f.stopStage!==null && (typeof f.stopStage!=='string'||!Object.hasOwn(labels.stage,f.stopStage))) throw Error('invalid_worker_response');
+      return {source:f.source,sourceItemId:f.sourceItemId,sequence:f.sequence,terminationConfirmed:f.terminationConfirmed,
+        flow:f.flow as WorkerFailure['flow'],stopStage:f.stopStage as WorkerFailure['stopStage'],detail:failureDetail(f.detail)};
+    });
+  }
+  return { busy: v.busy, run: { requestId: workerUuid(r.requestId), command, ...result, sourceResults, ...(failures?{failures}:{}) } };
 }
 function workerResult(r:Record<string,unknown>):WorkerResult {
   const counts = object(r.counts);

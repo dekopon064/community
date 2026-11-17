@@ -1,6 +1,7 @@
 "use client";
 import { createContext,useContext,useEffect,useRef,useState } from 'react';
 import type { ReactNode } from 'react';
+import {RunFailures} from './RunFailures';
 import { PcWorkerClient } from '@/app/lib/pc-worker/client';
 import type { PcWorkerView } from '@/app/lib/pc-worker/client';
 import { workerSources,workerCatalog } from '@/app/lib/pc-worker/contracts';
@@ -78,6 +79,7 @@ function RunResult({kind}:{kind:WorkerCommand['kind']}){
     <h3 className="font-semibold">{kind==='ai'?'AI 대기 항목':run.command.source==='all'?'전체 수집원':workerSources[run.command.source]} · {stateText[run.state]}</h3>
     {run.state==='auth_required'?<p className="mt-2 text-sm leading-6 text-info-status">기존 Pro 로그인 경로에서 인증을 확인해 주세요. 이 화면에서는 로그인을 자동으로 열거나 AI를 다시 호출하지 않습니다.</p>:<Counts counts={counts}/>}
     {!!run.sourceResults?.length&&<ul className="mt-3 space-y-3">{run.sourceResults.map(row=><li key={row.source}><p className="text-sm font-semibold">{workerSources[row.source]} · {stateText[row.state]}</p><Counts counts={row.counts}/></li>)}</ul>}
+    {kind==='ai'&&<RunFailures run={run}/>}
     {run.code==='queue_snapshot_changed'&&<p className="mt-2 text-sm leading-6 text-info-status">대상 확인 중 목록이 바뀌어 AI를 시작하지 않았습니다. 최신 목록을 확인한 뒤 새 실행을 요청해 주세요.</p>}
     {run.code==='queue_snapshot_invalid'&&<p className="mt-2 text-sm leading-6 text-info-status">대기 목록의 페이지·식별값을 확인하지 못해 AI를 시작하지 않았습니다.</p>}
     {run.code==='queue_snapshot_limit'&&<p className="mt-2 text-sm leading-6 text-info-status">대기 목록 확인의 안전 범위를 넘어 AI를 시작하지 않았습니다. 일부만 처리한 것을 전체 완료로 표시하지 않습니다.</p>}

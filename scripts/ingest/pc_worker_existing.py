@@ -6,6 +6,7 @@ import os
 from types import SimpleNamespace
 from uuid import uuid4
 
+from ingest.program_failure_diagnostic import batch_failures
 from ingest.pc_worker_bridge import command
 from ingest.pc_worker_sources import SOURCES,collection_sources
 
@@ -109,9 +110,14 @@ class ExistingWorkers:
             return True,getattr(provider,summarize),provider.translate_ja
         def process(item):
             run,summarize=workers[SOURCES[item['sourceName']]['ai']]
-            return run(adapter,source_item_id=item['sourceItemId'],revision=item['revision'],
-                summarize_ko=getattr(provider,summarize),translate_ja=provider.translate_ja,worker_id='pc-ai-'+uuid4().hex,
-                no_retry=True)
+            try:
+                return run(adapter,source_item_id=item['sourceItemId'],revision=item['revision'],
+                    summarize_ko=getattr(provider,summarize),translate_ja=provider.translate_ja,worker_id='pc-ai-'+uuid4().hex,
+                    no_retry=True)
+            except Exception as exc:
+                # Preserve the identity of the item that actually stopped the run.
+                from ingest.ai_failure_policy import unknown_failure_result
+                return unknown_failure_result(exc, 'unknown')
         # Every chunk consumes only the already fixed membership. Never refill or
         # requery a shrinking offset queue after claims have begun.
         for start in range(0,len(targets),QUEUE_PAGE_SIZE):
@@ -137,7 +143,11 @@ class ExistingWorkers:
             if result['batch_stopped'] and source==result['items'][-1]['sourceName']:
                 row.update(batch_stopped=True,stop_reason=result['stop_reason'])
             rows.append(dict(source=source,**outcome(row)))
-        return dict(**outcome(result),sourceResults=rows)
+        report_result = dict(**outcome(result),sourceResults=rows)
+        failures = batch_failures(result['items'], result['batch_stopped'])
+        if failures:
+            report_result['failures'] = failures
+        return report_result
 
     def _collect(self,source):
         collector=SOURCES[source]['collector']

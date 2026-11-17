@@ -108,3 +108,13 @@ def validation_location(**location):
         if position:
             error.diagnostic['location'] = {**position, **error.diagnostic.get('location', {})}
         raise
+
+
+@contextmanager
+def failure_stage(stage):
+    """Attach the actual generation phase without replacing the original exception."""
+    try:
+        yield
+    except Exception as error:
+        error.failure_stage = stage
+        raise

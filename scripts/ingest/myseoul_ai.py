@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Callable
 from uuid import UUID
 
-from ingest.ai_errors import AiJobError
+from ingest.ai_errors import AiJobError, ValidationError, failure_stage
 from ingest.body_sections import normalize_schedule_heading
 from ingest.application_links import application_link_facts_view, normalize_application_link_text
 from ingest.body_markdown import format_reviewed_block, comparison_text
@@ -176,60 +176,68 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
     f = application_link_facts_view(c["facts"])
     owner = getattr(summarize_ko, "__self__", None)
     summarize = getattr(owner, "summarize_myseoul_ko", summarize_ko)
-    content, status, model = summarize(myseoul_input(c), f["official_url"], title=c["title"])
-    if status != "success" or not isinstance(content, str):
-        raise AiJobError("ai_schema_error")
-    content = normalize_application_link_text(normalize_schedule_heading(content, 'ko'), links)
-    summary = extract_summary_section(content, KO_SUMMARY_HEADER, KO_SECTION_HEADERS)
-    main = section_body(content, "[주요 내용]", KO_SECTION_HEADERS)
-    parts = fact_sections(f)
-    validate_summary_period(content, parts["[일정 안내]"], f)
-    tables = retained_schedule_tables(content)
-    if tables:
-        parts["[일정 안내]"] += '\n\n' + tables
-    main = without_replaced_announcements(main, f)
-    main = deduplicate_summary_fees(main, parts["activity"])
-    main = deduplicate_summary_venue(main, f["venue"])
-    conditions = [v for v in participation_constraints(f) if v not in comparison_text(main) and v not in f["target"]]
-    if conditions:
-        main += "\n참가 조건: " + " / ".join(conditions)
-    # Reviewed limits are added deterministically below. Validate the assembled
-    # activity, rather than requiring the model to repeat each value in prose.
-    validate_participant_quantities(f, main + "\n" + parts["activity"])
-    parts = {key: format_reviewed_block(value) for key, value in parts.items()}
-    main = format_reviewed_block(main)
-    # Preserve generated contact/payment/application instructions. Reviewed
-    # method/links are merged by complete row, rather than replacing the section.
-    boundary = '|'.join(re.escape(h) for h in KO_SECTION_HEADERS)
-    method_match = re.search(r'(?ms)^\s*\[신청 방법\][ \t]*(.*?)(?=^\s*(?:'+boundary+r')|\Z)', content)
-    method = method_match[1].strip() if method_match else ''
-    content = "\n\n".join([KO_SUMMARY_HEADER, summary, "[주요 내용]", main or parts['activity'],
-                          "[신청 방법]", method])
-    content = merge_reviewed_sections(content, {'[대상]': parts['[대상]'],
-        '[일정 안내]': parts['[일정 안내]'], '[주요 내용]': parts['activity'],
-        '[신청 방법]': parts['[신청 방법]']})
-    numbers = lambda s: {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", s)}
-    constraints = "\n".join([f["target"], *participation_constraints(f)])
-    required = numbers("\n".join(parts.values()) + "\n" + constraints)
-    if not required.issubset(numbers(content)):
-        raise AiJobError("ai_schema_error")
-    validate_assembled_fees(content, parts["activity"])
-    title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content)
-    if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
-        raise AiJobError("ai_schema_error")
-    content_ja = normalize_schedule_heading(content_ja, 'ja')
-    for h in JA_SECTION_HEADERS:
-        section_body(content_ja, h, JA_SECTION_HEADERS)
-    summary_ja = extract_summary_section(content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
-    validate_japanese_output(title_ja, content_ja, korean_source=c["title"] + "\n" + content)
-    if not required.issubset(numbers(content_ja)):
-        raise AiJobError("ai_schema_error")
-    # Reuse only the small explicit schedule-value check; no new schedule engine.
-    schedule = "\n".join(schedule_lines(f) + f["meeting_evidence"])
-    expected = schedule_values(schedule)
-    actual = schedule_values(content_ja, japanese=True)
-    if any(not values.issubset(actual[key]) for key, values in expected.items()):
-        raise AiJobError("ai_schema_error")
+    with failure_stage('summary'):
+        content, status, model = summarize(myseoul_input(c), f["official_url"], title=c["title"])
+        if status != "success" or not isinstance(content, str):
+            raise ValidationError('summary_result', 'missing_or_invalid')
+    with failure_stage('korean_validation'):
+        content = normalize_application_link_text(normalize_schedule_heading(content, 'ko'), links)
+        summary = extract_summary_section(content, KO_SUMMARY_HEADER, KO_SECTION_HEADERS)
+        main = section_body(content, "[주요 내용]", KO_SECTION_HEADERS)
+        parts = fact_sections(f)
+        validate_summary_period(content, parts["[일정 안내]"], f)
+        tables = retained_schedule_tables(content)
+        if tables:
+            parts["[일정 안내]"] += '\n\n' + tables
+        main = without_replaced_announcements(main, f)
+        main = deduplicate_summary_fees(main, parts["activity"])
+        main = deduplicate_summary_venue(main, f["venue"])
+        conditions = [v for v in participation_constraints(f) if v not in comparison_text(main) and v not in f["target"]]
+        if conditions:
+            main += "\n참가 조건: " + " / ".join(conditions)
+        # Reviewed limits are added deterministically below. Validate the assembled
+        # activity, rather than requiring the model to repeat each value in prose.
+        validate_participant_quantities(f, main + "\n" + parts["activity"])
+        parts = {key: format_reviewed_block(value) for key, value in parts.items()}
+        main = format_reviewed_block(main)
+        # Preserve generated contact/payment/application instructions. Reviewed
+        # method/links are merged by complete row, rather than replacing the section.
+        boundary = '|'.join(re.escape(h) for h in KO_SECTION_HEADERS)
+        method_match = re.search(r'(?ms)^\s*\[신청 방법\][ \t]*(.*?)(?=^\s*(?:'+boundary+r')|\Z)', content)
+        method = method_match[1].strip() if method_match else ''
+        content = "\n\n".join([KO_SUMMARY_HEADER, summary, "[주요 내용]", main or parts['activity'],
+                              "[신청 방법]", method])
+        content = merge_reviewed_sections(content, {'[대상]': parts['[대상]'],
+            '[일정 안내]': parts['[일정 안내]'], '[주요 내용]': parts['activity'],
+            '[신청 방법]': parts['[신청 방법]']})
+        numbers = lambda s: {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", s)}
+        constraints = "\n".join([f["target"], *participation_constraints(f)])
+        required = numbers("\n".join(parts.values()) + "\n" + constraints)
+        if not required.issubset(numbers(content)):
+            raise ValidationError('required_numeric_facts', 'missing', location={'field':'content_ko'},
+                                  expected=len(required), actual=len(required & numbers(content)))
+        validate_assembled_fees(content, parts["activity"])
+    with failure_stage('translation'):
+        title_ja, content_ja, status_ja, _ = translate_ja(c["title"], content)
+        if status_ja != "success" or not isinstance(title_ja, str) or not isinstance(content_ja, str):
+            raise ValidationError('translation_result', 'missing_or_invalid')
+    with failure_stage('japanese_validation'):
+        content_ja = normalize_schedule_heading(content_ja, 'ja')
+        for h in JA_SECTION_HEADERS:
+            section_body(content_ja, h, JA_SECTION_HEADERS)
+        summary_ja = extract_summary_section(content_ja, JA_SUMMARY_HEADER, JA_SECTION_HEADERS)
+        validate_japanese_output(title_ja, content_ja, korean_source=c["title"] + "\n" + content)
+        # Reuse only the small explicit schedule-value check; no new schedule engine.
+        schedule = "\n".join(schedule_lines(f) + f["meeting_evidence"])
+        expected = schedule_values(schedule)
+        actual = schedule_values(content_ja, japanese=True)
+        for key, values in expected.items():
+            if missing := values - actual[key]:
+                raise ValidationError('schedule_' + key, 'missing', location={'field':'content_ja'},
+                                      expected=sorted(missing), actual=sorted(actual[key] - values))
+        if not required.issubset(numbers(content_ja)):
+            raise ValidationError('required_numeric_facts', 'missing', location={'field':'content_ja'},
+                                  expected=len(required), actual=len(required & numbers(content_ja)))
     return {"titleKo": c["title"], "titleJa": title_ja, "summaryKo": summary,
             "summaryJa": summary_ja, "contentKo": content, "contentJa": content_ja, "aiModel": model}
 

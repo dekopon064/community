@@ -1,3 +1,5 @@
+import {failureDetail} from '../pc-worker/failure-detail';
+import type {FailureDetail} from '../pc-worker/failure-detail';
 import type {Period} from './program-contract';
 import { ReviewFailure } from './contracts';
 import type { RpcClient } from './database-store';
@@ -19,6 +21,7 @@ import type {QuickReason} from './trash';
 export type AiReview = {
  jobId:string; sourceItemId:string; sourceName:string; title:string; revision:string; version:string;
  status:string; canRecheck:boolean; canExclude:boolean; recheckPending:boolean; note:string;
+ failureDetail?:FailureDetail;
  expiredCancellation?:{attempt:string};
  source:{url:string|null;body:string}; values:{label:string;value:string}[];
 };
@@ -81,7 +84,7 @@ export function aiReview(raw:unknown,jobId:string):AiReview {
  }else if(filterInfo)values.push(...filterKeys.map(k=>({label:`공개 필터 · ${filterLabels[k]}`,value:filterInfo!.data[k].status==='unknown'?'저장된 값 없음':filterValueLabel(filterInfo!.data,k)})));
  const review=obj(v.review);
  if(review.revision!==v.revision||source.name!==sourceName)throw new ReviewFailure('unavailable');
- return {jobId,sourceItemId:id,sourceName,title:source.title,revision:String(v.revision),version:String(v.version),status,canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(source.url),body:source.body},values,...expiredCancellation(v)};
+ return {jobId,sourceItemId:id,sourceName,title:source.title,revision:String(v.revision),version:String(v.version),status,canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(source.url),body:source.body},values,...(status==='failed' && v.failureDetail ? {failureDetail:failureDetail(v.failureDetail)} : {}),...expiredCancellation(v)};
 }
 export function aiReviewView(raw:unknown,jobId:string):AiReview {
  const v=obj(raw),source=obj(v.source);
@@ -89,7 +92,7 @@ export function aiReviewView(raw:unknown,jobId:string):AiReview {
  !['youthcenter_policy','youthcenter_content','seoul_reservation','myseoul_program'].includes(String(v.sourceName))||
  !['queued','claimed','failed','cancelled','completed'].includes(String(v.status))||typeof v.canRecheck!=='boolean'||typeof v.canExclude!=='boolean'||v.canExclude&&!['queued','cancelled'].includes(String(v.status))||typeof v.recheckPending!=='boolean'||
  v.canRecheck&&(!recheckStatus(v)||v.recheckPending)||v.recheckPending&&v.status!=='cancelled'||!Array.isArray(v.values)||v.values.length>60)throw new ReviewFailure('unavailable');
- return {jobId,sourceItemId:String(v.sourceItemId),sourceName:String(v.sourceName),title:text(v.title,500),revision:String(v.revision),version:String(v.version),status:String(v.status),canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(text(source.url,2048)),body:text(source.body,200000)},values:v.values.map(row=>{const r=obj(row);return {label:text(r.label,100),value:text(r.value)};}),...expiredCancellation(v)};
+ return {jobId,sourceItemId:String(v.sourceItemId),sourceName:String(v.sourceName),title:text(v.title,500),revision:String(v.revision),version:String(v.version),status:String(v.status),canRecheck:v.canRecheck,canExclude:v.canExclude,recheckPending:v.recheckPending,note:text(v.note,1000),source:{url:source.url===null?null:sourceLink(text(source.url,2048)),body:text(source.body,200000)},values:v.values.map(row=>{const r=obj(row);return {label:text(r.label,100),value:text(r.value)};}),...(v.status==='failed' && v.failureDetail ? {failureDetail:failureDetail(v.failureDetail)} : {}),...expiredCancellation(v)};
 }
 export class DatabaseAiReviewStore implements AiReviewStore {
  readonly mode='database' as const;
