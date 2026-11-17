@@ -575,15 +575,21 @@ def extract_filter_facts(source: str, payload: dict, facts: dict | None = None) 
         if source == 'seoul_reservation':
             # Re-prove roles in the current description. An old activity quote
             # can be a meeting-point extraction from an earlier parser.
-            location = venue_filter(body,payload.get('provider_fields',{}),payload.get('tables',()))
-            if location and venues:
+            from ingest.seoul_venue_directory import reservation_venue_evidence
+            raw = payload.get('provider_fields', {})
+            directory = reservation_venue_evidence(body, raw, venues, payload.get('title') or '')
+            if directory is not None:
+                if directory and 'delivery_mode_unknown' not in facts.get('missing', ()):
+                    entry, = directory
+                    put('location', entry.filter_value(), excerpt=entry.quote)
+            elif venues:
+                location = venue_filter(body, raw, payload.get('tables', ()))
                 positions = [body.find(v) for v in venues]
                 block = body[min(positions):max(p+len(v) for p,v in zip(positions,venues))] if min(positions)>=0 else ''
                 if block and all(v in block for v in venues):
                     if len(block)<=1000:put('location',location,excerpt=block)
             elif not venues and facts.get('delivery_mode') == 'offline':
                 from ingest.seoul_evidence import reservation_start_route
-                raw = payload.get('provider_fields', {})
                 route = reservation_start_route(body, raw)
                 if route and list(facts.get('activity_evidence') or ()) == [raw['PLACENM']]:
                     start = dict(province='11', district=raw['AREANM'], facility=raw['PLACENM'], address='')
