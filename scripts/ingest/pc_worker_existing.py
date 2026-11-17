@@ -49,11 +49,17 @@ class ExistingWorkers:
             if value['kind']=='collect':
                 return self._collect_selected(value['source'])
             else:
-                if any(row['ai'] not in {'seoul_program_v1','myseoul_program_v1'} for row in SOURCES.values()):
+                from ingest.myseoul_ai import process_myseoul_job
+                from ingest.program_ai import process_seoul_program_job
+                workers = {
+                    'seoul_program_v1': (process_seoul_program_job, 'summarize_program_ko'),
+                    'myseoul_program_v1': (process_myseoul_job, 'summarize_myseoul_ko'),
+                }
+                if any(source['ai'] not in workers for source in SOURCES.values()):
                     return dict(state='failed',code='contract_unavailable',counts={})
                 adapter,provider,close=(self.ai_context or self._ai_context)()
                 try:
-                    result=self._ai_all(adapter,provider,value['limit'])
+                    result=self._ai_all(adapter,provider,value['limit'],workers)
                 finally:close()
             return result
         except Exception as error:
@@ -83,11 +89,9 @@ class ExistingWorkers:
                 return dict(state=result['state'],code=result['code'],counts=counts,sourceResults=rows)
         return dict(state='completed',code='completed',counts=counts,sourceResults=rows)
 
-    def _ai_all(self,adapter,provider,limit):
+    def _ai_all(self,adapter,provider,limit,workers):
         from ingest.seoul_workflow import bounded_queue_targets,process_ready_targets,QUEUE_PAGE_SIZE
         from ingest.pc_worker_queue import frozen_queue_targets
-        from ingest.program_ai import process_seoul_program_job
-        from ingest.myseoul_ai import process_myseoul_job
         if limit=='all':targets,counts=frozen_queue_targets(adapter,sources=tuple(SOURCES),progress=self.progress)
         else:targets,counts=bounded_queue_targets(adapter,max_jobs=limit,queue_pages=1,source=tuple(SOURCES))
         counts.update(items=[],batch_stopped=False,stop_reason=None,processed_items=0,
@@ -101,14 +105,13 @@ class ExistingWorkers:
             self.progress(current)
         report()
         def policy(item):
-            seoul=SOURCES[item['sourceName']]['ai']=='seoul_program_v1'
-            return seoul,provider.summarize_program_ko if seoul else provider.summarize_myseoul_ko,provider.translate_ja
+            _,summarize=workers[SOURCES[item['sourceName']]['ai']]
+            return True,getattr(provider,summarize),provider.translate_ja
         def process(item):
-            seoul,summarize,translate=policy(item)
-            run=process_seoul_program_job if seoul else process_myseoul_job
+            run,summarize=workers[SOURCES[item['sourceName']]['ai']]
             return run(adapter,source_item_id=item['sourceItemId'],revision=item['revision'],
-                summarize_ko=summarize,translate_ja=translate,worker_id='pc-ai-'+uuid4().hex,
-                **({'no_retry':True} if seoul else {}))
+                summarize_ko=getattr(provider,summarize),translate_ja=provider.translate_ja,worker_id='pc-ai-'+uuid4().hex,
+                no_retry=True)
         # Every chunk consumes only the already fixed membership. Never refill or
         # requery a shrinking offset queue after claims have begun.
         for start in range(0,len(targets),QUEUE_PAGE_SIZE):

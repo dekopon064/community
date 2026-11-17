@@ -24,6 +24,8 @@ for(const bad of [null,[],{}, {action:'request_recheck',revision:raw.revision,ve
 const my=fixtures('test_myseoul_db.py').fixtures.find(v=>v.name==='two_conflicts');
 const myRaw={...raw,sourceName:'myseoul_program',revision:my.item.myseoul_facts.source_revision,review:{...raw.review,revision:my.item.myseoul_facts.source_revision,schema:'myseoul-program-facts-v1-local',profile:'myseoul-program-v1-local',source:{name:'myseoul_program',title:'합성 마이서울',url:my.item.myseoul_facts.official_url,body:my.item.myseoul_facts.description},facts:my.item.myseoul_facts,observedFacts:my.item.myseoul_facts,result:my.expected}};
 eq(aiReview(myRaw,id).sourceName,'myseoul_program');ok(aiReview(myRaw,id).values.length>10);
+ok(aiReview({...myRaw,status:'failed',canExclude:false,canRecheck:true},id).canRecheck);
+ok(!aiReview({...myRaw,status:'failed',canExclude:false,canRecheck:false},id).canRecheck);
 const generic={...raw,sourceName:'youthcenter_policy',review:{kind:'facts',id:sid,revision:raw.revision,version:raw.version,status:'resolved',source:{name:'youthcenter_policy',title:'합성 정책',url:'https://example.test/',body:'합성 정책 원문'},facts:fixtureFacts(),reasons:[],editableFields:[],excludeAllowed:false,aiStatus:'queued',history:[]}};
 eq(aiReview(generic,id).sourceName,'youthcenter_policy');ok(aiReview(generic,id).values.some(v=>v.value==='정책'));
 const filters=emptyContentFilters('program');filters.delivery={status:'known',value:'online'};filters.location={status:'not_applicable',value:null};
