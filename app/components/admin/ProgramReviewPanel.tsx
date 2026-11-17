@@ -1,4 +1,6 @@
 "use client";
+import ProgramPeriodDecision from "./ProgramPeriodDecision";
+import type { PeriodMap } from "@/app/lib/review/seoul-period-review";
 import FilterReviewPanel from './FilterReviewPanel';
 import ClassificationPanel from './ClassificationPanel';
 import { ReviewReasonList, ReviewSourceReference } from './FactReviewContext';
@@ -6,7 +8,7 @@ import {useEffect,useRef,useState} from "react";
 import Link from "next/link";
 import type {ProgramFacts,ProgramField,Period,ProgramCommand} from "@/app/lib/review/program-contract";
 import {programItem} from "@/app/lib/review/program-store";
-import {programReasonText} from "@/app/lib/review/program-contract";
+import {periodReasons,programReasonText} from "@/app/lib/review/program-contract";
 import {canReconfirmProgramPeriods,buildProgramSave,displayProgramValue,displayProgramDate,programDateInput,periodLabels,programChoices,programLabels,programPatch,programInputFields,programValueMissing,preserveProgramDraft,reasonPatchFields} from "@/app/lib/review/program-ui";
 import {ReviewStatus,ReviewValueRow} from './ReviewStates';
 import {ReviewFailure} from "@/app/lib/review/contracts";
@@ -73,15 +75,20 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  const heading=useRef<HTMLHeadingElement>(null),message=useRef<HTMLDivElement>(null),sending=useRef(false),pendingRequest=useRef<{key:string;id:string}|null>(null);
  const [classificationBlocked,setClassificationBlocked]=useState(false),[classificationActive,setClassificationActive]=useState(false);
  const activityFilters=Boolean(item?.filterInfo&&item.result.reasons.some(code=>['activity_location_unknown','delivery_mode_unknown'].includes(code)));
+ const dateCodes = item?.result.reasons.filter(r=>periodReasons.includes(r)) ?? [];
+ const dateReview = Boolean(dateCodes.length && item?.status==="open" && item.editableFields.includes("periods") && !item.restoredReviewPending && !item.result.reasons.includes("ai_recheck_requested"));
  // Reasons represented by an already saved filter only need the filter panel.
  const reviewReasons = item?.reasonGuidance.filter(({ code }) => {
+  if (dateReview && dateCodes.includes(code)) return false;
   if (!activityFilters || !item.filterInfo) return true;
   if (code === "delivery_mode_unknown") return item.filterInfo.missing.includes("delivery");
   if (code === "activity_location_unknown") return item.filterInfo.missing.includes("location");
   return true;
  }) ?? [];
- const inputFields=item?programInputFields(item).filter(k=>!activityFilters||!['delivery_mode','activity_region','activity_evidence'].includes(k)):[];
+ const inputFields=item?programInputFields(item).filter(k=>!dateReview || !["periods","period_evidence"].includes(k)).filter(k=>!activityFilters||!['delivery_mode','activity_region','activity_evidence'].includes(k)):[];
  const dirty=Boolean(item&&draft&&Object.keys(programPatch(item.facts,draft,item.editableFields)).length);
+ const dateDraft = Boolean(dateReview && item && draft && JSON.stringify(draft.periods)!==JSON.stringify(item.facts.periods));
+ const otherDraft = Boolean(item && draft && Object.keys(programPatch(item.facts,draft,item.editableFields)).some(k=>k!=="periods"));
  const busy=operationBusy||filterBlocked||classificationBlocked;
  const unsaved=dirty||factEditing||Boolean(note||excludeNote||resolve.length);
  const processed=item?.status!=="open";
@@ -95,13 +102,13 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
  useEffect(()=>{if(error||notice)focus(message.current);},[error,notice]);
  async function submit(command:ProgramCommand & {reasonCode?:QuickReason;requestId?:string}){if(sending.current)return;sending.current=true;setBusy(true);setError("");setNotice("");
  try{if(command.action==="exclude"){const key=JSON.stringify(command);if(pendingRequest.current?.key!==key)pendingRequest.current={key,id:crypto.randomUUID()};command={...command,requestId:pendingRequest.current.id};}
- const next=await request(id,command);accept(next);onResult(next);setNotice(command.action==="exclude"?"제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다.":"사실을 저장하고 다시 평가했습니다.");}
+ const next=await request(id,command);accept(next);onResult(next);setNotice(command.action==="exclude"?"제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다.":command.periodDecision==="hold"?"기간 판단을 보류했습니다. 사실 확인에 남아 있습니다.":next.aiStatus==="queued"?"사실을 저장했습니다. AI 작업 대기로 이동했습니다.":"사실을 저장하고 다시 평가했습니다.");}
  catch(e){setError(e instanceof Failure?e.message:"unavailable");setConfirm(false);}finally{sending.current=false;setBusy(false);}}
  async function reload(preserve=false){if(sending.current)return;setBusy(true);setError("");try{const next=await request(id);if(preserve&&item&&draft){if(next.revision!==item.revision){setError("conflict");setNotice("원문 버전이 달라 입력을 유지했습니다. 최신 내용으로 교체하기 전에 입력을 확인해 주세요.");return;}setDraft(preserveProgramDraft(item.facts,draft,next.facts,item.editableFields));setItem(next);setNotice("최신 상태를 읽기로 확인했습니다. 입력은 유지하며 저장 요청은 보내지 않았습니다.");}else{accept(next);setNotice("");}}catch(e){setError(e instanceof Failure?e.message:"unavailable");}finally{setBusy(false);}}
- const flagReasons=item?[...new Set([...item.facts.missing as string[],...item.facts.conflicts as string[]])].filter(code=>reasonPatchFields[code]?.some(k=>item.editableFields.includes(k))):[];
+ const flagReasons=item?[...new Set([...item.facts.missing as string[],...item.facts.conflicts as string[]])].filter(code=>!(dateReview && dateCodes.includes(code))).filter(code=>reasonPatchFields[code]?.some(k=>item.editableFields.includes(k))):[];
  return <section aria-label="서울 예약 사실 검토" aria-busy={busy}>
  {(error||notice)&&<div ref={message} role={error?"alert":"status"} tabIndex={-1} className="mb-6 scroll-mt-36 border-y border-info-rule py-4 leading-7"><p className={error?"text-info-status":"text-info-body"}>{error?failureText[error]??error:notice}</p>
- {error&&<div className="mt-3 flex flex-wrap gap-3">{(unsaved)&&<button type="button" className={secondaryButton} disabled={operationBusy||filterBlocked||classificationBlocked||factEditing} onClick={()=>void reload(true)}>입력을 유지하고 저장 상태 확인</button>}<button type="button" className={secondaryButton} disabled={operationBusy||filterBlocked||classificationBlocked||factEditing} onClick={()=>void reload()}>{(unsaved)?"입력을 버리고 최신 내용 불러오기":"최신 내용 다시 확인"}</button>{["signed_out","forbidden"].includes(error)&&<Link prefetch={false} href="/ko/login?next=%2Fko%2Fadmin" className={secondaryButton}>로그인 상태 확인</Link>}</div>}</div>}
+ {error&&<div className="mt-3 flex flex-wrap gap-3">{(unsaved&&!dateDraft)&&<button type="button" className={secondaryButton} disabled={operationBusy||filterBlocked||classificationBlocked||factEditing} onClick={()=>void reload(true)}>입력을 유지하고 저장 상태 확인</button>}<button type="button" className={secondaryButton} disabled={operationBusy||filterBlocked||classificationBlocked||factEditing} onClick={()=>void reload()}>{(unsaved)?"입력을 버리고 최신 내용 불러오기":"최신 내용 다시 확인"}</button>{["signed_out","forbidden"].includes(error)&&<Link prefetch={false} href="/ko/login?next=%2Fko%2Fadmin" className={secondaryButton}>로그인 상태 확인</Link>}</div>}</div>}
  {!item?<p role="status" className="py-6 text-info-muted">{busy?"서울 예약 항목을 불러오는 중입니다.":"항목을 불러오지 못했습니다."}</p>:<>
  <header className="border-b border-info-rule pb-5"><h2 ref={heading} tabIndex={-1} className="scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.source.title}</h2><p className="mt-3 text-info-status">서울 공공서비스예약 · {statusText[item.status]}</p></header>
  <ClassificationPanel
@@ -114,6 +121,11 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
   onActive={setClassificationActive}
   onSaved={async()=>{const next=await request(id);accept(next);onResult(next);}}
   overview={
+   <>{dateReview && draft && !classificationActive && <ProgramPeriodDecision facts={item.facts} source={item.source.body} reasons={dateCodes} draft={draft.periods as PeriodMap}
+     held={item.history.find(h=>h.fields.some(f=>f.startsWith("period:")))?.fields.includes("period:hold")??false}
+     disabled={busy||confirm||factEditing||otherDraft||Boolean(note||excludeNote||resolve.length)}
+     onChange={periods=>setDraft({...draft,periods})}
+     onDecide={(periodDecision,periods)=>void submit({action:"save_facts",revision:item.revision,version:item.version,note:"",periodDecision,resolve:dateCodes,patch:{periods}})}/>}
    <ReviewReasonList>
      {reviewReasons.map(({code,text})=>{
       const shownInFilters=activityFilters&&["activity_location_unknown","delivery_mode_unknown"].includes(code);
@@ -129,7 +141,7 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
        ))}
       </li>;
      })}
-   </ReviewReasonList>
+   </ReviewReasonList></>
   }
   reference={
    <ReviewSourceReference
@@ -143,13 +155,13 @@ export default function ProgramReviewPanel({id,onBlocked,onResult}:{id:string;on
 
 
  {item.filterInfo&&!processed&&!classificationActive&&<FilterReviewPanel compactTop key={item.filterInfo.filterVersion} id={id} version={item.version} info={item.filterInfo} reviewFields={activityFilters?['delivery','location']:[]} disabled={operationBusy||unsaved||confirm} onBlocked={setFilterBlocked} onSaved={async()=>{const next=await request(id);accept(next);onResult(next);setNotice("필터를 저장하고 사실 판정을 갱신했습니다. 남은 확인사항은 아래 결과에서 확인해 주세요.");}}/>}
- {!classificationActive&&draft&&<SavedProgramFacts item={item} draft={draft} onChange={setDraft} disabled={busy||confirm||processed} onEditing={setFactEditing}/>}
+ {!classificationActive&&draft&&<SavedProgramFacts item={item} draft={draft} onChange={setDraft} disabled={busy||confirm||processed||dateDraft} onEditing={setFactEditing}/>}
 
- {!processed&&!classificationActive&&draft&&(item.restoredReviewPending||inputFields.length>0||dirty||Boolean(note)||resolve.length>0)&&<form onSubmit={e=>{e.preventDefault();if(busy||confirm||factEditing)return;try{void submit(buildProgramSave(item,draft,note,resolve));}catch(error){setError(error instanceof ReviewFailure?Object.values(error.fields)[0]??"invalid_input":"invalid_input");}}}>
+ {!processed&&!classificationActive&&draft&&!dateDraft&&(item.restoredReviewPending||inputFields.length>0||dirty||Boolean(note)||resolve.length>0)&&<form onSubmit={e=>{e.preventDefault();if(busy||confirm||factEditing)return;try{void submit(buildProgramSave(item,draft,note,resolve));}catch(error){setError(error instanceof ReviewFailure?Object.values(error.fields)[0]??"invalid_input":"invalid_input");}}}>
  {inputFields.length>0&&<>
  <h3 className="mb-2 text-lg font-bold">확인한 사실 입력</h3><p className="mb-6 text-sm leading-6 text-info-muted">확인할 문제에 관련된 값만 입력합니다. 선택한 사실값으로 저장·재판정하며 원문 인용과 추가 메모는 선택 입력입니다.</p>
  <FactFields facts={draft} editable={inputFields} disabled={busy||confirm||factEditing} onChange={setDraft} reasons={item.result.reasons}/>
- {programInputFields(item).includes("periods")&&<PeriodRead periods={item.facts.periods as Record<string,Period>}/>}
+ {inputFields.includes("periods")&&<PeriodRead periods={item.facts.periods as Record<string,Period>}/>}
  </>}
  {flagReasons.filter(code=>!activityFilters||!['delivery_mode_unknown','activity_location_unknown'].includes(code)).length>0&&<fieldset disabled={busy||confirm} className="mt-7"><legend className="font-semibold">확인한 사실로 해소한 부족·충돌 사유</legend><p className="mt-1 text-sm leading-6 text-info-muted">사실을 보충하고 해당 충돌을 확인한 경우만 선택하세요. 저장 후 서버가 다시 판정합니다.</p>{flagReasons.filter(code=>!activityFilters||!['delivery_mode_unknown','activity_location_unknown'].includes(code)).map(code=><label key={code} className="mt-2 flex min-h-11 items-start gap-3 leading-7"><input className="mt-2 size-5 shrink-0" type="checkbox" checked={resolve.includes(code)} onChange={e=>setResolve(e.target.checked?[...resolve,code]:resolve.filter(c=>c!==code))}/><span>{programReasonText[code]}</span></label>)}</fieldset>}
  <div className="mt-7"><OptionalReviewText id="program-note" label="추가 메모" value={note} onChange={setNote} disabled={busy||confirm} help="수정 이력에 남길 설명이 있을 때만 입력합니다. 담당자·시각·변경 항목은 자동 기록됩니다."/></div>

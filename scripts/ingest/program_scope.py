@@ -207,8 +207,8 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
     if re.search(r"주민등록등본|국적\s*증빙", body):
         missing.append("eligibility_document_unconfirmed")
 
-    for date in payload.get("dates", {}).values():
-        if date["status"] != "ok":
+    for endpoint in ("RCPTBGNDT", "RCPTENDDT", "SVCOPNBGNDT", "SVCOPNENDDT"):
+        if payload.get("dates", {}).get(endpoint, {}).get("status") != "ok":
             missing.append("period_missing_or_unparsed")
     for begin, end in (("RCPTBGNDT", "RCPTENDDT"), ("SVCOPNBGNDT", "SVCOPNENDDT")):
         dates = payload.get("dates", {})
@@ -219,8 +219,17 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
     period_evidence: list[str] = []
     for labels, fields in ((("접수기간", "신청기간", "모집기간"), ("RCPTBGNDT", "RCPTENDDT")),
                           (("운영기간", "진행기간"), ("SVCOPNBGNDT", "SVCOPNENDDT"))):
-        for statement in _label_values(body, labels):
+        statements = _label_values(body, labels)
+        for statement in statements:
+            # A section heading and a year-round service describe no booking endpoint.
+            # Keep the full description intact. The structured dates are still
+            # checked independently above, including missing and reversed dates.
+            if fields[0] == "SVCOPNBGNDT" and statement.strip() == "및 요일" and any(s != statement for s in statements):
+                continue
             period_evidence.append(statement)
+            if fields[0] == "SVCOPNBGNDT" and re.fullmatch(
+                    r"연중(?:\s*운영)?(?:\s*\(\s*1월\s*[~～]\s*12월\s*\))?", statement.strip()):
+                continue
             parsed, clocks, issue = period_proof(statement,'RCPT' if fields[0].startswith('RCPT') else 'SVCOPN')
             if issue:
                 (missing if issue == 'body_period_needs_confirmation' else conflicts).append(issue)

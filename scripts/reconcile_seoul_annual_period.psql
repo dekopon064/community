@@ -1,0 +1,15 @@
+-- Run separately from schema installation. Supply the consenting reviewer and
+-- the id, source revision and version from the reviewed snapshot as psql variables.
+-- Never fetch a fresh version to retry a conflict.
+\set ON_ERROR_STOP on
+begin;
+set local role service_role;
+with item as (select public.admin_program_detail(:'item_id'::uuid) as d)
+select result->>'status' as review_status, result->>'aiStatus' as ai_status,
+       result->'result'->'reasons' as remaining_reasons
+from item cross join lateral (
+  select public.admin_program_period_decision(
+    :'item_id'::uuid, :'revision', :'version', jsonb_build_object('periods',d->'facts'->'periods'),
+    array['body_period_needs_confirmation'], '', :'actor'::uuid, 'annual') as result
+) decision;
+commit;
