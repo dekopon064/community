@@ -49,15 +49,30 @@ seed();let emptyCommand;
 globalThis.fetch=async(_url,options)=>{emptyCommand=JSON.parse(options.body);return Response.json({mode:'local-fixture',item:{...initial,status:'cancelled',canRecheck:false,recheckPending:true,version:'c'.repeat(64)}});};
 eq(button('AI 대기 보류·재검토로 보내기').props.disabled,false);button('AI 대기 보류·재검토로 보내기').props.onClick({currentTarget:trigger});await button('확인하고 저장').props.onClick();await new Promise(r=>setImmediate(r));eq(emptyCommand.note,'');ok(text(render()).includes('입력하지 않음'));
 // Quick exclude on queued AND held states; no edit of the fact/filter payload.
-for(const held of [false,true]){
- seed({...initial,recheckPending:held,status:held?'cancelled':'queued',canRecheck:!held});let command;
+for(const [held,retry] of [[false,false],[false,true],[true,false]]){
+ seed({...initial,recheckPending:held,status:held?'cancelled':'queued',canRecheck:!held&&!retry});let command;
  globalThis.fetch=async(_url,options)=>{command=JSON.parse(options.body);return Response.json({mode:'local-fixture',item:{...initial,status:'cancelled',canRecheck:false,canExclude:false,recheckPending:false}});};
- button('서비스에 적합하지 않음').props.onClick({currentTarget:trigger});eq(states[6],'exclude');button('취소').props.onClick();eq(states[6],null);
- button('대상 지역이 아님').props.onClick({currentTarget:trigger});await button('확인하고 제외').props.onClick();await new Promise(r=>setImmediate(r));eq(command.action,'exclude');eq(command.reasonCode,'region_not_suitable');ok(!('facts' in command));eq(states[0].canExclude,false);eq(states[0].values,initial.values);
+ button('휴지통으로 보내기').props.onClick({currentTarget:trigger});eq(states[6],'exclude');button('취소').props.onClick();eq(states[6],null);
+ button('휴지통으로 보내기').props.onClick({currentTarget:trigger});ok(text(render()).includes(initial.title+'」'));nodes(render()).find(n=>n?.type==='select').props.onChange({target:{value:'region_not_suitable'}});await button('확인하고 제외').props.onClick();await new Promise(r=>setImmediate(r));eq(command.action,'exclude');eq(command.reasonCode,'region_not_suitable');ok(!('facts' in command));eq(states[0].canExclude,false);eq(states[0].values,initial.values);
 }
-seed({...initial,canExclude:false});ok(!text(render()).includes('빠른 제외'));
-seed();states[3]='유지할 메모';eq(button('서비스에 적합하지 않음').props.disabled,true);
-seed();button('서비스에 적합하지 않음').props.onClick({currentTarget:trigger});globalThis.fetch=async()=>{throw Error('timeout');};await button('확인하고 제외').props.onClick();await new Promise(r=>setImmediate(r));eq(states[5],true);eq(button('서비스에 적합하지 않음').props.disabled,true);eq(states[0].values,initial.values);
+seed({...initial,canExclude:false});ok(!text(render()).includes('휴지통으로 보내기'));
+{
+ seed({...initial,canRecheck:false,canExclude:true});
+ let command;
+ globalThis.fetch=async(_url,options)=>{command=JSON.parse(options.body);return Response.json({mode:'local-fixture',item:{...initial,status:'cancelled',canExclude:false,canRecheck:false}});};
+ button('휴지통으로 보내기').props.onClick({currentTarget:trigger});
+ const selectReason=value=>nodes(render()).find(n=>n?.type==='select').props.onChange({target:{value}});
+ selectReason('period_ended');
+ const confirmation=nodes(render()).find(n=>n?.props?.['aria-label']==='재검토 최종 확인');
+ eq(nodes(confirmation).find(n=>n?.type==='select').props.value,'period_ended');
+ ok(!nodes(confirmation).some(n=>n?.type==='textarea'||n?.type==='input'));
+ ok(!text(confirmation).includes('전화 접수'));
+ await button('확인하고 제외').props.onClick();
+ await new Promise(resolve=>setImmediate(resolve));
+ eq(command.reasonCode,'period_ended');ok(!Object.hasOwn(command,'note'));
+}
+seed();states[3]='유지할 메모';eq(button('휴지통으로 보내기').props.disabled,true);
+seed();button('휴지통으로 보내기').props.onClick({currentTarget:trigger});globalThis.fetch=async()=>{throw Error('timeout');};await button('확인하고 제외').props.onClick();await new Promise(r=>setImmediate(r));eq(states[5],true);eq(button('휴지통으로 보내기').props.disabled,true);eq(states[0].values,initial.values);
 
 // Actual saved-MySeoul row editor applies one draft field, preserves other drafts,
 // supports Esc/focus return and refuses applying a stale opened version.
@@ -96,7 +111,7 @@ resetWorkspace();states[21]='다른 초안';ai=nodes(workspace()).find(n=>n?.typ
 seed({...initial,status:'failed',canRecheck:true,canExclude:false});
 ok(text(render()).includes('AI 작업 실패 · 재검토 가능'));
 eq(button('AI 대기 보류·재검토로 보내기').props.disabled,false);
-ok(!text(render()).includes('빠른 제외'));
+ok(!text(render()).includes('휴지통으로 보내기'));
 seed({...initial,status:'failed',canRecheck:false,canExclude:false});
 ok(text(render()).includes('현재 상태에서는 재검토 전환 불가'));
 ok(!text(render()).includes('AI 대기 보류·재검토로 보내기'));

@@ -101,6 +101,13 @@ const excludeStore=new DatabaseAiReviewStore({async rpc(name,args){excludedCalls
 r=await aiReviewRequest(post(exclusion),id,{...deps,store:()=>excludeStore});eq(r.status,200);
 eq(excludedCalls.length,1);eq(excludedCalls[0].name,'admin_ai_queue_exclude');eq(excludedCalls[0].args.p_reason,'service_not_suitable');eq(excludedCalls[0].args.p_actor,actor);ok(!Object.hasOwn(excludedCalls[0].args,'p_note'));
 const invalidExclude=new DatabaseAiReviewStore({async rpc(){return {data:{...excludedRaw,recheckPending:true},error:null};}});
+r=await aiReviewRequest(post({...exclusion,reasonCode:'period_ended'}),id,{...deps,store:()=>excludeStore});
+eq(r.status,200);eq(excludedCalls.at(-1).args.p_reason,'period_ended');
+const beforeInvalid=excludedCalls.length;
+for(const invalid of [{reasonCode:'online_application_ended'},{reasonCode:'period_ended',note:'추가 메모'}]){
+ eq((await aiReviewRequest(post({...exclusion,...invalid}),id,{...deps,store:()=>excludeStore})).status,422);
+}
+eq(excludedCalls.length,beforeInvalid);
 eq((await aiReviewRequest(post(exclusion),id,{...deps,store:()=>invalidExclude})).status,503);
 const timeoutCalls=[];const timeoutExclude=new DatabaseAiReviewStore({async rpc(...a){timeoutCalls.push(a);throw Error('timeout');}});
 eq((await aiReviewRequest(post(exclusion),id,{...deps,store:()=>timeoutExclude})).status,503);eq(timeoutCalls.length,1);

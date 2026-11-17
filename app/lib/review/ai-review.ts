@@ -15,8 +15,8 @@ import {factLabels,factValue} from './facts-guidance';
 import type {FilterInfo} from './content-filter-store';
 import {classificationDetail} from './classification';
 import { sourceLink } from './presentation';
-import {quickReasons} from './trash';
-import type {QuickReason} from './trash';
+import {isQueueReason} from './trash';
+import type {QueueReason} from './trash';
 
 export type AiReview = {
  jobId:string; sourceItemId:string; sourceName:string; title:string; revision:string; version:string;
@@ -25,7 +25,7 @@ export type AiReview = {
  expiredCancellation?:{attempt:string};
  source:{url:string|null;body:string}; values:{label:string;value:string}[];
 };
-export type AiRecheckCommand={revision:string;version:string;requestId:string} & ({action:'request_recheck'|'complete_recheck';note:string}|{action:'exclude';reasonCode:QuickReason}|{action:'cancel_expired';attempt:string;note:string});
+export type AiRecheckCommand={revision:string;version:string;requestId:string} & ({action:'request_recheck'|'complete_recheck';note:string}|{action:'exclude';reasonCode:QueueReason}|{action:'cancel_expired';attempt:string;note:string});
 export interface AiReviewStore {
  readonly mode:'database'|'local-fixture';
  get(jobId:string):Promise<AiReview>;
@@ -45,8 +45,8 @@ export function aiRecheckCommand(raw:unknown):AiRecheckCommand {
   return {action:'cancel_expired',revision:String(v.revision),version:String(v.version),attempt:String(v.attempt),requestId:String(v.requestId),note:v.note.trim()};
  }
  if(v.action==='exclude'){
-  if(Object.keys(v).sort().join(',')!=='action,reasonCode,requestId,revision,version'||!Object.hasOwn(quickReasons,String(v.reasonCode))||!hash.test(String(v.revision))||!hash.test(String(v.version))||!jobUuid.test(String(v.requestId)))throw new ReviewFailure('invalid_input');
-  return {action:'exclude',revision:String(v.revision),version:String(v.version),requestId:String(v.requestId),reasonCode:v.reasonCode as QuickReason};
+  if(Object.keys(v).sort().join(',')!=='action,reasonCode,requestId,revision,version'||!isQueueReason(v.reasonCode)||!hash.test(String(v.revision))||!hash.test(String(v.version))||!jobUuid.test(String(v.requestId)))throw new ReviewFailure('invalid_input');
+  return {action:'exclude',revision:String(v.revision),version:String(v.version),requestId:String(v.requestId),reasonCode:v.reasonCode};
  }
  if(Object.keys(v).sort().join(',')!=='action,note,requestId,revision,version'||!['request_recheck','complete_recheck'].includes(String(v.action))||
  !hash.test(String(v.revision))||!hash.test(String(v.version))||!jobUuid.test(String(v.requestId))||typeof v.note!=='string'||v.note.length>1000)throw new ReviewFailure('invalid_input');

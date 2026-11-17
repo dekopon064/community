@@ -6,7 +6,12 @@ import { myseoulItem } from "./myseoul-store";
 
 export const quickReasons = { service_not_suitable: "서비스에 적합하지 않음", region_not_suitable: "대상 지역이 아님" } as const;
 export type QuickReason = keyof typeof quickReasons;
-export type TrashItem = { id: string; sourceItemId: string; revision: string; version: string; dismissVersion?: string; sourceName: string; title: string; reasonCode: QuickReason | "custom"; note: string; excludedAt: string; expiresAt: string; canRestore: boolean; blockReason: string | null };
+export const queueReasons = { ...quickReasons, period_ended: "기간·신청 종료" } as const;
+export type QueueReason = keyof typeof queueReasons;
+export function isQueueReason(value: unknown): value is QueueReason {
+  return typeof value === "string" && Object.hasOwn(queueReasons, value);
+}
+export type TrashItem = { id: string; sourceItemId: string; revision: string; version: string; dismissVersion?: string; sourceName: string; title: string; reasonCode: QueueReason | "custom" | "online_application_ended"; note: string; excludedAt: string; expiresAt: string; canRestore: boolean; blockReason: string | null };
 export type TrashList = { serverNow: string; items: TrashItem[] };
 export type TrashCommand =
   | { action: "exclude"; id: string; revision: string; version: string; requestId: string; reasonCode: QuickReason | "custom"; note: string }
@@ -54,7 +59,7 @@ export function trashList(input: unknown): TrashList {
     const e = obj(value);
     for (const k of ["id", "sourceItemId"]) if (!uuid.test(str(e[k], 36))) throw new ReviewFailure("unavailable");
     for (const k of ["revision", "version"]) if (!digest.test(str(e[k], 64))) throw new ReviewFailure("unavailable");
-    if (typeof e.canRestore !== "boolean" || ![...Object.keys(quickReasons), "custom"].includes(str(e.reasonCode, 40))) throw new ReviewFailure("unavailable");
+    if (typeof e.canRestore !== "boolean" || !(e.reasonCode === "custom" || e.reasonCode === "online_application_ended" || isQueueReason(e.reasonCode))) throw new ReviewFailure("unavailable");
     const blockReason = e.blockReason === null ? null : str(e.blockReason, 40);
     if (blockReason !== null && !["source_missing", "source_changed", "processing_active", "already_published", "state_changed"].includes(blockReason) || e.canRestore !== (blockReason === null)) throw new ReviewFailure("unavailable");
     const excludedAt = date(e.excludedAt), expiresAt = date(e.expiresAt);
