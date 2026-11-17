@@ -85,11 +85,15 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
         missing.append("missing_source_url")
 
     # Purpose, not a stray employment word in participant conditions.
-    if re.search(r"취업\s*(?:지원|훈련|교육|준비|목적)|채용\s*(?:공고|모집|설명회)|인턴십|직업훈련", title) or re.search(r"(?:목적|내용)\s*[:：]\s*(?:취업|채용|직업훈련)", body):
+    # Review projections carry the saved source title separately from the body.
+    purpose_title = title or itinerary_title
+    if re.search(r"취업\s*(?:지원|훈련|교육|준비|목적)|채용\s*(?:공고|모집|설명회)|인턴십|직업훈련", purpose_title) or re.search(r"(?:목적|내용)\s*[:：]\s*(?:취업|채용|직업훈련)", body):
         kind = "employment"
-    elif re.search(r"기관\s*(?:운영지원|내부\s*(?:직원|직무|업무|운영|전용|교육|사업|프로그램))|사업주\s*(?:운영지원|지원|전용)|시설\s*조성사업", context):
+    elif re.search(r"기관\s*(?:운영지원|내부\s*(?:직원|직무|업무|운영|전용|교육|사업|프로그램))|사업주\s*(?:운영지원|지원|전용)|시설\s*조성사업", purpose_title + "\n" + body):
         kind = "institutional_business"
-    elif re.search(r"정책|지원금|대출|금융\s*지원|보조금", title):
+    elif (re.search(r"정책|지원금|대출|금융\s*지원|보조금", purpose_title)
+          or re.search(r"(?:(?:사업\s*내용|목적|지원\s*내용)\s*[:：]\s*[^\n]{0,30}|(?:기관|단체|법인)에(?:게)?\s*)"
+                       r"(?:보조금|지원금)(?:을|를)?\s*(?:교부|지급|지원)", body)):
         kind = "policy_finance"
     elif not uncertain_activity(activity_text(body)) and (re.search(r"체험|공예|교류|주민\s*활동|산책|탐방|숲해설|전시|해설|생활\s*교육|취미|인문|곤충|문화", activity_text(body)) or activity_topic(body)):
         kind = "program"
