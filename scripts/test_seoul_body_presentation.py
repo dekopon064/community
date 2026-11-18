@@ -15,6 +15,16 @@ def recorded():
     return json.loads(FIXTURE.read_text(encoding='utf-8'))
 
 
+def current_fake_translation():
+    # The preserved response predates removal of dynamic reception-status copy.
+    # Adapt this synthetic response only; never rewrite the recorded original.
+    data = recorded()
+    body = data['fake_translation_cleaned']['content_ja'].replace(
+        '- **受付状況：** 予約受付終了\n', '')
+    # The current Korean input appends the official booking link as guidance.
+    return body + '\n\n[公式予約ページ](' + data['context']['facts']['official_url'] + ')'
+
+
 class SeoulBodyPresentationTests(unittest.TestCase):
     def setUp(self):
         for target in ('socket.socket.connect','socket.create_connection','socket.getaddrinfo',
@@ -124,7 +134,7 @@ class SeoulBodyPresentationTests(unittest.TestCase):
         outputs=[]
         for classified in (False,True):
             with patch.object(worker_fixture,'recorded_case',side_effect=case), patch.object(
-                    worker_fixture,'fake_translation',return_value=latest['fake_translation_cleaned']['content_ja']):
+                    worker_fixture,'fake_translation',return_value=current_fake_translation()):
                 outputs.append(worker_fixture.run_recorded(self,classified=classified,change=change))
         return outputs
 
@@ -139,7 +149,7 @@ class SeoulBodyPresentationTests(unittest.TestCase):
             self.assertNotIn('00:00',body)
             self.assertNotIn('**진행 일정:**',body)
             self.assertEqual(requests[1]['input'][0]['content'],'title_ko: '+output['titleKo']+'\ncontent_ko:\n'+body)
-            self.assertEqual(output['contentJa'],recorded()['fake_translation_cleaned']['content_ja'])
+            self.assertEqual(output['contentJa'],current_fake_translation())
             self.assertNotEqual(output['contentJa'],data['translation']['content_ja'])
             self.assertEqual(set(output),{'titleKo','titleJa','summaryKo','summaryJa','contentKo','contentJa','aiModel'})
 
@@ -172,10 +182,21 @@ class SeoulBodyPresentationTests(unittest.TestCase):
                 client.messages.messages=[_message(json.dumps(d['summary'],ensure_ascii=False)),_message(json.dumps(translation,ensure_ascii=False))]
             else:
                 client.responses.results=[response(json.dumps(d['summary'],ensure_ascii=False)),response(json.dumps(translation,ensure_ascii=False))]
-            adapter.summarize_program_ko(program_input(c),c['facts']['official_url'],c['title'])
-            adapter.translate_ja(c['title'],body)
-            requests=client.messages.create_calls if kind=='anthropic' else client.responses.requests
-            self.assertEqual(len(requests),2)
+            if kind == 'openai':
+                # Current output/input reserves already exceed the unchanged
+                # $0.10 cap. Verify instruction delivery at counting, then the
+                # expected stop BEFORE generation, rather than relaxing caps.
+                with self.assertRaises(AiJobError) as caught:
+                    adapter.summarize_program_ko(program_input(c),c['facts']['official_url'],c['title'])
+                self.assertEqual(caught.exception.code, 'ai_blocked_cost_cap')
+                self.assertEqual(client.responses.requests, [])
+                requests = client.responses.counts
+                self.assertEqual(len(requests), 1)
+            else:
+                adapter.summarize_program_ko(program_input(c),c['facts']['official_url'],c['title'])
+                adapter.translate_ja(c['title'],body)
+                requests = client.messages.create_calls
+                self.assertEqual(len(requests),2)
             instructions=requests[0].get('system',requests[0].get('instructions'))
             self.assertIn(SEOUL_SCHEDULE_DISPLAY_RULES.strip(),instructions)
             # A fake counted overflow still stops before any generation.

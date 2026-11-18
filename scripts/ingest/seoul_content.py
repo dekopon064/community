@@ -216,6 +216,7 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
         dates += ['\n' + table.markdown for table in tables]
     dates += announcement_lines(view)
     activity = ['진행 방식: ' + {'online': '온라인', 'offline': '오프라인', 'hybrid': '온·오프라인 혼합'}[facts['delivery_mode']]]
+    activity += ['- **이용 안내:** ' + plain(value) for value in roles['activity']]
     if facts['activity_evidence']:
         activity += ['장소: ' + value for value in facts['activity_evidence']]
     # Do not rename unlabeled amounts to tuition/materials or infer totals.
@@ -245,6 +246,11 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     # mutating the source facts or discarding original session evidence.
     if periods:
         view['periods']={**view['periods'],**periods}
+    # Display relocation must not reduce the old numeric validation evidence.
+    # In particular booking limits and deadline consequences remain checked.
+    from ingest.seoul_condition_display import projected_conditions
+    quantity_view = {**view, 'conditions': list(dict.fromkeys([
+        *view['conditions'], *projected_conditions(facts)]))}
     sections = {h: without_reception_status(value) for h, value in (reviewed or reviewed_sections(facts)).items()}
     canonical = '\n'.join(sections.values())
     # A model-contract explanation is not a program instruction. Reject only
@@ -303,7 +309,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     content = merge_reviewed_sections(content, sections)
     content = ensure_application_guidance(content, facts)
     check(validate_public_guidance, content, 'ko')
-    check(validate_participant_quantities, view, content)
+    check(validate_participant_quantities, quantity_view, content)
     check(validate_assembled_fees, content, fee_block, canonical_block=fee_block)
     check(validate_weekly_schedule, content, facts['description'])
     # Source tables are evidence. They are not blindly copied, but every

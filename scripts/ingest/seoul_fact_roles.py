@@ -19,7 +19,8 @@ RESTRICTION = r'필수|의무|불가|금지|제한|전용|한정|보호자|동�
 
 
 def plain(text):
-    return re.sub(r'^[\s▹▶○❍☞●■□*+\-]+', '', inline_text(text)).strip()
+    from ingest.seoul_condition_layout import display_text
+    return display_text(text)
 
 
 def key(text):
@@ -142,13 +143,14 @@ def public_roles(facts):
     # to a source cell. Language eligibility such as "일본어 가능자만" stays.
     annotations = {key(m[0]) for cell in cells for m in re.finditer(r'[（(][^()（）]+[）)]', cell)}
     table_rows={key('| '+' | '.join(row)+' |') for row in matrix.rows} if matrix and not matrix.flattened else set()
-    roles = {name: [] for name in ('eligibility', 'capacity', 'schedule', 'booking')}
+    roles = {name: [] for name in ('eligibility', 'capacity', 'schedule', 'booking', 'activity')}
     for value in projected_conditions(facts):
         text = plain(value)
         if key(text) in table_rows:
             continue
         target=re.fullmatch(r'(?:참가\s*대상|대상)\s*[:：]\s*(.+)', text)
         if target and (key(target[1]) == key(facts['target_raw']) or
+                key(target[1]) == key(facts['target_raw']) + '누구나' or
                 {key(target[1]),key(facts['target_raw'])} <= {'제한없음','누구나'}):
             continue  # Same bare audience; qualified restrictions never match.
         if matrix and (re.fullmatch(ORDINAL, text) and any(key(text) == re.sub(r'[（(].*', '', c) for c in cells)
