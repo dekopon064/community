@@ -7,10 +7,11 @@ Unknown qualifiers remain visible rather than being guessed or discarded.
 import re
 
 from ingest.body_markdown import inline_text, read_body
+from ingest.seoul_condition_layout import display_text, project_layout, layout_role, condition_signature, parking_signature
 
 
 def plain(value):
-    return re.sub(r'^[\s○❍●☞▹▶■□*+\-]+', '', inline_text(value)).strip()
+    return display_text(value)
 
 
 def key(value):
@@ -53,8 +54,10 @@ def projected_conditions(facts):
         # arbitrary comma split. Preserve both numbers and obligation.
         compound = re.fullmatch(r'교육장\s*신청\s*인원은\s*최대\s*(\d+)명\s*제한이며,\s*'
                                 r'반드시\s*교육희망일\s*(\d+)일\s*전에\s*교육\s*신청을\s*해야\s*함', text)
+        # Keep the source bullet for contextual route identification, unless
+        # this is a newly joined continuation rather than a single source row.
         values = ([f'정원: 최대 {compound[1]}명', f'신청 방법: 교육희망일 {compound[2]}일 전까지 신청해야 합니다.']
-                  if compound else [text])
+                  if compound else project_layout(value if text == plain(value) else text, lines))
         for projected in values:
             if projected not in result:
                 result.append(projected)
@@ -64,6 +67,9 @@ def projected_conditions(facts):
 def additional_role(text):
     """Positive contextual labels only; participant restrictions still win."""
     text = plain(text)
+    role = layout_role(text)
+    if role:
+        return role
     if re.match(r'교육\s*신청\s*가능\s*(?:요일|시간)\s*[:：]', text):
         return 'schedule'
     if re.match(r'교육희망일에\s*신청인원', text):
@@ -86,7 +92,7 @@ def _sentences(body):
     for line in body.splitlines():
         if '|' in line or line[:1].isspace():
             continue
-        yield from (plain(s) for s in re.split(r'(?<=[.!?。])\s+', line) if s.strip())
+        yield from (plain(s) for s in re.split(r'(?<=[.!?。])\s+', line.rstrip('\\').strip()) if s.strip())
 
 
 def _advice_signature(text):
@@ -149,7 +155,7 @@ def covered_condition(value, body):
     Safe uncertainty costs an extra note, never a silently lost condition.
     """
     source = key(value)
-    signature = _advice_signature(value)
+    signature = _advice_signature(value) or condition_signature(value) or parking_signature(value)
     # A following exception changes applicability. Don't use isolated prose to
     # erase the source in that case, even when an earlier sentence is identical.
     if re.search(r'단,|다만|예외|에 한해|에만 해당', body):
@@ -160,7 +166,7 @@ def covered_condition(value, body):
         if source == key(sentence):
             return True
         if signature is not None:
-            proof = _advice_signature(sentence)
+            proof = _advice_signature(sentence) or condition_signature(sentence) or parking_signature(sentence)
             if signature == proof:
                 return True
             if proof and proof[0] == 'group_phone_roster':
@@ -226,8 +232,7 @@ def clean_projected_duplicates(content, sections, facts):
     from ingest.seoul_fact_roles import public_roles, optional_section
     from ingest.ai_worker import KO_SECTION_HEADERS
     roles = public_roles(facts)
-    originals = {key(v) for v in facts['conditions']
-                 if additional_role(v) or _HEADING.fullmatch(plain(v)) or _CONTINUATION.search(v)}
+    originals = {key(v) for v in facts['conditions']}
     originals.update(key(v) for values in roles.values() for v in values if additional_role(v))
     old_keys = {key(v) for v in facts['conditions']}
     originals.update(key(v) for v in projected_conditions(facts) if key(v) not in old_keys)
@@ -235,26 +240,38 @@ def clean_projected_duplicates(content, sections, facts):
         return content, sections
     lines = []
     current = None
-    for line in content.splitlines():
+    source_lines = content.splitlines()
+    attached = set()
+    for index, line in enumerate(source_lines):
         if line.strip() in KO_SECTION_HEADERS:
             current = line.strip()
-        match = re.fullmatch(r'\s*- \*\*(?:참가 조건|예약 절차|신청 안내|진행 일정):\*\*\s*(.+)', line)
-        if current != '[한 줄 요약]' and match and key(match[1]) in originals:
+        match = re.fullmatch(r'\s*- \*\*(?:참가 조건|예약 절차|신청 안내|진행 일정|이용 안내):\*\*\s*(.+)', line)
+        continuation = index + 1 < len(source_lines) and source_lines[index + 1][:1].isspace() and source_lines[index + 1].strip()
+        if match and continuation:
+            attached.add(key(match[1]))
+        if current != '[한 줄 요약]' and match and key(match[1]) in originals and not continuation:
             continue
         lines.append(line)
     content = '\n'.join(lines)
     result = dict(sections)
     # Same complete statement in its destination is sufficient, never unrelated
     # sentences spread across the document or the canonical row itself.
-    for header in ('[대상]', '[일정 안내]', '[신청 방법]'):
+    for header in ('[대상]', '[일정 안내]', '[주요 내용]', '[신청 방법]'):
         proof = optional_section(content, header)
         kept = []
         for line in result[header].splitlines():
-            match = re.fullmatch(r'- \*\*(?:참가 조건|예약 절차|신청 안내|진행 일정):\*\*\s*(.+)', line)
-            if (match and key(match[1]) in originals
-                    and (covered_condition(match[1], proof) or weekly_covered(match[1], proof))):
+            match = re.fullmatch(r'- \*\*(?:참가 조건|예약 절차|신청 안내|진행 일정|이용 안내):\*\*\s*(.+)', line)
+            # Schedule extraction can supply the same source record as an
+            # ordinary bullet. Deduplicate the whole row, never table cells.
+            value = match[1] if match else plain(line)
+            if (not line[:1].isspace() and '|' not in line and key(value) in originals and key(value) not in attached
+                    and (covered_condition(value, proof) or weekly_covered(value, proof))):
                 continue
             kept.append(line)
+            # Identical complete source rows may be supplied by both the
+            # schedule extractor and the condition roles. Retain one copy.
+            if key(value) in originals:
+                proof += '\n' + value
         result[header] = '\n'.join(kept)
     # Remove only the separately represented, fully matched parenthetical age
     # rule; the API audience list itself is still displayed and stored intact.
