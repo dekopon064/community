@@ -12,6 +12,7 @@ const fakeReact = { ...React, useState(initial) { const i = cursor++; if (!(i in
 const cache = new Map();
 function load(name) {
   const filename = path.resolve(root, name);
+  if(filename.endsWith('.css'))return {}; // Styles do not participate in these handler tests.
   if (cache.has(filename)) return cache.get(filename);
   const exports = {}; cache.set(filename, exports);
   const code = ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;

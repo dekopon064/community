@@ -172,12 +172,14 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
   const history = groups.filter(g => g.issue.disposition === 'equivalent');
   const count = (d: ReviewIssue['disposition']) => (d === 'equivalent' ? groups : actionable).filter(g => g.issue.disposition === d).length;
   return <>
+    {(actionable.length > 0 || past.length > 0) && <>
     <h3 className="text-lg font-bold">AI 결과 검토</h3>
     <p className="mt-2 text-sm leading-6">수정 제안 {count('change')}개 · 근거 확인 필요 {count('needs_review')}개</p>
     {past.length > 0 && <p className="mt-2 text-sm leading-6">과거 진단 {past.length}개 · 현재 감지 없음 {past.filter(g => currencyAbsent(g.issue)).length}개 / 문구 연결 확인 필요 {past.filter(g => !currencyAbsent(g.issue)).length}개. 현재 오류 개수가 아닙니다.</p>}
     {actionable.length > 0 ? <p className="mt-2 max-w-prose text-sm leading-6">아래 수정 제안과 확인이 필요한 내용을 원문과 비교해 주세요. 수정안을 적용하거나 직접 편집했다면 ‘수정 저장’ 후 게시 여부를 결정합니다.</p>
       : <p className="mt-2 max-w-prose text-sm leading-6">{past.some(g => !currencyAbsent(g.issue)) ? '현재 문구와 연결되지 않은 과거 진단이 있습니다. 오류가 해결됐다고 단정하지 않으며, 아래 대조 자료로 본문을 최종 검토해 주세요.' : '이 검사 기록에서 추가로 수정할 사항은 없습니다. 별도 수정·저장 없이 본문 최종 검토 후 게시 여부를 결정할 수 있습니다.'}</p>}
-    <ol className="mt-6 space-y-8">
+    </>}
+    {actionable.length > 0 && <ol className="mt-6 space-y-8">
       {actionable.map(({ issue, occurrences, index }) => {
         const field = issueField(issue);
         const patched = applySeoulReviewPatch(content, issue);
@@ -228,7 +230,7 @@ export function SeoulCandidateFindings({ review, content, savedContent = content
           </details>
         </li>;
       })}
-    </ol>
+    </ol>}
     {past.length > 0 && <section className="mt-6 border-t border-info-rule pt-4" aria-label="과거 진단 대조">
       <h4 className="font-semibold">과거 진단과 현재 본문</h4>
       <p className="mt-2 text-sm leading-6">기록은 보존합니다. 아래 대조 표시는 후보를 수정하거나 게시를 승인하지 않습니다.</p>
