@@ -3,7 +3,10 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {createElement} from 'react';
-import {renderToStaticMarkup} from 'react-dom/server';
+import {renderToStaticMarkup as renderMarkup} from 'react-dom/server';
+import {NextIntlClientProvider} from 'next-intl';
+import koMessages from '../messages/ko.json' with {type:'json'};
+const renderToStaticMarkup = element => renderMarkup(createElement(NextIntlClientProvider,{locale:'ko',messages:koMessages,timeZone:'Asia/Seoul'},element));
 await import('./test_generated_body_candidate.mjs');
 const {readEditor,replaceInline,selectedInline,inlineText,changeList,tableRow,safeLink}=await import('../app/lib/review/body-editor.ts');
 const {domInline,writeInline}=await import('../app/lib/review/body-editor-dom.ts');

@@ -139,7 +139,8 @@ assert.equal(reviewSaveState(summaryIssue,{...edited,summaryJa:'10:30'},{...edit
 const groupedHtml=renderToStaticMarkup(createElement(SeoulCandidateFindings,{review:{source:'원문',issues:[equivalent,repeated]},content:listContent}));
 assert.equal((groupedHtml.match(/<li /g)||[]).length,2);
 assert.ok(groupedHtml.includes('수정 불필요 · 참고 이력 2개'));
-assert.ok(groupedHtml.includes('추가로 수정할 사항은 없습니다'));
+assert.ok(!groupedHtml.includes('수정 제안 0개'), 'Reference-only records do not create an empty warning summary');
+assert.ok(groupedHtml.includes('이 기록에 대한 별도 수정·저장은 필요하지 않습니다.'));
 assert.ok(!groupedHtml.includes('현재 후보 문구'));
 assert.ok(!groupedHtml.includes('본문에서 직접 편집'));
 assert.ok(!groupedHtml.includes('<details open'));

@@ -135,7 +135,11 @@ export default function FilterReviewPanel({id,version,info,disabled,onBlocked,on
   </section>;
 }
 
-export function CandidateFilterComparison({info}:{info:CandidateFilterInfo}) {
+export function CandidateFilterComparison({info,expanded=false}:{info:CandidateFilterInfo;expanded?:boolean}) {
  const fields=filterKeys.filter(k=>[info.input,info.approved,info.current].some(d=>d[k].status!=='not_applicable'));
- return <section className="my-6 border-y border-info-rule py-4" aria-label="후보의 탐색 정보"><h3 className="font-semibold">탐색 정보</h3><p className="mt-2 leading-7 text-info-body">생성 당시 버전 {info.inputVersion} · 후보에 반영된 버전 {info.approvedVersion} · 현재 확정 버전 {info.currentVersion}</p>{info.changed&&<p role="status" className="mt-2 text-info-status">생성 후 탐색 정보가 변경됐습니다. 후보 내용과 현재 확정값을 확인한 뒤 수정 저장하면 현재 탐색 정보도 후보에 반영됩니다. 생성 당시 입력은 보존됩니다.</p>}<details className="mt-3"><summary className="cursor-pointer py-3 font-semibold">생성 당시·후보·현재 탐색값 비교</summary><dl>{fields.map(k=><div key={k} className="border-t border-info-rule py-4"><dt className="font-semibold">{reviewFilterLabel(info.current,k)}</dt><dd className="mt-2 grid gap-3 sm:grid-cols-3">{(['input','approved','current'] as const).map((stage,i)=><p key={stage} className="min-w-0 break-words text-sm leading-6"><span className="block text-info-muted">{['생성 당시 입력','후보 반영값','현재 확정값'][i]}</span>{filterValueLabel(info[stage],k)}</p>)}</dd></div>)}</dl></details></section>;
+ const values=<dl>{fields.map(k=><div key={k} className="border-t border-info-rule py-4"><dt className="font-semibold">{reviewFilterLabel(info.current,k)}</dt><dd className="mt-2 grid gap-3 sm:grid-cols-3">{(['input','approved','current'] as const).map((stage,i)=><p key={stage} className="min-w-0 break-words text-sm leading-6"><span className="block text-info-muted">{['생성 당시 입력','후보 반영값','현재 확정값'][i]}</span>{filterValueLabel(info[stage],k)}</p>)}</dd></div>)}</dl>;
+ return <section className={expanded ? '' : 'my-6 border-y border-info-rule py-4'} aria-label="후보의 탐색 정보"><h3 className="font-semibold">탐색 정보</h3><p className="mt-2 text-sm leading-7 text-info-muted">생성 당시 버전 {info.inputVersion} · 후보에 반영된 버전 {info.approvedVersion} · 현재 확정 버전 {info.currentVersion}</p>
+   {!expanded&&info.changed&&<p role="status" className="mt-2 text-info-status">생성 후 탐색 정보가 변경됐습니다. 후보 내용과 현재 확정값을 확인한 뒤 수정 저장하면 현재 탐색 정보도 후보에 반영됩니다. 생성 당시 입력은 보존됩니다.</p>}
+   {expanded ? <div className="mt-3"><h4 className="py-3 font-semibold">생성 당시·후보·현재 탐색값 비교</h4>{values}</div> : <details className="mt-3"><summary className="cursor-pointer py-3 font-semibold">생성 당시·후보·현재 탐색값 비교</summary>{values}</details>}
+ </section>;
 }

@@ -54,10 +54,10 @@ export function SeoulCandidateCorrection({ id, content, savedContent = content, 
     return () => controller.abort();
   }, [id]);
   if (unavailable) return <p role="status" className="text-sm text-info-status">AI 오류·수정 기록을 확인하지 못했습니다.</p>;
-  if (!detail?.evidence && !detail?.review) return null;
+  if (!detail?.evidence && !detail?.review?.issues.length) return null;
   return <section aria-label="AI 결과 검토" className="my-5 border-y border-info-rule py-4">
     {detail.evidence && <CorrectionComparison detail={detail.evidence}/>}
-    {detail.review && <SeoulCandidateFindings review={detail.review} content={content} savedContent={savedContent} onChange={onChange} disabled={disabled}/>}
+    {Boolean(detail.review?.issues.length) && detail.review && <SeoulCandidateFindings review={detail.review} content={content} savedContent={savedContent} onChange={onChange} disabled={disabled}/>}
   </section>;
 }
 

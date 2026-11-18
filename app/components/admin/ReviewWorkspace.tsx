@@ -1,10 +1,12 @@
 "use client";
 
-import FilterReviewPanel, { CandidateFilterComparison } from './FilterReviewPanel';
+import { CandidateSource, CandidateRegistration, CandidateFilterAlert, RegistrationLink } from './CandidateReviewContext';
+import { candidateSourceName } from '@/app/lib/review/candidate-display';
+import FilterReviewPanel from './FilterReviewPanel';
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { CandidateImageSelection, CandidateContent, Facts, ReviewItem, ReviewKind, ListItem, ReviewCommand } from "@/app/lib/review/contracts";
-import { actionText, aiStatusText, categories, failureText, homeColorNotice, reasonText, sourceLink, statusText } from "@/app/lib/review/presentation";
+import { aiStatusText, categories, failureText, homeColorNotice, reasonText, sourceLink, statusText } from "@/app/lib/review/presentation";
 import { CandidateEditor, FactsEditor, fieldClass, primaryButton, secondaryButton } from "./ReviewEditors";
 import { CandidateContentNotices } from "./CandidateContentNotices";
 import { workerSources } from '@/app/lib/pc-worker/contracts';
@@ -226,23 +228,22 @@ export default function ReviewWorkspace() {
           <header className="border-b border-info-rule pb-5">
             <p className="text-sm text-info-status">{statusText[item.status]}</p>
             <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>
-            <p className="mt-3 text-sm leading-6 text-info-muted">{item.source.name}{item.kind === "candidates" ? ` · ${item.category ? categories[item.category] : "분류 확인 필요"} · ${item.period}` : ""}</p>
+            <p className="mt-3 text-sm leading-6 text-info-muted">{item.kind === "candidates" ? `${candidateSourceName(item.source.name)} · ${item.category ? categories[item.category] : "분류 확인 필요"}` : item.source.name}</p>
           </header>
           {publishedMode&&item.kind==='candidates'&&item.status==='published'&&item.publishedId&&<PublishedHomeColor key={item.id+item.version} id={item.id} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||locationBusy||featuredBlocked||fieldsDirty||Boolean(note)||Boolean(confirmation)} onBlocked={setColorBlocked}/>}
           {publishedMode&&item.kind==='candidates'&&item.status==='published'&&item.publishedId&&<PublishedHomeFeatured key={'featured'+item.id+item.version} id={item.id} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||locationBusy||colorBlocked||fieldsDirty||Boolean(note)||Boolean(confirmation)} onBlocked={setFeaturedBlocked}/>}
           {(!publishedMode&&(item.kind==='facts'||item.kind==='candidates'&&item.status==='published'))&&<ClassificationPanel key={item.id+item.version} id={item.id} disabled={operationBusy||fieldsDirty||Boolean(confirmation)} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const data=await call(`/api/admin/review/${item.kind}/${item.id}`);accept(data.item);setReload(n=>n+1);}}/>}
           {item.kind==='facts'&&!classificationActive&&<FactsGuidance item={item}/>}
-          <details className="my-6 border-b border-info-rule pb-6">
+          {item.kind === "candidates" ? <CandidateSource key={"source:"+item.id} source={item.source}/> : <details className="my-6 border-b border-info-rule pb-6">
             <summary className="min-h-11 cursor-pointer py-2 font-semibold">원문 확인</summary>
             {source ? <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center underline underline-offset-4">공식 원문 열기 (새 창)</a> : <p className="mt-3 text-info-muted">원문 링크를 제공할 수 없습니다.</p>}
             <p className="mt-3 whitespace-pre-wrap break-words leading-7 text-info-body">{item.source.body || "저장된 원문 본문이 없습니다. 원문 링크에서 확인해 주세요."}</p>
-          </details>
+          </details>}
           {item.kind === "candidates" && Object.hasOwn(workerSources, item.source.name) && confirmation !== "publish" && <SeoulCandidateCorrection key={item.id + item.version} id={item.id} content={content ?? item.content} savedContent={item.content} onChange={setContent} disabled={locked} />}
           {item.kind === "candidates" && item.contentNotices && <CandidateContentNotices notices={item.contentNotices} />}
-          {item.kind === "candidates" && item.programInfo && <div className="my-5 border-y border-info-rule py-4 text-sm leading-6 text-info-body">
-            <p>후보 입력 사실 버전 {item.programInfo.inputFactsVersion} · 현재 사실 버전 {item.programInfo.currentFactsVersion}</p>
-            <p>신청 기간: {item.programInfo.applicationPeriod}</p><p>운영 기간: {item.programInfo.operatingPeriod} (한국 시간)</p>
-            {item.programInfo.inputChanged && item.source.name !== "myseoul_program" ? <p role="status" className="mt-2 text-info-status">후보 생성 후 사실이 변경되었습니다. 수정 저장·반려는 가능하지만 게시는 차단됩니다. 자동 요약·재번역은 하지 않았으며 사실과 후보의 재대조 기능은 아직 없습니다.</p> : !publicChange && !publishedMode && !item.programInfo.canPublish && <p role="status" className="mt-2 text-info-status">현재 접수 상태·판정 또는 수집원 권한으로 게시할 수 없습니다. 수정 저장·반려는 계속할 수 있습니다.</p>}
+          {item.kind === "candidates" && item.programInfo && (item.programInfo.inputChanged && item.source.name !== "myseoul_program" || !publicChange && !publishedMode && !item.programInfo.canPublish) && <div role="status" className="mb-6 leading-7 text-info-status">
+            {item.programInfo.inputChanged && item.source.name !== "myseoul_program" ? <p>후보 생성 후 사실이 변경되었습니다. 변경된 세부 항목은 현재 자료로 특정할 수 없습니다. 수정 저장·반려는 가능하지만 게시는 차단됩니다. 사실과 후보의 재대조 기능은 아직 없습니다.</p> : <p>현재 접수 상태·판정 또는 수집원 권한으로 게시할 수 없습니다. 수정 저장·반려는 계속할 수 있습니다.</p>}
+            <RegistrationLink/>
           </div>}
           {item.kind === "candidates" && !publishedMode && item.source.name === "myseoul_program" && item.programInfo?.inputChanged && <section className="my-6 border-y border-info-rule py-5" aria-label="원문 변경 확인">
             <h3 className="font-semibold">생성 이후 원문이 변경됨</h3>
@@ -256,7 +257,7 @@ export default function ReviewWorkspace() {
             <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || imageDirty || Boolean(confirmation) || !changeNote.trim()} onClick={() => void submit({ ...preconditions(), action: "review_change", disposition: contentDirty ? "edited" : "no_impact", note: changeNote, ...(contentDirty && content ? { content } : {}) })}>{busy ? "처리 중…" : fieldsDirty ? publicChange ? "공개 내용 수정·변경 확인" : "수정 저장·변경 확인" : "내용 영향 없음·변경 확인"}</button>
           </section>}
           {item.kind === 'facts' && item.filterInfo && !processed && !classificationActive && <FilterReviewPanel key={item.filterInfo.filterVersion} id={item.id} version={item.version} info={item.filterInfo} disabled={operationBusy || fieldsDirty || Boolean(note) || Boolean(confirmation)} onBlocked={setFilterBlocked} onSaved={async () => { const data = await call(`/api/admin/review/facts/${item.id}`); setItem(data.item); setReload(n => n + 1); setNotice('탐색 정보를 확인·저장했습니다.'); }}/>}
-          {item.kind === 'candidates' && item.filterInfo && <CandidateFilterComparison info={item.filterInfo}/>}
+          {item.kind === 'candidates' && <CandidateFilterAlert item={item}/>}
           <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation || publicChange || publishedMode) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content && !invalidImage) void submit({ ...preconditions(), action: "save_candidate", content, ...(imageEditable && imageSelection ? { imageSelection } : {}) }); }}>
             {publishedMode && <div className="my-6 border-y border-info-rule py-5">
               <p className="leading-7 text-info-body">제목·요약·이미지·분류·필터·게시 시각은 유지하고 상세 본문만 저장합니다.</p>
@@ -280,6 +281,7 @@ export default function ReviewWorkspace() {
               {dirty && <button type="button" className={secondaryButton} disabled={busy || Boolean(confirmation)} onClick={() => { accept(item); setError(""); setNotice(""); }}>수정 취소</button>}
             </div>}
           </form>
+          {item.kind === "candidates" && <CandidateRegistration key={"registration:"+item.id} item={item} local={mode === "local-fixture"}/>}
           {!processed && !publicChange && !publishedMode && (item.kind === "candidates" || item.excludeAllowed !== false) && <section className="border-t border-info-rule pt-6">
               {item.kind === "facts" && <><h3 className="font-bold">빠른 제외</h3><p className="mt-2 text-sm leading-6 text-info-muted">사유를 자동 기록하고 휴지통으로 이동합니다. 72시간 이내에 복구할 수 있습니다.</p>
               <div className="my-4 flex flex-wrap gap-3">{Object.entries(quickReasons).map(([code, label]) => <button key={code} type="button" className={secondaryButton} disabled={locked || fieldsDirty || Boolean(note)} onClick={() => void submit({ ...preconditions(), action: "exclude", reasonCode: code as QuickReason, note: "" })}>{label} · 제외</button>)}</div></>}
@@ -296,11 +298,6 @@ export default function ReviewWorkspace() {
             {confirmation === "publish" && item.kind === "candidates" && Object.hasOwn(workerSources, item.source.name) && <SeoulCandidateCorrection key={item.id + item.version} id={item.id} content={item.content} disabled />}
             <div className="mt-5 flex flex-wrap gap-3"><button className={primaryButton} disabled={busy} onClick={confirmAction}>{busy ? "처리 중…" : confirmation === "save_published_body" ? "확인하고 공개 본문 저장" : confirmation === "publish" ? "확인하고 게시" : "확인하고 처리"}</button><button className={secondaryButton} disabled={busy} onClick={() => setConfirmation(null)}>돌아가기</button></div>
           </section>}
-          {item.kind === "candidates" && item.publishedAt && <p className="mt-7 text-info-body">{mode === "local-fixture" ? "시험 게시" : "게시"} 시각: {time(item.publishedAt)} (한국 시간)</p>}
-          {item.kind === "candidates" && <details className="mt-10 border-t border-info-rule pt-4" open={item.history.length > 0}>
-            <summary className="min-h-11 cursor-pointer py-2 font-semibold">저장·처리 이력 ({item.history.length})</summary>
-            {item.history.length ? <ol className="divide-y divide-info-rule">{item.history.map((entry, index) => <li key={index} className="py-4 text-sm leading-6"><p className="font-semibold">{entry.changeLabel ?? actionText[entry.action] ?? "처리 기록"} · {time(entry.at)} (한국 시간)</p><p className="break-all text-info-muted">작업 계정: {entry.actor}</p>{entry.note && <p className="mt-1 whitespace-pre-wrap break-words text-info-body">{entry.note}</p>}</li>)}</ol> : <p className="py-3 text-info-muted">아직 저장·처리 이력이 없습니다.</p>}
-          </details>}
         </>}
       </section>
     </div>}

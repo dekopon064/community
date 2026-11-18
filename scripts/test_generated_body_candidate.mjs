@@ -7,7 +7,10 @@ import {readFileSync} from 'node:fs';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {createElement} from 'react';
-import {renderToStaticMarkup} from 'react-dom/server';
+import {renderToStaticMarkup as renderMarkup} from 'react-dom/server';
+import {NextIntlClientProvider} from 'next-intl';
+import koMessages from '../messages/ko.json' with {type:'json'};
+const renderToStaticMarkup = element => renderMarkup(createElement(NextIntlClientProvider,{locale:'ko',messages:koMessages,timeZone:'Asia/Seoul'},element));
 import ts from 'typescript';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
@@ -25,6 +28,7 @@ registerHooks({
     }
   },
   load(url,context,next) {
+    if(url.endsWith('.css'))return {format:'module',shortCircuit:true,source:'export default {};'};
     if(url.endsWith('.tsx'))return {format:'module',shortCircuit:true,
       source:ts.transpileModule(readFileSync(fileURLToPath(url),'utf8'),
         {compilerOptions:{module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.ReactJSX}}).outputText};
