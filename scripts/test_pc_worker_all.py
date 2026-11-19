@@ -125,16 +125,19 @@ class FrozenQueueTests(unittest.TestCase):
         self.assertEqual(sum(r['counts']['completed'] for r in result['sourceResults']),51)
 
     def test_acknowledged_seoul_item_failure_releases_pair_and_crosses_chunk_boundary(self):
-        result,q,events,_=self.run_worker(n=26,mode=(24,'item'))
+        result,q,events,reports=self.run_worker(n=26,mode=(24,'item'))
         self.assertEqual(result['state'],'partial');self.assertEqual(len(q.claims),26)
         self.assertEqual(events.count('summary'),26);self.assertEqual(events.count('translation'),25);self.assertEqual(events.count('release'),1)
         self.assertEqual(result['counts']['failed'],1);self.assertEqual(result['counts']['chunks_done'],2)
+        self.assertTrue(any(r.get('completed')==24 and r.get('confirmed_failed')==1 for r in reports))
+        self.assertEqual(result['counts']['confirmed_failed'],1)
 
     def test_common_unknown_and_unexpected_retry_stop_future_chunks(self):
         for mode,expected in [((24,'common'),'stopped'),((24,'unknown'),'unknown'),((25,'retry'),'stopped')]:
             result,q,events,_=self.run_worker(mode=mode)
             self.assertEqual(result['state'],expected);self.assertEqual(len(q.claims),mode[0]+1)
             self.assertEqual(result['counts']['unprocessed'],51-len(q.claims));self.assertNotIn('release',events)
+            self.assertEqual(result['counts']['confirmed_failed'],0)
 
     def test_stale_frozen_target_is_skipped_without_claiming_a_new_revision(self):
         result,q,events,_=self.run_worker(n=26,mode=(24,'stale'))

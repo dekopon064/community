@@ -191,7 +191,7 @@ export default function ReviewWorkspace() {
       <button type="button" aria-current={kind === "trash" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("trash")} className={kind === "trash" ? primaryButton : secondaryButton}>휴지통</button>
     </nav>
     <TrashPanel active={kind === "trash"} onBusy={trashBusy} onRestored={restored} />
-    <AiQueuePanel active={kind === "ai"} onBusy={setAiBlocked} onReview={openAiRecheck} execution={<PcAiRunPanel disabled={busy || dirty || Boolean(confirmation)}/>}/>
+    <AiQueuePanel active={kind === "ai"} onBusy={setAiBlocked} onReview={openAiRecheck} execution={<PcAiRunPanel disabled={busy || dirty || Boolean(confirmation)} onReviewCandidates={()=>switchKind("candidates")}/>}/>
     <div hidden={kind === "ai" || kind === "trash"}>
     <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : publishedMode ? "게시된 글의 한국어·일본어 상세 본문을 수정합니다. ‘공개 본문 저장’은 현재 공개 글에 직접 반영되며, 수정 사유와 전후 이력을 남깁니다." : publicChange ? "공개된 콘텐츠의 원문 변경을 확인합니다. ‘공개 내용 수정·변경 확인’은 현재 공개 글에 직접 반영됩니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
     {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}

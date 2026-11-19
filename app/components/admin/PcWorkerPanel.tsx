@@ -2,6 +2,7 @@
 import { createContext,useContext,useEffect,useRef,useState } from 'react';
 import type { ReactNode } from 'react';
 import {RunFailures} from './RunFailures';
+import {AiRunProgress} from './AiRunProgress';
 import { PcWorkerClient } from '@/app/lib/pc-worker/client';
 import type { PcWorkerView } from '@/app/lib/pc-worker/client';
 import { workerSources,workerCatalog } from '@/app/lib/pc-worker/contracts';
@@ -56,27 +57,33 @@ export default function PcWorkerPanel({disabled=false}:{disabled?:boolean}){
     </section>
   </div>;
 }
-export function PcAiRunPanel({disabled=false}:{disabled?:boolean}){
-  const {view,run}=useWorker();const [limit,setLimit]=useState<WorkerCommand['limit']>(1);
+export function PcAiRunPanel({disabled=false,onReviewCandidates}:{disabled?:boolean;onReviewCandidates:()=>void}){
+  const {view,runs,run}=useWorker();const [limit,setLimit]=useState<WorkerCommand['limit']>(1);
+  const awaiting = view.awaitingRun?.kind === 'ai';
+  const staleRunning = runs.ai?.state === 'running' &&
+    (view.connection === 'off' || view.run?.requestId !== runs.ai.requestId);
+  const uncertain = awaiting ? view.unknown : staleRunning || (view.unknown && !view.awaitingRun && view.run?.command.kind === 'ai');
   return <section aria-label="AI 실행" className="my-5 space-y-3 border-y border-info-rule py-4">
     <h3 className="font-semibold">AI 실행</h3>
     <div className="flex flex-wrap items-end gap-3"><label className="block text-sm font-semibold">AI 처리 건수<select className={fieldClass} value={limit} disabled={view.sending||view.busy} onChange={e=>setLimit(e.target.value==='all'?'all':Number(e.target.value))}>{[1,5,10,25].map(value=><option key={value} value={value}>{value}</option>)}<option value="all">전체</option></select></label>
       <button type="button" className={primaryButton} disabled={locked(view,disabled)} onClick={()=>run({source:'all',kind:'ai',limit})}>AI 실행</button></div>
+    <AiRunProgress run={awaiting ? undefined : runs.ai} awaiting={awaiting} uncertain={uncertain}
+      disabled={disabled} onReviewCandidates={onReviewCandidates}/>
     <p className="max-w-3xl text-sm leading-6 text-info-muted">선택한 건수까지 처리합니다. 숫자 선택은 대기 목록 첫 25건에서, 전체는 시작 시 확인한 실행 가능한 항목을 고정해 25건씩 처리합니다. 실행 중 새 항목은 추가하지 않습니다. 건별 요약·번역은 각각 최대 1회, 후보 생성까지만 진행합니다.</p>
     <p className="text-sm leading-6 text-info-muted">개별 항목의 오류는 재시도 없이 실패로 저장한 뒤 다음 항목을 처리합니다. 공통 오류가 발생하거나 AI 응답·저장 결과를 확인할 수 없으면 전체 실행을 중단합니다.</p>
     {view.connection!=='ready'&&<p className="text-sm text-info-status">검토 관리 상단에서 PC를 먼저 연결해 주세요.</p>}
     {disabled&&<p className="text-sm text-info-status">편집·저장 중인 내용을 먼저 정리해 주세요.</p>}
-    <RunResult kind="ai"/>
+    {!awaiting&&<RunResult kind="ai" uncertain={uncertain}/>}
   </section>;
 }
 function Counts({counts}:{counts:Record<string,number>}){
   return <ul className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-sm text-info-body">{Object.entries(counts).map(([key,value])=>countText[key]&&<li key={key}>{countText[key]} {value}{key.endsWith('_sources')||key.startsWith('chunks_')?'개':['list_pages','snapshot_read_pages'].includes(key)?'페이지':['requests','request_count'].includes(key)?'회':'건'}</li>)}</ul>;
 }
-function RunResult({kind}:{kind:WorkerCommand['kind']}){
+function RunResult({kind,uncertain=false}:{kind:WorkerCommand['kind'];uncertain?:boolean}){
   const {runs}=useWorker(),run=runs[kind];if(!run)return null;
   const counts=kind==='collect'&&run.sourceResults?.length?Object.fromEntries(Object.entries(run.counts).filter(([key])=>key.endsWith('_sources'))):run.counts;
   return <section aria-label={`최근 ${kind==='collect'?'수집':'AI'} 실행 결과`} aria-live="polite" className="border-t border-info-rule pt-4">
-    <h3 className="font-semibold">{kind==='ai'?'AI 대기 항목':run.command.source==='all'?'전체 수집원':workerSources[run.command.source]} · {stateText[run.state]}</h3>
+    <h3 className="font-semibold">{kind==='ai'?'AI 실행 상세':run.command.source==='all'?'전체 수집원':workerSources[run.command.source]} · {uncertain?stateText.unknown:stateText[run.state]}</h3>
     {run.state==='auth_required'?<p className="mt-2 text-sm leading-6 text-info-status">기존 Pro 로그인 경로에서 인증을 확인해 주세요. 이 화면에서는 로그인을 자동으로 열거나 AI를 다시 호출하지 않습니다.</p>:<Counts counts={counts}/>}
     {!!run.sourceResults?.length&&<ul className="mt-3 space-y-3">{run.sourceResults.map(row=><li key={row.source}><p className="text-sm font-semibold">{workerSources[row.source]} · {stateText[row.state]}</p><Counts counts={row.counts}/></li>)}</ul>}
     {kind==='ai'&&<RunFailures run={run}/>}

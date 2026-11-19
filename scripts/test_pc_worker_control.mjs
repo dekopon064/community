@@ -38,6 +38,7 @@ await test('wrong Origin, oversized or invalid body, extra fields and unsupporte
  assert.throws(()=>issueWorkerGrant(workerGrantInput(input()),actor,origin,{project:'b'.repeat(20),key}));
 });
 function fixture({unknown=false,denied=false,invalid=false,terminalUnknown=false}={}){
+ let reported;
  let view,calls=[],run=null,collect=0,ai=0,completed=false;const token='synthetic_local_connection_aaaaaaaaaa';
  const transport=async(url,options={})=>{
   calls.push({url,method:options.method,body:options.body});const body=options.body?JSON.parse(options.body):null;
@@ -51,10 +52,11 @@ function fixture({unknown=false,denied=false,invalid=false,terminalUnknown=false
    if(unknown)throw Error('response_unknown_with_secret_do_not_echo');
    if(invalid)return Response.json({unverified:true});
   }
+  if(run&&reported)return Response.json({busy:reported.state==='running',run:{...run,...reported}});
   return Response.json({busy:!!run&&(!completed||terminalUnknown),run:run?{...run,state:completed?terminalUnknown?'unknown':'completed':'running',counts:completed&&!terminalUnknown?{completed:1}:{}}:null});
  };
  const client=new PcWorkerClient(s=>{view=s;},transport,id);
- return{client,calls,get view(){return view;},get collect(){return collect;},get ai(){return ai;},finish(){completed=true;}};
+ return{client,calls,get view(){return view;},get collect(){return collect;},get ai(){return ai;},finish(){completed=true;},report(next){reported=next;}};
 }
 await test('connect and status do not execute; each source/kind uses one explicit request',async()=>{
  for(const {source,kind} of [...workerCatalog.map(row=>({source:row.id,kind:'collect'})),{source:'all',kind:'collect'},{source:'all',kind:'ai'}]){
@@ -123,5 +125,40 @@ await test('confirmed, ambiguous and last-item reports render through the real s
  assert.ok(render({...base,failures:[{...row,flow:'last'}]}).includes('마지막 항목'));
  assert.throws(()=>render({...base,failures:[{...row,detail:{...detail,actual:'private content'}}]}));
  assert.equal(render(base),'');
+});
+await test('AI progress uses confirmed outcomes from status reads and review navigation never sends a command',async()=>{
+ const {AiRunProgress}=await import('../app/components/admin/AiRunProgress.tsx');
+ const {renderToStaticMarkup}=await import('react-dom/server');
+ const {Children,isValidElement}=await import('react');
+ const f=fixture();
+ let navigations=0;
+ function panel(disabled=false){return AiRunProgress({run:f.view.run,awaiting:false,uncertain:f.view.unknown,disabled,onReviewCandidates:()=>navigations++});}
+ async function report(state,counts){f.report({state,counts});await f.client.refresh();return renderToStaticMarkup(panel());}
+ await f.client.connect();
+ assert.equal(panel(),null);
+ await f.client.run({...cmd,limit:'all'});
+ assert.match(renderToStaticMarkup(panel()),/실행 대상 확인 중/);
+ let html=await report('running',{selected:21,completed:4,confirmed_failed:1,unavailable_skipped:1,processed_items:7});
+ for(const s of ['AI 처리 중','aria-valuenow="6"','aria-valuemax="21"','정식 실패 1건','건너뜀 1건'])assert.ok(html.includes(s));
+ assert.doesNotMatch(html,/후보 검토로 이동|처리 중단/);
+ html=await report('unknown',{selected:21,completed:4,confirmed_failed:1,unavailable_skipped:1,state_unknown:1,unprocessed:14,processed_items:7});
+ for(const s of ['AI 처리 중단 · 결과 확인 필요','aria-valuenow="6"','미처리 14건','결과 불명 1건'])assert.ok(html.includes(s));
+ assert.doesNotMatch(html,/ai-run-indeterminate|후보 검토로 이동/);
+ assert.match(await report('running',{selected:1,completed:0}),/ai-run-indeterminate/);
+ assert.doesNotMatch(renderToStaticMarkup(panel()),/aria-valuenow=/);
+ html=await report('completed',{selected:1,completed:1});
+ assert.match(html,/aria-valuenow="1"/);assert.match(html,/width:100%/);
+ html=await report('partial',{selected:21,completed:20,confirmed_failed:1});
+ for(const s of ['AI 처리 완료','aria-valuenow="21"','AI 결과 후보 검토로 이동'])assert.ok(html.includes(s));
+ const nav=(disabled)=>Children.toArray(panel(disabled).props.children).find(child=>isValidElement(child)&&child.type==='button');
+ assert.equal(nav(true).props.disabled,true);
+ nav(false).props.onClick();assert.equal(navigations,1);assert.equal(f.ai,1);
+ html=await report('completed',{selected:0,completed:0});assert.match(html,/실행 가능한 항목 없음/);assert.doesNotMatch(html,/progressbar|후보 검토로 이동/);
+ html=await report('stopped',{selected:21,completed:5,failed:1,confirmed_failed:0,unprocessed:15});
+ assert.match(html,/AI 처리 중단/);assert.match(html,/aria-valuenow="5"/);assert.doesNotMatch(html,/ai-run-indeterminate/);
+ const lost=fixture({unknown:true});await lost.client.connect();await lost.client.run(cmd);
+ assert.equal(lost.view.awaitingRun.kind,'ai');assert.equal(lost.view.unknown,true);
+ html=renderToStaticMarkup(AiRunProgress({awaiting:true,uncertain:true}));
+ assert.match(html,/실행 상태 확인 필요/);assert.doesNotMatch(html,/ai-run-indeterminate|후보 검토로 이동/);
 });
 console.log(JSON.stringify({passed,real_auth:0,real_ai:0,db:0,external_network:0}));

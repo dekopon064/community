@@ -203,6 +203,15 @@ html[data-theme="dark"] .event-period-date {
   color: var(--color-info-status);
 }
 
+@keyframes ai-run-sweep {
+  from { transform: translateX(0); }
+  to { transform: translateX(200%); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ai-run-indeterminate { animation: ai-run-sweep 1.4s ease-in-out infinite alternate; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
