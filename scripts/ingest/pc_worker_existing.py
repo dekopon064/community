@@ -15,7 +15,7 @@ COUNT_KEYS = frozenset({'scanned','target','existing_skipped','new_saved','revie
     'completed','unavailable_skipped','state_skipped','state_unknown','unprocessed','other_source','eligible',
     'inserted','updated','unchanged','excluded','created','skipped','total','duplicates','review','ai',
     'discovered','new','known','closed_skipped','processed','pending_remaining','carried_selected','list_pages',
-    'processed_items','chunks_total','chunks_done','snapshot_read_pages'})
+    'processed_items','confirmed_failed','chunks_total','chunks_done','snapshot_read_pages'})
 
 
 def outcome(value):
@@ -95,13 +95,16 @@ class ExistingWorkers:
         from ingest.pc_worker_queue import frozen_queue_targets
         if limit=='all':targets,counts=frozen_queue_targets(adapter,sources=tuple(SOURCES),progress=self.progress)
         else:targets,counts=bounded_queue_targets(adapter,max_jobs=limit,queue_pages=1,source=tuple(SOURCES))
-        counts.update(items=[],batch_stopped=False,stop_reason=None,processed_items=0,
+        counts.update(items=[],batch_stopped=False,stop_reason=None,processed_items=0,confirmed_failed=0,
             chunks_total=(len(targets)+QUEUE_PAGE_SIZE-1)//QUEUE_PAGE_SIZE,chunks_done=0)
+        def confirmed_failures(part):
+            return sum(item['failed'] for item in part.get('items', ()) if item['terminationConfirmed'] and not item['stateUnknown'])
         def report(part=None):
             current={key:value for key,value in counts.items() if key in COUNT_KEYS and type(value) is int}
             if part is not None:
                 for key in ('completed','failed','unavailable_skipped','state_unknown'):current[key]+=part[key]
                 current['processed_items']+=len(part.get('items',[]))
+                current['confirmed_failed']+=confirmed_failures(part)
             current['unprocessed']=len(targets)-current['processed_items']
             self.progress(current)
         report()
@@ -129,6 +132,7 @@ class ExistingWorkers:
                 part['state_unknown']+=1
             for key in ('completed','failed','unavailable_skipped','state_unknown'):counts[key]+=part[key]
             counts['items'].extend(part.get('items',[]));counts['processed_items']=len(counts['items'])
+            counts['confirmed_failed']+=confirmed_failures(part)
             counts['unprocessed']=len(targets)-counts['processed_items']
             if part.get('batch_stopped'):
                 counts.update(batch_stopped=True,stop_reason=part['stop_reason']);break

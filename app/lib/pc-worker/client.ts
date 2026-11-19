@@ -1,7 +1,7 @@
 import { pcWorkerEndpoint, workerHello, workerStatus, workerCommand } from './contracts';
 import type { WorkerHello, WorkerRun, WorkerStatus, WorkerCommand } from './contracts';
 
-export type PcWorkerView = { connection:'off'|'connecting'|'ready'; sending:boolean; busy:boolean; unknown:boolean; run:WorkerRun|null; error:string };
+export type PcWorkerView = { connection:'off'|'connecting'|'ready'; sending:boolean; busy:boolean; unknown:boolean; run:WorkerRun|null; awaitingRun?:WorkerCommand; error:string };
 class HttpFailure extends Error { constructor(readonly status:number,readonly code:string){super(code);} }
 export class PcWorkerClient {
   private connection:{hello:WorkerHello;token:string}|null=null;
@@ -53,7 +53,7 @@ export class PcWorkerClient {
       if(!['running','unknown'].includes(status.run.state))this.pending=null;
     }
     const unknown=status.run?.state==='unknown';
-    this.emit({busy:status.busy,run:status.run,unknown,error:unknown?'result_unknown':''});
+    this.emit({busy:status.busy,run:status.run,awaitingRun:undefined,unknown,error:unknown?'result_unknown':''});
   }
   private statusUrl(){return `${pcWorkerEndpoint}/status${this.pending?'?requestId='+this.pending.requestId:''}`;}
   async refresh(){
@@ -65,7 +65,7 @@ export class PcWorkerClient {
   async run(raw:WorkerCommand){
     if(!this.connection||this.inFlight||this.state.busy||this.state.unknown)return;
     const command=workerCommand(raw),connection=this.connection,generation=this.generation;
-    const requestId=this.uuid();let sent=false;this.inFlight=true;this.emit({sending:true,error:''});
+    const requestId=this.uuid();let sent=false;this.inFlight=true;this.emit({sending:true,awaitingRun:command,error:''});
     try{
       const ticket=await this.grant('run',connection.hello,requestId,command);
       if(generation!==this.generation)return;
@@ -75,7 +75,7 @@ export class PcWorkerClient {
     }catch(error){if(generation===this.generation){
       const denied=error instanceof HttpFailure&&[401,403,409,422].includes(error.status);
       if(denied)this.pending=null;
-      this.emit({unknown:sent&&!denied,error:sent&&!denied?'result_unknown':this.errorCode(error)});
+      this.emit({unknown:sent&&!denied,awaitingRun:sent&&!denied?command:undefined,error:sent&&!denied?'result_unknown':this.errorCode(error)});
     }}finally{if(generation===this.generation){this.inFlight=false;this.emit({sending:false});}}
   }
   dispose(){this.generation++;this.inFlight=false;this.connection=null;}
