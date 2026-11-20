@@ -16,6 +16,9 @@ from test_seoul_content import synthetic_facts
 
 DATA = json.loads((Path(__file__).parent / 'testdata/seoul_condition_layout.json').read_text(encoding='utf-8'))
 CASES = {row['case']: row for row in DATA['cases']}
+CONCERT_PATH = '서울시 공공예약 > 마이페이지 > 신청목록 > 파란색 예약 번호 클릭하여 취소 진행'
+CONCERT_CANCEL = '취소 방법: ' + CONCERT_PATH
+CONCERT_JA = 'ソウル市公共予約のマイページで申込一覧を開き、青い予約番号をクリックしてキャンセルしてください。'
 
 
 def fixture(name):
@@ -56,6 +59,74 @@ class ConditionLayoutTests(unittest.TestCase):
         self.assertEqual(facts, saved)
         self.assertEqual(body, assemble_seoul_body(body, facts, review=SeoulCandidateReview(None)))
         return body, public_roles(facts), review
+
+    def test_concert_cancellation_scope_and_duplicate_protection(self):
+        facts = synthetic_facts()
+        other = ['우천 시 공연 취소', '무단 불참 시 향후 예약 제한', '보호자 동반 필수',
+                 '취소 방법: 우천 시 주최 측에서 전화로 공연 취소를 안내합니다.']
+        summary = '[한 줄 요약]\n합성 공연입니다.\n[주요 내용]\n공연 관람 안내입니다.\n[신청 방법]\n'
+        deadline = '. 단, 공연일 2일 전까지만 취소할 수 있습니다.'
+        for heading in ('취소 방법: ', '예약 취소 절차：'):
+            for source_extra, existing_extra in (('', ''), (deadline, ''), ('', deadline)):
+                with self.subTest(heading=heading, source=source_extra, existing=existing_extra):
+                    source = heading + CONCERT_PATH + source_extra
+                    facts.update(conditions=[source, *other], description='\n'.join([source, *other]))
+                    self.assertEqual(public_roles(facts)['booking'], [source])
+                    body = assemble_seoul_body(summary + CONCERT_CANCEL + existing_extra, facts,
+                                               review=SeoulCandidateReview(None))
+                    method = optional_section(body, '[신청 방법]')
+                    self.assertIn(CONCERT_PATH + (source_extra or existing_extra), method)
+                    self.assertEqual(body.count(CONCERT_PATH), 1)
+                    for preserved in other:
+                        self.assertIn(preserved, body)
+                        self.assertNotIn(preserved, method)
+                    self.assertEqual(body, assemble_seoul_body(body, facts, review=SeoulCandidateReview(None)))
+
+    def test_concert_menu_order_and_distinct_exceptions(self):
+        from ingest.seoul_condition_layout import cancellation_covers
+        variant = CONCERT_PATH.replace(' > ', ' → ').replace('번호 클릭하여 취소 진행', '번호를 클릭해 취소하세요.')
+        self.assertTrue(cancellation_covers(CONCERT_CANCEL, variant))
+        self.assertFalse(cancellation_covers(CONCERT_CANCEL, variant.replace('파란색', '빨간색')))
+        self.assertFalse(cancellation_covers(CONCERT_CANCEL, variant.replace('마이페이지 → 신청목록', '신청목록 → 마이페이지')))
+        facts = synthetic_facts()
+        rules = [CONCERT_CANCEL + '. 단, 단체는 전화로 취소하세요.',
+                 CONCERT_CANCEL + '. 단, 개인은 이용일 전날까지 취소하세요.']
+        facts.update(conditions=rules, description='\n'.join(rules))
+        summary = '[한 줄 요약]\n합성 공연입니다.\n[주요 내용]\n공연 관람 안내입니다.'
+        method = optional_section(assemble_seoul_body(summary, facts, review=SeoulCandidateReview(None)), '[신청 방법]')
+        for rule in rules:
+            self.assertIn(rule.partition(': ')[2], method)
+
+    def test_concert_both_workers_forward_clean_body_and_finish_private_candidate(self):
+        import test_seoul_per_session_replay as replay
+        original_case, original_translate = replay.recorded_case, replay.fake_translation
+
+        def with_concert(classified):
+            data, ctx = original_case(classified)
+            facts = ctx['nativeConfirmedFacts']['programFacts'] if classified else ctx['facts']
+            facts['conditions'].append(CONCERT_CANCEL)
+            facts['description'] += '\n' + CONCERT_CANCEL
+            data['context']['facts'] = copy.deepcopy(facts)
+            return data, ctx
+
+        def translate(body):
+            return original_translate(body.replace('**취소 방법:** ' + CONCERT_PATH,
+                                                   '**キャンセル方法**：' + CONCERT_JA))
+
+        for classified in (False, True):
+            with self.subTest(classified=classified), patch.object(replay, 'recorded_case', with_concert), patch.object(
+                    replay, 'fake_translation', translate):
+                result, calls, saved, requests, _ = replay.run_recorded(self, classified=classified)
+                self.assertEqual(result.completed, 1)
+                self.assertEqual(len(requests), 2)
+                self.assertEqual(requests[1]['input'][0]['content'],
+                                 'title_ko: ' + saved['titleKo'] + '\ncontent_ko:\n' + saved['contentKo'])
+                self.assertEqual(len(calls), 2)
+                for body, heading, phrase in ((saved['contentKo'], '[신청 방법]', CONCERT_PATH),
+                                               (saved['contentJa'], '[申請方法]', CONCERT_JA)):
+                    before, method = body.split(heading)
+                    self.assertNotIn(phrase, before)
+                    self.assertEqual(method.count(phrase), 1)
 
     def test_hong_source_number_removed_booking_not_eligibility(self):
         body, roles, _ = self.render('hong')

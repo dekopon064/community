@@ -8,6 +8,7 @@ import re
 
 from ingest.body_markdown import inline_text, read_body
 from ingest.seoul_condition_layout import display_text, project_layout, layout_role, condition_signature, parking_signature
+from ingest.seoul_condition_layout import cancellation_covers, cancellation_steps
 
 
 def plain(value):
@@ -232,6 +233,7 @@ def clean_projected_duplicates(content, sections, facts):
     from ingest.seoul_fact_roles import public_roles, optional_section
     from ingest.ai_worker import KO_SECTION_HEADERS
     roles = public_roles(facts)
+    cancellations = [v for v in roles['booking'] if cancellation_steps(v)]
     originals = {key(v) for v in facts['conditions']}
     originals.update(key(v) for values in roles.values() for v in values if additional_role(v))
     old_keys = {key(v) for v in facts['conditions']}
@@ -249,6 +251,12 @@ def clean_projected_duplicates(content, sections, facts):
         continuation = index + 1 < len(source_lines) and source_lines[index + 1][:1].isspace() and source_lines[index + 1].strip()
         if match and continuation:
             attached.add(key(match[1]))
+        if (current in ('[대상]', '[신청 방법]') and line.strip() and not continuation
+                and not line[:1].isspace() and '|' not in line
+                and any(cancellation_covers(v, line) and
+                        (current == '[대상]' or line.startswith('- **취소 방법:** ')
+                         or not cancellation_covers(line, v)) for v in cancellations)):
+            continue
         if current != '[한 줄 요약]' and match and key(match[1]) in originals and not continuation:
             continue
         lines.append(line)

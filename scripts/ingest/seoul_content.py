@@ -299,10 +299,22 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     content, sections = clean_fact_repetitions(content, sections, facts)
     content, sections = clean_role_repetitions(content, sections, facts)
     from ingest.seoul_condition_display import clean_projected_duplicates, additional_role, covered_condition
+    from ingest.seoul_condition_layout import cancellation_covers, cancellation_steps
     content, sections = clean_projected_duplicates(content, sections, facts)
     method = optional_section(content, '[신청 방법]')
     sections = dict(sections)
-    for value in public_roles(facts)['booking']:
+    bookings = public_roles(facts)['booking']
+    cancellations = [v for v in bookings if cancellation_steps(v)]
+    cancellation_proof = method.splitlines()
+    for value in bookings:
+        steps = cancellation_steps(value)
+        if steps:
+            if (not any(cancellation_covers(v, value) and not cancellation_covers(value, v)
+                                for v in cancellations)
+                    and not any(cancellation_covers(line, value) for line in cancellation_proof)):
+                sections['[신청 방법]'] += '\n- **취소 방법:** ' + steps
+                cancellation_proof.append(value)
+            continue
         covered = covered_condition(value, method) or (not additional_role(value) and booking_covered(value, method))
         if not covered:
             sections['[신청 방법]'] += '\n- **예약 절차:** ' + plain(value)

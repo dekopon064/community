@@ -16,6 +16,38 @@ def compact(value):
     return re.sub(r'\s+', '', display_text(value)).rstrip('.。\\')
 
 
+_CANCEL_HEADING = re.compile(r'^(?:예약\s*)?취소\s*(?:방법|절차)\s*[:：]\s*(.+)$')
+
+
+def cancellation_steps(value):
+    """Only a labelled procedure with a participant-facing channel or action."""
+    match = _CANCEL_HEADING.fullmatch(display_text(value))
+    if not match:
+        return None
+    steps = match[1]
+    if (re.search(r'(?:마이\s*페이지|신청\s*(?:목록|내역)|예약\s*(?:번호|내역))'
+                  r'.*?(?:[>→]|클릭|선택|취소(?:하세요|합니다|\s*신청))', steps)
+            or re.search(r'(?:전화|이메일|홈페이지|온라인|방문)(?:로|으로|에서)?\s*(?:예약\s*)?'
+                         r'(?:취소|신청|요청)|취소\s*(?:버튼|신청서를?\s*제출)', steps)):
+        return steps
+    return None
+
+
+def cancellation_covers(longer, shorter):
+    """Match a whole cancellation instruction, optionally followed by a qualification."""
+    def comparable(line):
+        text = re.sub(r'^(?:참가 조건|예약 절차|신청 안내|예약 취소)\s*[:：]\s*', '', display_text(line))
+        detail = cancellation_steps(text) or text
+        detail = re.sub(r'\s+(?:>|->|→)\s+', ' → ', detail).rstrip('.。\\').strip()
+        return re.sub(r'번호(?:를)?\s*클릭(?:하여|해|해서)\s*취소(?:\s*진행|하세요|합니다)(?=[.,，。]|$)',
+                      '번호 클릭하여 취소 진행', detail)
+
+    full, part = comparable(longer), comparable(shorter)
+    return full == part or ('취소' in part and full.startswith(part)
+                            and re.match(r'^(?:[.。]\s+|[,，]\s*)(?:단,?|다만|기한|취소 기한|취소는|이용일|공연일|예외)',
+                                         full[len(part):]) is not None)
+
+
 def layout_role(value):
     text = display_text(value)
     # Explicit contextual roles take precedence over words such as 전용/불가.
@@ -36,6 +68,8 @@ def layout_role(value):
     # Mixed participant eligibility is not reduced to a payment/booking rule.
     if re.search(r'보호자|동반|거주|국적|비자|학년|연령|\d+\s*세|가능자|소지자', text):
         return None
+    if cancellation_steps(text):
+        return 'booking'
     if (re.match(r'(?:참가\s*신청\s*[:：]|참\s*가비\s*[:：].*예약|\d+회\s*신청\s*시)', text)
             or re.match(r'(?:해당\s*)?프로그램은\s*선착순으로\s*모집', text)
             or re.match(r'프로그램\s*참여가\s*어려울\s*시,', text)
