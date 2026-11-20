@@ -171,6 +171,20 @@ def public_roles(facts):
         else:
             role = 'eligibility'
         roles[role].append(value)
+    # Legacy extraction includes "신청" in a no-show consequence, but can
+    # miss the preceding cancellation deadline. Use only the explicit complete
+    # instruction from the current description, keeping attached exceptions.
+    from ingest.seoul_condition_layout import booking_notice
+    notices = {signature[0] for v in roles['booking'] if (signature := booking_notice(v))}
+    if 'absent_without_cancel' in notices and not any('일 전' in v and '취소' in v for v in roles['booking']):
+        lines = facts['description'].splitlines()
+        for i, line in enumerate(lines):
+            value = plain(line)
+            signature = booking_notice(re.split(r'\.\s+(?=단,|다만)', value, maxsplit=1)[0])
+            if signature and signature[0] == 'advance_cancel' and value not in roles['booking']:
+                if i + 1 < len(lines) and re.match(r'(?:단,|다만|예외\s*[:：])', plain(lines[i+1])):
+                    value += ' ' + plain(lines[i+1])
+                roles['booking'].append(value)
     return roles
 
 

@@ -40,6 +40,16 @@ def _audience_atom(text):
     return None
 
 
+def _interest_age(text):
+    """Only complete audience clauses. No optional '만', exceptions or proxies."""
+    value = re.sub(r'^(?:대상|참가 대상)\s*[:：]\s*', '', _plain(text)).strip('.。\\ ')
+    value = re.sub(r'\s+', '', value)
+    match = re.fullmatch(r'([가-힣·]+에)관심있는(?:일반시민\((\d+)세이상\)|'
+                         r'(\d+)세이상(?:이면|(?:의)?(?:일반)?시민(?:이면|은|이))'
+                         r'(?:참여|신청)할수있습니다)', value)
+    return (match[1], match[2] or match[3]) if match else None
+
+
 def _participation_bundle(text):
     """Only explicitly delimited source capacity + fully recognized rules.
 
@@ -115,6 +125,7 @@ def clean_fact_repetitions(content: str, sections: dict, facts: dict) -> tuple[s
         capacity=re.match(rf'{_CAPACITY}\s*[:：]\s*({_QUANTITY})(?=$|\s*[（(])',value)
         if capacity: capacities.add(_key(capacity[1]))
     venues=facts['activity_evidence']
+    public_groups = {group for line in sections['[대상]'].splitlines() if (group := _interest_age(line))}
     section=None; lines=[]
     original=content.splitlines()
     for index,line in enumerate(original):
@@ -124,6 +135,13 @@ def clean_fact_repetitions(content: str, sections: dict, facts: dict) -> tuple[s
         if header or section=='[한 줄 요약]' or '|' in line or line[:1].isspace() or continuation:
             lines.append(line);continue
         plain=_plain(line)
+        if section == '[대상]' and _interest_age(plain) in public_groups:
+            continue
+        evidence = re.fullmatch(r'거주 조건 근거\s*[:：]\s*(.+)', plain)
+        if (section == '[대상]' and evidence and
+                any(_key(evidence[1]) == _key(v) for v in facts['residence_evidence'])):
+            # reviewed_sections already projects the actual audience/condition.
+            continue
         target=re.fullmatch(rf'{_TARGET}\s*[:：]\s*(.+)',plain)
         capacity=re.fullmatch(rf'{_CAPACITY}\s*[:：]\s*({_QUANTITY})',plain)
         bare_capacity=re.fullmatch(_QUANTITY,plain)

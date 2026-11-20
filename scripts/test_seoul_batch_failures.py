@@ -44,11 +44,14 @@ class BatchFailureTests(unittest.TestCase):
             ko_response = response(json.dumps(ko, ensure_ascii=False))
             if mode == 'usage': ko_response['usage']['total_tokens'] = 99999
             replies.append(ko_response)
-            if mode in {'ko_schema', 'ko_schedule', 'fail_unknown', 'usage'}: continue
-            assembled = assemble_seoul_body(summary['content_ko'],c['facts'])
+            if mode in {'ko_schema', 'fail_unknown', 'usage'}: continue
+            from ingest.seoul_candidate_review import SeoulCandidateReview
+            assembled = assemble_seoul_body(ko['content_ko'], c['facts'], review=SeoulCandidateReview(None))
             ja = {'title_ja':'合成の解説', 'content_ja':fake_translation(assembled)}
             if mode == 'ja_schema': ja['content_ja'] = 'invalid'
             replies.append(response(json.dumps(ja, ensure_ascii=False)))
+            if mode == 'ko_schedule':
+                replies.append(response(json.dumps({'findings': []})))
         client = streamed([reply if reply is not None else response(SUMMARY_JSON) for reply in replies])
         for index, reply in enumerate(replies):
             if reply is None: client.events[index] = [{'type':'response.output_text.delta','delta':'partial'}]
@@ -88,14 +91,20 @@ class BatchFailureTests(unittest.TestCase):
             self.assertEqual(args['p_lease_until'], c['leaseUntil'])
             self.assertEqual(args['p_worker_id'], c['workerId'])
             if name != 'fail_seoul_program_ai': self.assertEqual(args['p_revision'], c['revision'])
-            if name == 'finish_seoul_program_ai':
+            if name in {'finish_seoul_program_ai', 'finish_seoul_ai_candidate_review'}:
                 if modes[i]=='finish_unknown': raise RpcTimeout()
                 if modes[i]=='finish_malformed': return {'outcome':'inserted'}
-                self.assertEqual(args['p_facts_version'],c['factsVersion'])
+                if name == 'finish_seoul_ai_candidate_review':
+                    self.assertEqual(args['p_mode'], 'program')
+                    self.assertTrue(args['p_review']['issues'])
+                    self.assertEqual(args['p_input_version'], c['factsVersion'])
+                else:
+                    self.assertEqual(args['p_facts_version'], c['factsVersion'])
                 outputs.append(args['p_output'])
                 return {'outcome':'inserted','candidateId':c['sourceItemId']}
-            if name in {'fail_seoul_ai_no_retry','fail_seoul_program_ai'}:
+            if name in {'fail_seoul_ai_no_retry','fail_seoul_ai_with_draft','fail_seoul_program_ai'}:
                 if no_retry: self.assertEqual(args['p_attempt'],c['failurePolicy']['attempt'])
+                if name == 'fail_seoul_ai_with_draft': self.assertTrue(args['p_draft']['ko'])
                 if modes[i]=='fail_unknown': raise RpcTimeout()
                 terminal.append(i); return 'failed'
             raise AssertionError('unexpected RPC')
@@ -119,11 +128,18 @@ class BatchFailureTests(unittest.TestCase):
         self.assertIn(outputs[0]['contentKo'],client.calls[-1]['input'][0]['content'])
         self.assertNotIn('fail_seoul_program_ai',[n for n,_ in e])
 
-    def test_schedule_conflict_is_terminal_before_next_item(self):
-        r,client,_,claims,terminal,outputs,_ = self.batch(['ko_schedule','success'])
-        self.assertEqual((r['completed'],r['failed']),(1,1)); self.assertEqual(terminal,[0])
-        self.assertEqual(claims,[0,1]); self.assertEqual(len(client.calls),3)
-        self.assertEqual(r['items'][0]['failureStage'],'korean_validation'); self.assertEqual(len(outputs),1)
+    def test_schedule_conflict_is_recorded_before_next_item(self):
+        r,client,events,claims,terminal,outputs,_ = self.batch(['ko_schedule','success'])
+        self.assertEqual((r['completed'],r['failed'],r['state_unknown']),(2,0,0))
+        self.assertEqual(terminal,[]); self.assertEqual(claims,[0,1]); self.assertEqual(len(outputs),2)
+        self.assertEqual([call['text']['format']['name'] for call in client.calls],
+                         ['machimoa_summary','machimoa_translation','machimoa_seoul_candidate_review',
+                          'machimoa_summary','machimoa_translation'])
+        self.assertEqual([name for name,_ in events[1:]],
+                         ['claim_seoul_program_ai_no_retry','finish_seoul_ai_candidate_review',
+                          'claim_seoul_program_ai_no_retry','finish_seoul_program_ai'])
+        self.assertTrue(any(i['stage']=='korean_validation' and i['disposition']=='needs_review'
+                            for i in events[2][1]['p_review']['issues']))
 
     def test_unknown_or_malformed_write_stops_without_replay(self):
         for mode in ('transport','finish_unknown','finish_malformed','fail_unknown','claim_unknown','stale'):
@@ -133,7 +149,7 @@ class BatchFailureTests(unittest.TestCase):
                 self.assertEqual((r['state_unknown'],r['unprocessed']),(1,1)); self.assertEqual(claims,[0])
                 self.assertEqual(terminal,[]); self.assertEqual(outputs,[])
                 self.assertLessEqual(len(client.calls),2)
-                self.assertLessEqual(sum(n=='fail_seoul_ai_no_retry' for n,_ in e),1)
+                self.assertLessEqual(sum(n in {'fail_seoul_ai_no_retry','fail_seoul_ai_with_draft'} for n,_ in e),1)
 
     def test_usage_contract_failure_terminates_but_stops_batch(self):
         r,client,_,claims,terminal,_,provider = self.batch(['usage','success'])

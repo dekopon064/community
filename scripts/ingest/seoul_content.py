@@ -190,12 +190,52 @@ def reception_status(facts: dict, now: datetime | None = None) -> str:
     return '접수 중'
 
 
+def public_audience(facts, constraints):
+    """Combine a matching age floor and an explicit interest-based audience.
+
+    Keep different ages, additional qualifiers and operator overrides visible.
+    Residence evidence is a quote from the audience, not a residence decision.
+    """
+    raw = facts['target_raw']
+    age = re.fullmatch(r'제한\s*없음\s*\(\s*(\d+)\s*세\s*이상\s*\)', raw.strip())
+    labels = {}
+    for value in constraints:
+        match = re.fullmatch(r'(?:참가\s*)?대상\s*[:：]\s*(.+)', value)
+        if match:
+            labels[value] = match[1]
+    audience = '대상: ' + raw
+    covered = {key(raw)}
+    if age and len(labels) == 1:
+        phrase = next(iter(labels.values()))
+        detail = re.fullmatch(r'([가-힣· ]+에)\s*관심\s*있는\s*일반\s*시민\s*'
+                              r'\(\s*(\d+)\s*세\s*이상\s*\)', phrase)
+        if detail and detail[2] == age[1]:
+            audience = f'{detail[1]} 관심 있는 {age[1]}세 이상이면 참여할 수 있습니다.'
+            covered.add(key(phrase))
+    rows = [audience]
+    for value in constraints:
+        phrase = labels.get(value, value)
+        if key(phrase) not in covered:
+            rows.append(('대상: ' if value in labels else '참가 조건: ') + phrase)
+            covered.add(key(phrase))
+    from ingest.program_scope import TARGET_LABELS
+    from ingest.seoul_evidence import label_values
+    stated = {key(v) for v in label_values(facts['description'], TARGET_LABELS)} if facts['residence_evidence'] else set()
+    for quote in facts['residence_evidence']:
+        if key(quote) not in covered and (key(quote) in stated or
+                re.search(r'거주(?:자|민|지|하고|하는)|주민등록|전국|지역\s*제한\s*없|'
+                          r'[가-힣]+(?:구민|시민|군민|도민|주민)(?:만|에\s*한|을?\s*우선|\s*대상)', quote)):
+            # The stored quote stays available for review. Only an actual
+            # audience rule belongs in public prose, with its qualifiers.
+            rows.append('대상: ' + quote)
+            covered.add(key(quote))
+    return rows
+
+
 def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, str]:
     view = validation_view(facts)
     roles = public_roles(facts)
-    target = ['대상: ' + facts['target_raw']]
-    target += ['참가 조건: ' + value for value in participation_constraints(view)]
-    target += ['거주 조건 근거: ' + value for value in facts['residence_evidence']]
+    target = public_audience(facts, participation_constraints(view))
     target += ['모집 인원: ' + re.sub(r'^(?:모집\s*인원|참가\s*인원|인원|정원)\s*[:：]\s*', '', plain(v))
                for v in view['capacity_raw']]
     dates = ['신청기간: ' + period_text(facts, 'application'),
@@ -274,11 +314,12 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
             review.record(error)
             return fallback
     check(validate_weekly_schedule, content, facts['description'])
-    from ingest.seoul_calendar_sessions import validate_calendar_sessions
-    check(validate_calendar_sessions, content, view)
+    from ingest.seoul_calendar_sessions import validate_calendar_sessions, dated_slot_evidence
+    period_view = dated_slot_evidence(view)
+    check(validate_calendar_sessions, content, period_view)
     # These same checks run before cleanup, so conflicting AI facts cannot be
     # hidden by removal/replacement of a generated row.
-    check(validate_summary_period, content, canonical, view)
+    check(validate_summary_period, content, canonical, period_view)
     check(validate_checkin, content, view)
     check(validate_participant_quantities, view, content+'\n'+canonical)
     content = without_reception_status(content)

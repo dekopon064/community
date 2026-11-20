@@ -50,6 +50,10 @@ def cancellation_covers(longer, shorter):
 
 def layout_role(value):
     text = display_text(value)
+    if session_slot(text):
+        return 'schedule'
+    if booking_notice(re.split(r'\.\s+(?=단,|다만)', text, maxsplit=1)[0]):
+        return 'booking'
     # Explicit contextual roles take precedence over words such as 전용/불가.
     if re.match(r'(?:주차(?:\s*안내)?|답사\s*코스(?:\s*\([^\n]+\))?)\s*[:：]', text):
         return 'activity'
@@ -83,6 +87,30 @@ def layout_role(value):
 _EMPTY_HEADINGS = {'회차별운영시간', '신청및참여안내'}
 
 
+def session_slot(value):
+    # Only an entire numbered time range. Keep an attached qualifier intact.
+    clock = r'([01]?\d|2[0-3])\s*(?::\s*([0-5]\d)|시(?:\s*([0-5]?\d)\s*분)?)'
+    match = re.fullmatch(r'\((\d+)\s*회차\)\s*' + clock + r'\s*[-~～–]\s*' + clock, display_text(value))
+    if match:
+        number, h1, m1, k1, h2, m2, k2 = match.groups()
+        return int(number), int(h1)*60 + int(m1 or k1 or 0), int(h2)*60 + int(m2 or k2 or 0)
+    return None
+
+
+def booking_notice(value):
+    text = compact(value)
+    rules = (
+        ('per_guest', r'동반예약(?:의경우,?|도)(\d+)인당(\d+)예약(?:이)?필수입니다'),
+        ('absent_without_cancel', r'사전취소없이불참(?:할경우,?|하면)이후프로그램신청이제한될수있습니다'),
+        ('advance_cancel', r'(?:원활한진행을위해)?불참(?:시|할경우)최소(\d+)일전까지예약을취소해(?:주시기바랍니다|주세요)'),
+    )
+    for kind, pattern in rules:
+        match = re.fullmatch(pattern, text)
+        if match:
+            return (kind, *match.groups())
+    return None
+
+
 def project_layout(value, lines):
     """Use only a uniquely matched current source line for contextual repairs."""
     text = display_text(value)
@@ -90,6 +118,10 @@ def project_layout(value, lines):
     if len(matches) != 1:
         return [text]
     index = matches[0]
+    text = re.sub(r'^✅\s*(?=대상\s*[:：])', '', text)
+    notice = re.fullmatch(r'\d+[.)]\s*주의사항\s*[○●▪]\s*(.+)', text)
+    if notice and not re.search(r'\d+\s*번\s*(?:항|조건)|\d+\s*항\s*참[고조]', '\n'.join(lines)):
+        text = notice[1]
     if compact(re.sub(r'^⏰\s*', '', text)) in _EMPTY_HEADINGS:
         if any(line.strip() for line in lines[index + 1:]):
             return []
@@ -126,6 +158,9 @@ def condition_signature(value):
     identity are part of equality. No keyword counts or fuzzy similarity.
     """
     text = compact(value)
+    booking = booking_notice(value)
+    if booking:
+        return booking
     patterns = (
         ('accompanied_minor', r'어린이및청소년\(만(\d+)세이하\)은성인\(만(\d+)세이상\)이예약하고동반시참여가능합니다'),
         ('accompanied_minor', r'만(\d+)세이하는만(\d+)세이상성인이예약하고동반해야참여할수있습니다'),

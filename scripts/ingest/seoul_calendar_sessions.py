@@ -9,6 +9,7 @@ from ingest.ai_errors import ValidationError, validation_location
 from ingest.body_markdown import read_body, inline_text
 from ingest.myseoul_content import schedule_lines, _operation_date_bounds
 from ingest.translation_validation import _dates_and_times
+from ingest.seoul_condition_layout import session_slot
 
 _DATE = (r"(?:\d{4}-\d{2}-\d{2}|(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일|"
          r"(?:(?:\d{4}|['’]\d{2})\s*\.\s*)?\d{1,2}\s*\.\s*\d{1,2}\.?)")
@@ -44,6 +45,68 @@ def record_calendar_sessions(line, *, years=frozenset()):
         elif day is not None:clocks.append(value)
     if day is not None:records.append((day,tuple(clocks)))
     return records
+
+
+def numbered_day_source(view, records):
+    """One explicit date heading immediately followed by its numbered slots."""
+    bounds = _operation_date_bounds(view)
+    if len(bounds) != 1 or bounds[0][0] != bounds[0][1] or len(records) < 2:
+        return None
+    day = bounds[0][0]
+    heading = re.fullmatch(r'(?:✅\s*)?(?:운영\s*)?일시\s*[:：]\s*(?:(\d{4})년\s*)?'
+                           r'(\d+)월\s*(\d+)일\s*\(([월화수목금토일])(?:요일)?\)\s*'
+                           r'(?:[*※]?\s*((?:약\s*)?\d+\s*분)\s*소요)?', records[0])
+    if (not heading or (int(heading[1] or day.year), int(heading[2]), int(heading[3])) !=
+            (day.year, day.month, day.day) or heading[4] != '월화수목금토일'[day.weekday()]):
+        return None
+    source = [line.strip() for line in view['description'].splitlines() if line.strip()]
+    if source.count(records[0]) != 1:
+        return None
+    start = source.index(records[0])
+    if source[start:start+len(records)] != records:
+        return None
+    slots = [session_slot(v) for v in records[1:]]
+    if not all(slots) or len({s[0] for s in slots}) != len(slots):
+        return None
+    return day, heading[5], slots
+
+
+def matches_numbered_table(table, source):
+    if not source:
+        return False
+    day, _, slots = source
+    headers = tuple(inline_text(h) for h in table.headers)
+    if (len(headers) != 3 or '회차' not in headers or '시간' not in headers
+            or not {'일자','날짜','일시','일정','운영일','교육일','수업일'} & set(headers)):
+        return False
+    daycol = next(i for i, name in enumerate(headers) if name not in ('회차','시간'))
+    actual = []
+    for row in table.rows:
+        text = inline_text(row[daycol])
+        if not re.fullmatch(_DATE + _DAY, text):
+            return False
+        if _dates_and_times(text, known_years=frozenset({day.year})) != [('date',day.year,day.month,day.day)]:
+            return False
+        weekday = re.search(r'[（(]\s*([월화수목금토일])', text)
+        if weekday and weekday[1] != '월화수목금토일'[day.weekday()]:
+            return False
+        ordinal = re.fullmatch(r'(?:제\s*)?(\d+)\s*회차', inline_text(row[headers.index('회차')]))
+        if not ordinal:
+            return False
+        actual.append(session_slot(f'({ordinal[1]}회차) ' + row[headers.index('시간')]))
+    return actual == slots
+
+
+def dated_slot_evidence(view):
+    records = schedule_lines(view)
+    source = numbered_day_source(view, records)
+    if not source:
+        return view
+    day, _, slots = source
+    prefix = f'{day.year}년 {day.month}월 {day.day}일({"월화수목금토일"[day.weekday()]})'
+    dated = [f'{prefix} {ordinal}회차 {start//60:02}:{start%60:02}~{end//60:02}:{end%60:02}'
+             for ordinal, start, end in slots]
+    return {**view, 'session_evidence': [records[0], *dated]}
 
 
 def calendar_session_records(view):
