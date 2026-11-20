@@ -83,14 +83,37 @@ def ensure_application_guidance(content: str, facts: dict) -> str:
     from ingest.myseoul_content import merge_reviewed_sections
     method = optional_section(content, '[신청 방법]')
     url = official_reservation_url(facts.get('official_url'))
+    notice = '구체적인 신청 방법은 공식 안내에서 확인해 주세요.'
+    # Only identical standalone fallback sentences/links in the application
+    # section. Preserve surrounding instructions, linked phrases and footnotes.
+    defaults = {notice}
+    if url:
+        defaults.update((url, f'[공식 예약 페이지]({url})'))
+    seen = set()
+    kept = []
+    for line in method.splitlines():
+        text = line.rstrip().removesuffix('\\').rstrip()
+        identity = url if url and text in (url, f'[공식 예약 페이지]({url})') else text
+        if text in defaults:
+            if identity in seen:
+                continue
+            seen.add(identity)
+        kept.append(line)
+    unique = '\n'.join(kept)
+    if unique != method:
+        start = content.index(method, content.index('[신청 방법]') + len('[신청 방법]'))
+        content = content[:start] + unique + content[start + len(method):]
+        method = unique
     if url and re.search(re.escape(url) + r'(?=$|[\s)])', method):
         return content
     # Existing validated method rows/procedures take precedence. A contact
     # number alone, cancellation notice or 'not specified' is not a route.
     if method.strip() and (facts.get('application_methods') or _has_route(method)):
         return content
-    fallback = (f'구체적인 신청 방법은 공식 안내에서 확인해 주세요.\n\n[공식 예약 페이지]({url})'
+    fallback = (f'{notice}\n\n[공식 예약 페이지]({url})'
                 if url else '구체적인 신청 방법은 확인되지 않았습니다. 제공 기관에 확인해 주세요.')
+    if url and any(inline_text(line).strip().rstrip('\\').strip() == notice for line in method.splitlines()):
+        fallback = f'[공식 예약 페이지]({url})'
     if fallback in method:
         return content
     return merge_reviewed_sections(content, {'[신청 방법]': fallback})

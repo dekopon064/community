@@ -161,28 +161,42 @@ class PublicGuidanceTests(unittest.TestCase):
                         for text in ('09:00~17:00','사전 협의','2일 전','10명이상','개인정보 동의서','주차비','우천'):
                             self.assertIn(text,ko)
 
+    def test_content_findings_save_one_private_review(self):
+        cases = [
+            ('public_reception_status', 'japanese_validation', dict(bad_ja=lambda s: s+'\n[受付状況]\n受付中')),
+            ('public_reception_status', 'japanese_validation', dict(bad_ja=lambda s: s+'\n- **受付状況:** 受付中')),
+            ('reviewed_period', 'korean_validation', dict(bad_ko=lambda s: s+'\n[일정 안내]\n신청기간: 2026-09-20 17:00 ~ 2026-10-14 18:02')),
+            ('body_section', 'japanese_validation', dict(bad_ja=lambda s: s.replace('[申請方法]', '[別の案内]'))),
+            ('official_link', 'japanese_validation', dict(bad_ja=lambda s: s.replace('SYNTH_PUBLIC_GUIDANCE', 'CHANGED_URL'))),
+        ]
+        for classified in (False, True):
+            for rule, stage, inputs in cases:
+                with self.subTest(classified=classified, rule=rule):
+                    result, events, outputs, calls = self.replay(0, classified, review=True, **inputs)
+                    self.assertEqual((result.completed, result.failed, result.state_unknown), (1, 0, 0))
+                    self.assertEqual([c['text']['format']['name'] for c in calls],
+                                     ['machimoa_summary', 'machimoa_translation', 'machimoa_seoul_candidate_review'])
+                    self.assertEqual([n for n, _ in events[1:]], ['finish_seoul_ai_candidate_review'])
+                    self.assertEqual(len(outputs), 1)
+                    issues = events[-1][1]['p_review']['issues']
+                    self.assertIn((rule, stage, 'needs_review', 'no_finding'),
+                                  [(i['rule'], i['stage'], i['disposition'], i['reviewOutcome']) for i in issues])
+
     def test_bad_results_terminate_and_unknown_does_not_write_again(self):
-        for classified in (False,True):
-            for bad in ('[受付状況]\n受付中','- **受付状況:** 受付中'):
-                r,e,o,c=self.replay(0,classified,bad_ja=lambda body:body+'\n'+bad)
-                # A literal state field is forbidden; never a completed candidate.
-                self.assertEqual(r.completed,0)
-                self.assertEqual(sum(n=='fail_seoul_ai_no_retry' for n,_ in e),1)
-                self.assertEqual(r.failed,1);self.assertEqual(len(c),2)
-            r,e,o,c=self.replay(0,classified,bad_ko=lambda body:body+'\n[일정 안내]\n신청기간: 2026-09-20 17:00 ~ 2026-10-14 18:02')
-            # Actual deadline conflicts remain blocked before translation.
-            self.assertEqual(r.completed,0)
-            r,e,o,c=self.replay(0,classified,unknown='completion')
-            self.assertEqual(r.state_unknown,1);self.assertEqual(sum(n.startswith('finish_') for n,_ in e),1)
-            self.assertEqual(sum(n=='fail_seoul_ai_no_retry' for n,_ in e),0)
-            r,e,o,c=self.replay(0,classified,bad_ja=lambda body:body.replace('[申請方法]','[別の案内]'))
-            self.assertEqual(r.failed,1);self.assertEqual(r.completed,0)
-            self.assertEqual(sum(n.startswith('finish_') for n,_ in e),0)
-            r,e,o,c=self.replay(0,classified,bad_ja=lambda body:body.replace('SYNTH_PUBLIC_GUIDANCE','CHANGED_URL'))
-            self.assertEqual(r.failed,1);self.assertEqual(r.completed,0)
-            r,e,o,c=self.replay(0,classified,bad_ja=lambda body:body+'\n受付状況: 受付中',unknown='failure')
-            self.assertEqual(r.state_unknown,1);self.assertEqual(r.completed,0)
-            self.assertEqual(sum(n=='fail_seoul_ai_no_retry' for n,_ in e),1)
+        for classified in (False, True):
+            for unknown_failure in (False, True):
+                with self.subTest(classified=classified, unknown_failure=unknown_failure):
+                    result, events, outputs, calls = self.replay(
+                        0, classified, bad_ko=lambda _: '', unknown='failure' if unknown_failure else None)
+                    self.assertEqual([n for n, _ in events[1:]], ['fail_seoul_ai_no_retry'])
+                    self.assertEqual([c['text']['format']['name'] for c in calls], ['machimoa_summary'])
+                    self.assertEqual((result.failed, result.state_unknown), (int(not unknown_failure), int(unknown_failure)))
+                    self.assertEqual(outputs, [])
+            result, events, outputs, calls = self.replay(
+                0, classified, review=True, bad_ja=lambda s: s+'\n[受付状況]\n受付中', unknown='completion')
+            self.assertEqual((result.completed, result.failed, result.state_unknown), (0, 0, 1))
+            self.assertEqual([n for n, _ in events[1:]], ['finish_seoul_ai_candidate_review'])
+            self.assertEqual(outputs, [])
             r,e,o,c=self.replay(0,classified,skip=True)
             self.assertEqual(c,[]);self.assertEqual(o,[])
             r,e,o,c=self.replay(0,classified,claim_change=lambda context:context.update(revision='b'*64))

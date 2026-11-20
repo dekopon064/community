@@ -7,6 +7,7 @@ from ingest.body_markdown import inline_text, read_body
 from ingest.myseoul_ai_support import schedule_values
 from ingest.myseoul_content import schedule_block, schedule_lines, _dated_schedule_details
 from ingest.seoul_fact_roles import WEEKDAY
+from ingest.seoul_calendar_sessions import numbered_day_source, matches_numbered_table
 from ingest.translation_validation import _entry
 from ingest.translation_validation import _dates_and_times
 from ingest.seoul_calendar_sessions import (record_calendar_sessions, session_text,
@@ -155,7 +156,7 @@ def _has_only_weekly_sessions(view: dict, records: list[str]) -> bool:
     return bool(labeled) and all(_weekly_session_without_midnight(line) for line in [*labeled, *records])
 
 
-def _operation_period_display(sections: dict, view: dict) -> dict:
+def _operation_period_display(sections: dict, view: dict, *, dated_records=None) -> dict:
     """Separate calendar bounds from independently verified session clocks.
 
     Never change endpoint precision, application cutoffs or temporal gating.
@@ -172,7 +173,7 @@ def _operation_period_display(sections: dict, view: dict) -> dict:
         return sections
     start,end=(d.date() for d in dates)
     matrix=view.get('weekly_schedule')
-    records = schedule_lines(view)
+    records = schedule_lines(view) if dated_records is None else dated_records
     explicit=[_display_values(record,years=_years(view))['times'] for record in records]
     if any(a==0 or b==0 or a>=b for times in explicit for a,b in times):
         return sections
@@ -247,10 +248,20 @@ def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[st
                 if not represented or not re.search(r'준수|시간을?\s*지켜',inline_text(original)):
                     notes.append(parts[1])
     remaining=[record for record in records if record not in covered]
+    numbered = numbered_day_source(view, records)
+    dated_records = None
+    duration = None
+    if numbered and any(matches_numbered_table(table, numbered) for table in read_body(original).tables):
+        day, duration, _ = numbered
+        remaining = []
+        dated_records = [f'{day.isoformat()} {line}' for line in records[1:]]
     def remove_block(text):
         block=schedule_block(records)
         return text.replace(block,schedule_block(remaining),1) if block else text
     canonical=remove_block(sections['[일정 안내]'])
+    if duration and not any(re.fullmatch(r'(?:회차당|각\s*회차)\s*' + re.escape(duration) + r'\s*소요[.。]?',
+                                         _plain(line)) for line in original.splitlines()):
+        canonical = canonical.rstrip() + '\n소요 시간: ' + duration
     # Exact source/generated table equality only. Do not deduplicate different
     # activities/headers/cell layouts or replace one by reconstructed prose.
     tables=read_body(original).tables
@@ -259,7 +270,7 @@ def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[st
             canonical=canonical.replace(table.markdown,'',1)
     if notes: canonical+='\n'+'\n'.join('- **집결 안내:** '+n for n in dict.fromkeys(notes))
     sections['[일정 안내]']=canonical.strip()
-    sections=_operation_period_display(sections,view)
+    sections=_operation_period_display(sections,view,dated_records=dated_records)
     roles={role for role,labels in (
         ('신청기간',r'신청\s*기간'),('진행기간',r'진행\s*기간|운영\s*기간|개최\s*기간'))
         if _entry(supplied['[일정 안내]'],labels) is not None}
