@@ -30,6 +30,30 @@ export function isCompleteBilingualCuration(
   return BILINGUAL_FIELDS.every((field) => isNonEmptyText(row[field]));
 }
 
+export async function fetchPublishedSitemapSlugs(): Promise<Set<string>> {
+  const slugs = new Set<string>();
+  let afterId: string | undefined;
+
+  // Read past the API row limit without relying on offsets or a fixed total.
+  while (true) {
+    let query = supabase.from("curations")
+      .select("id,slug,title_ko,summary_ko,content_ko,title_ja,summary_ja,content_ja")
+      .eq("is_published", true)
+      .order("id")
+      .limit(100);
+    if (afterId) query = query.gt("id", afterId);
+
+    const { data, error } = await query;
+    if (error) throw new Error("Failed to load published sitemap entries", { cause: error });
+    if (!data.length) return slugs;
+
+    for (const row of data) {
+      if (isCompleteBilingualCuration(row)) slugs.add(row.slug);
+    }
+    afterId = data[data.length - 1].id;
+  }
+}
+
 export function localizeCuration(
   row: Curation,
   locale: string,
