@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { getTranslations, setRequestLocale } from "next-intl/server";
@@ -20,19 +22,22 @@ import readingStyles from '@/app/components/CurationReading.module.css';
 
 export const dynamic = "force-dynamic";
 
-export default async function InfoDetailPage({
-  params,
-}: {
-  params: Promise<{ locale: string; id: string }>;
-}) {
+const getPublicArticle = cache(async (id: string, locale: string) => {
+  const item = await fetchLocalizedCurationBySlug(id, locale);
+  if (!item) notFound();
+  return item;
+});
+
+export async function generateMetadata({ params }: PageProps<"/[locale]/info/[id]">): Promise<Metadata> {
+  const { id, locale } = await params;
+  const { title, summary } = await getPublicArticle(id, locale);
+  return { title, description: summary };
+}
+
+export default async function InfoDetailPage({ params }: PageProps<"/[locale]/info/[id]">) {
   const { locale, id } = await params;
   setRequestLocale(locale);
-
-  const item = await fetchLocalizedCurationBySlug(id, locale);
-
-  if (!item) {
-    notFound();
-  }
+  const item = await getPublicArticle(id, locale);
 
   const t = await getTranslations("InfoDetail");
   const categoriesT = await getTranslations("Categories");

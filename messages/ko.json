@@ -39,6 +39,7 @@
     "cta": "이야기 보내기"
   },
   "Home": {
+    "searchTitle": "마치모아 | 한국 생활·문화체험 안내",
     "sectionTitle": "지금 살펴볼 정보",
     "headline": "한국 생활 알아갈수록 더 가까이",
     "headlineParts": [
@@ -46,7 +47,7 @@
       "알아갈수록",
       "더 가까이"
     ],
-    "intro": "한국 생활 안내부터 지역 프로그램과 행사 정보까지 알기 쉽게 전합니다",
+    "intro": "마치모아는 한국 생활에 필요한 정보와 지역에서 참여할 수 있는 프로그램·행사를 한국어와 일본어로 소개합니다.",
     "updatedAt": "최종 갱신",
     "recentlyUpdated": "최근 갱신",
     "recentlyPublished": "최근 공개 {count}건",
