@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { PublicCardsLoading } from "@/app/components/PublicPageLoading";
@@ -12,6 +13,12 @@ import { readHomePins } from '@/app/lib/home-featured/public-read';
 
 // Keep publication visibility; compute all home selections at one request time.
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: PageProps<"/[locale]">): Promise<Metadata> {
+  const { locale } = await params;
+  const t = await getTranslations({ locale, namespace: "Home" });
+  return { title: t("searchTitle"), description: t("intro") };
+}
 
 export default async function Home({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
