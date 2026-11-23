@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone, timedelta
 from ingest.ai_errors import ValidationError, validation_location
 from ingest.ai_worker import KO_SECTION_HEADERS
 from ingest.body_markdown import format_reviewed_block, schedule_tables, read_body, schedule_table_lines, inline_text
+from ingest.seoul_common_timetable import common_timetable, source_schedule, timetable_validation_input
 from ingest.myseoul_ai_support import section_body
 from ingest.seoul_fact_roles import (public_roles, weekly_schedule, validate_weekly_schedule,
                                    booking_covered, clean_role_repetitions, optional_section, plain, key)
@@ -315,11 +316,12 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
             return fallback
     check(validate_weekly_schedule, content, facts['description'])
     from ingest.seoul_calendar_sessions import validate_calendar_sessions, dated_slot_evidence
-    period_view = dated_slot_evidence(view)
-    check(validate_calendar_sessions, content, period_view)
+    common = source_schedule(view, facts['conditions'])
+    calendar_input, period_view = timetable_validation_input(content, dated_slot_evidence(view), common)
+    check(validate_calendar_sessions, calendar_input, period_view)
     # These same checks run before cleanup, so conflicting AI facts cannot be
     # hidden by removal/replacement of a generated row.
-    check(validate_summary_period, content, canonical, period_view)
+    check(validate_summary_period, calendar_input, canonical, period_view)
     check(validate_checkin, content, view)
     check(validate_participant_quantities, view, content+'\n'+canonical)
     content = without_reception_status(content)
@@ -360,6 +362,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
         if not covered:
             sections['[신청 방법]'] += '\n- **예약 절차:** ' + plain(value)
     content = merge_reviewed_sections(content, sections)
+    content = common_timetable(content, common)
     content = ensure_application_guidance(content, facts)
     check(validate_public_guidance, content, 'ko')
     check(validate_participant_quantities, quantity_view, content)
