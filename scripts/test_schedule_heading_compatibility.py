@@ -66,6 +66,9 @@ class HeadingCompatibilityTests(unittest.TestCase):
             validate_summary_period(body,fact_sections(f)['[일정 안내]'],f)
             with self.assertRaises(AiJobError):validate_summary_period(body.replace('10월 30일','10월 31일'),fact_sections(f)['[일정 안내]'],f)
 
+    # Request a small output ceiling for the short synthetic Japanese response.
+    # The paid adapter still reserves its full prompt and enforces the real job cap.
+    @patch('ingest.ai_openai.TRANSLATION_MAX_TOKENS', 512)
     def test_all_three_providers_share_normalization_and_json_contract(self):
         oldko=KO.replace('일정 안내','기간·상태');oldja=JA.replace('日程案内','期間・状況')
         payload={'content_ko':oldko,'facts':{k:'' for k in SUMMARY_SCHEMA['properties']['facts']['required']}}
