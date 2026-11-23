@@ -23,7 +23,22 @@ EVENT = re.compile(r"축제|기념\s*행사|공연|문화\s*행사")
 PERSON = re.compile(r"개인|성인|어린이|아동|청소년|학부모|보호자|주민|외국인|국적자|일본인|누구나|가족|유학생")
 INSTITUTION_ONLY = re.compile(r"개인\s*신청\s*(?:불가|불가능)|(?:학교|기관)\s*(?:담당자)?\s*만\s*신청\s*(?:가능|할\s*수)|(?:학교|기관)\s*전용\s*(?:신청|프로그램)")
 INTERNAL = re.compile(r"기관\s*내부\s*(?:운영|담당자|행정)|사업주\s*전용|개인\s*이용\s*안내\s*없는\s*시설\s*조성")
-DATE = re.compile(r"(?<!\d)(\d{4})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})[일.]?(?:\s*(?:\([월화수목금토일](?:요일)?\))?\s+(\d{1,2}):(\d{2}))?(?!\d)")
+DAY = r"(\d{4})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})[일.]?"
+DATE = re.compile(r"(?<!\d)" + DAY + r"(?:\s*(?:\([월화수목금토일](?:요일)?\))?\s+(\d{1,2}):(\d{2}))?(?!\d)")
+WEEKDAY = r"\s*\(([월화수목금토일])(?:요일)?\)"
+CLOCK = r"(\d{1,2}:\d{2})"
+SESSION_START = rf"{DAY}(?:{WEEKDAY})?\s*{CLOCK}"
+SESSION_WINDOW = re.compile(SESSION_START + r"\s*[~～–—]\s*" + CLOCK)
+FULL_WINDOW = re.compile(SESSION_START + r"\s*(?:[~～–—]|부터)\s*" + SESSION_START)
+DATED_WEEKDAY = re.compile(DAY + WEEKDAY)
+OPEN_VISA = (r"체류\s*자격(?:과|에)?\s*(?:무관|(?:상관없이|관계없이|무관하게)"
+             r"\s*(?:누구나\s*)?(?:신청\s*)?가능(?:합니다)?)")
+OPEN_VISA_NOTE = re.compile(r"\(\s*" + OPEN_VISA + r"[.!]?\s*\)\s*$")
+OPEN_VISA_LINE = re.compile(r"(?:(?:참여조건|신청조건|명시조건)\s*[:：]\s*)?" + OPEN_VISA + r"[.!]?")
+# A trailing headcount after a single audience, never an age, per-family
+# allowance, ranked quota or companion requirement.
+AUDIENCE_COUNT = re.compile(r"((?:(?:성인|청소년|어린이)\s+)?(?:외국인\s*주민|외국인|주민|유학생)"
+                            r"|성인|청소년|어린이)\s+([0-9]{1,6}\s*명)")
 
 
 def values(payload: dict[str, Any], field: str) -> tuple[str, ...]:
@@ -65,6 +80,41 @@ def _boundary(endpoint: dict[str, str], *, end: bool) -> datetime:
     if end and endpoint["precision"] == "day":
         value += timedelta(days=1)
     return value
+
+
+def _wrong_weekday(raw: str) -> bool:
+    for year, month, day, weekday in DATED_WEEKDAY.findall(raw):
+        try:
+            date = datetime(int(year), int(month), int(day))
+        except ValueError:
+            continue  # Invalid dates are handled as unparsed.
+        if "월화수목금토일"[date.weekday()] != weekday:
+            return True
+    return False
+
+
+def _operation_period(raw: str, *, paired: bool) -> dict[str, Any]:
+    if _wrong_weekday(raw):
+        return {"raw": raw, "status": "unparsed", "endpoints": []}
+    if not paired:
+        return parse_period(raw)
+    window = SESSION_WINDOW.fullmatch(raw.strip())
+    if window:
+        year, month, day, _, start, end = window.groups()
+        date = f"{year}-{month}-{day}"
+        return {**parse_period(f"{date} {start} ~ {date} {end}"), "raw": raw}
+    period = parse_period(raw)
+    if any(e["precision"] == "minute" for e in period["endpoints"]) and not FULL_WINDOW.fullmatch(raw.strip()):
+        # Keep a start without an end, or times qualified by a course/meeting
+        # label, as evidence. They cannot confirm the same session window.
+        period["status"] = "unparsed"
+    return period
+
+
+def _audience_parts(raw: str) -> tuple[str, str]:
+    audience = OPEN_VISA_NOTE.sub("", raw).strip()
+    counted = AUDIENCE_COUNT.fullmatch(audience)
+    return counted.groups() if counted else (audience, "")
 
 
 def _region(text: str) -> str:
@@ -150,24 +200,64 @@ def assess_myseoul(record: ObservationRecord, *, now: datetime) -> MySeoulAssess
     residence = "\n".join(values(payload, "residence"))
     mode_text = "\n".join(values(payload, "mode"))
     actor_text = "\n".join(values(payload, "actor"))
-    conditions = tuple(payload["conditions"])
+    visa_conditions = (line for line in body.splitlines()
+                       if re.search(r"[A-Z]-\d", line) and re.search(r"소지|자격|신청|제한|전용|만\s*가능", line))
+    conditions = tuple(dict.fromkeys((*payload["conditions"], *visa_conditions)))
     missing: list[str] = []
     exclusions: list[str] = []
     conflicts: list[dict[str, Any]] = []
     evidence = payload["labelled_evidence"]
+    periods = {}
+    for field in ("application", "operation"):
+        entries = [e for e in evidence if e["field"] == field]
+        paired = len(entries) == 2 and {e["origin"] for e in entries} == {"header", "body"}
+        periods[field] = []
+        for e in entries:
+            period = (_operation_period(e["value"], paired=paired) if field == "operation"
+                      else parse_period(e["value"]))
+            periods[field].append({**period, "origin": e["origin"], "label": e["label"]})
+
+    capacities = values(payload, "capacity")
+    target_parts = {value: _audience_parts(value) for value in values(payload, "target")}
+    target_counts = [count for _, count in target_parts.values() if count]
+    # A labelled capacity and a count appended to a target describe the same
+    # total only when they are plain counts (no groups, quotas or exceptions).
+    totals = {re.sub(r"\s+", "", count) for count in (*capacities, *target_counts)
+              if re.fullmatch(r"[0-9]{1,6}\s*명", count)}
 
     # Canonical field aliases refer to the same overall fact. Class/session/
     # meeting labels remain separate; they are not overall period comparisons.
-    for field in {e["field"] for e in evidence}:
+    fields = {e["field"] for e in evidence}
+    count_entries = [e for e in evidence if e["field"] == "capacity" or
+                     (e["field"] == "target" and target_parts[e["value"]][1])]
+    count_conflict = len(totals) > 1 and {e["origin"] for e in count_entries} == {"header", "body"}
+    if count_conflict:
+        fields.add("target")  # Reuse the existing participation review and evidence.
+    for field in fields:
         header = [e["value"] for e in evidence if e["field"] == field and e["origin"] == "header"]
         inline = [e["value"] for e in evidence if e["field"] == field and e["origin"] == "body"]
+        if field == "target" and count_conflict:
+            counts = [e for e in evidence if e["field"] in {"target", "capacity"}]
+            conflicts.append({"field": field, "labels": list(dict.fromkeys(e["label"] for e in counts)),
+                              **{origin: [e["value"] for e in counts if e["origin"] == origin]
+                                 for origin in ("header", "body")}})
+            continue
+        if field == "operation" and any(_wrong_weekday(value) for value in header + inline):
+            conflicts.append({"field": field, "labels": list(dict.fromkeys(e["label"] for e in evidence if e["field"] == field)),
+                              "header": header, "body": inline})
+            continue
         if not header or not inline or set(header) == set(inline):
             continue
+        if field == "target" and len(header) == len(inline) == 1:
+            audience = target_parts[header[0]][0]
+            if audience and audience == target_parts[inline[0]][0]:
+                continue
         if {_fact_comparison(field, v) for v in header} == {_fact_comparison(field, v) for v in inline}:
             continue
         if field in {"application", "operation"}:
-            comparable = all(parse_period(v)["status"] == "ok" for v in header + inline)
-            same = {json_period(v) for v in header} == {json_period(v) for v in inline}
+            entries = periods[field]
+            comparable = all(p["status"] == "ok" for p in entries)
+            same = all(p["endpoints"] == entries[0]["endpoints"] for p in entries)
             if not comparable or same:
                 continue
         if field in {"application", "operation", "target", "mode", "venue", "status", "tuition", "materials", "admission", "extra_fee", "application_method"}:
@@ -190,11 +280,13 @@ def assess_myseoul(record: ObservationRecord, *, now: datetime) -> MySeoulAssess
         exclusions.append("internal_business")
 
     qualification = "\n".join((target, *values(payload, "condition"), *conditions))
+    visa_to_check = "\n".join(OPEN_VISA_NOTE.sub("", line) for line in qualification.splitlines()
+                              if not OPEN_VISA_LINE.fullmatch(line.strip()))
     if re.search(r"(?:대한민국|한국)\s*(?:국적자|국민)\s*(?:만|전용)|(?:한국인|내국인)\s*만|일본(?:인|\s*국적자)\s*(?:참여|신청)?\s*(?:불가|제외)", qualification):
         exclusions.append("explicit_japanese_ineligible")
     elif re.search(r"(?:중국|베트남|미국|필리핀|몽골)\s*(?:국적자|인)\s*만", qualification):
         exclusions.append("explicit_other_nationality_only")
-    elif (re.search(r"비자|체류\s*자격|[A-Z]-\d", qualification)
+    elif (re.search(r"비자|체류\s*자격|[A-Z]-\d", visa_to_check)
           or (re.search(r"국적자\s*만", qualification)
               and not re.search(r"일본\s*국적자\s*만", qualification))):
         missing.append("nationality_or_visa_unresolved")
@@ -255,11 +347,6 @@ def assess_myseoul(record: ObservationRecord, *, now: datetime) -> MySeoulAssess
         if residence_region == "noncapital" and re.search(r"거주자\s*(?:만|전용)|주민\s*(?:만|전용)", online_scope):
             exclusions.append("capital_residents_ineligible")
 
-    periods = {}
-    for field in ("application", "operation"):
-        entries = [{**parse_period(e["value"]), "origin": e["origin"], "label": e["label"]}
-                   for e in evidence if e["field"] == field]
-        periods[field] = entries
     usable_app = [p for p in periods["application"] if p["status"] == "ok"]
     usable_op = [p for p in periods["operation"] if p["status"] == "ok"]
     if not usable_op or any(p["status"] != "ok" for p in periods["operation"]):
@@ -334,7 +421,7 @@ def assess_myseoul(record: ObservationRecord, *, now: datetime) -> MySeoulAssess
         "application_methods": methods, "application_links": payload["application_links"],
         "source_status": statuses, "source_category": payload["source_category"],
         "early_close_evidence": tuple(c for c in conditions if re.search(r"선착순|조기\s*마감", c)),
-        "capacity_raw": values(payload, "capacity"), "capacity_value": None,
+        "capacity_raw": tuple(dict.fromkeys((*capacities, *target_counts))), "capacity_value": None,
         "missing": tuple(dict.fromkeys(missing)), "conflicts": conflicts,
         "evidence": evidence, "source_revision": record.revision_hash,
         "parser_version": payload["parser_version"],
