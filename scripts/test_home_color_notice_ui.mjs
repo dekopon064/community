@@ -22,6 +22,7 @@ const fakeReact={...React,
 const cache=new Map();
 function load(relative){
  const filename=path.join(root,relative);if(cache.has(filename))return cache.get(filename);
+ if(relative.endsWith('.json'))return JSON.parse(fs.readFileSync(filename,'utf8'));
  if(relative.startsWith('app/components/')&&!relative.endsWith('ReviewWorkspace.tsx')){
   const Stub=()=>null;return {default:Stub,CandidateEditor:Stub,FactsEditor:Stub,CandidateContentNotices:Stub,CandidateFilterComparison:Stub,candidateImageError:()=>'',fieldClass:'',primaryButton:'',secondaryButton:''};
  }

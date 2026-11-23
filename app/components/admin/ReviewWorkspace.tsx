@@ -42,6 +42,9 @@ async function call(path: string, body?: unknown, signal?: AbortSignal) {
   if (!["local-fixture", "database"].includes(data?.mode)) throw new RequestFailure("unavailable");
   return data;
 }
+function candidateResultStatus(action: "save_candidate" | "publish" | "reject") {
+  return action === "publish" ? "published" : action === "reject" ? "rejected" : "pending";
+}
 function time(value: string) { return new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 function focusTask(element: HTMLElement | null) {
   element?.focus({ preventScroll: true });
@@ -81,6 +84,13 @@ export default function ReviewWorkspace() {
   const [mode, setMode] = useState<"database" | "local-fixture" | null>(null);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [candidateTotal, setCandidateTotal] = useState<number | null>(null);
+  const [nextIndex, setNextIndex] = useState<number | null>(null);
+  const listGeneration = useRef(0);
+  const silentSave = useRef(false);
+  const completedAction = useRef<string | null>(null);
+  type CandidateAction = Extract<ReviewCommand, { action: "save_candidate" | "publish" | "reject" }>;
+  const uncertainAction = useRef<CandidateAction | null>(null);
   const pendingRequest = useRef<{ key: string; id: string } | null>(null);
   const sending = useRef(false);
   const trashBusy = useCallback((value: boolean) => setBusy(value), []);
@@ -106,16 +116,24 @@ export default function ReviewWorkspace() {
   useEffect(() => {
     if (kind === "ai" || kind === "trash") return;
     const controller = new AbortController();
-    call(`/api/admin/review?kind=${kind === "published" ? "candidates" : kind}&offset=${offset}${kind === "published" ? "&status=published" : ""}`, undefined, controller.signal).then((data) => {
-      if (controller.signal.aborted) return;
+    const generation = ++listGeneration.current;
+    const current = () => !controller.signal.aborted && generation === listGeneration.current;
+    const scope = kind === "published" ? "&status=published" : kind === "candidates" ? "&includeTotal=1" : "";
+    call(`/api/admin/review?kind=${kind === "published" ? "candidates" : kind}&offset=${offset}${scope}`, undefined, controller.signal).then((data) => {
+      if (!current()) return;
+      if (kind === "candidates") {
+        if (!Number.isSafeInteger(data.total) || data.total < 0 || !Number.isSafeInteger(data.offset)) throw new RequestFailure("unavailable");
+        setCandidateTotal(data.total);
+        setOffset(data.offset);
+      }
       setList(data.items); setMode(data.mode); setHasMore(data.hasMore); setError(""); setLoading(false);
-    }).catch((e) => { if (!controller.signal.aborted) { setError(e instanceof RequestFailure ? e.code : "unavailable"); setLoading(false); } });
+    }).catch((e) => { if (current()) { setError(e instanceof RequestFailure ? e.code : "unavailable"); setLoading(false); } });
     return () => controller.abort();
   }, [kind, reload, offset]);
 
   // Move focus with the task, especially when the mobile detail is below the list.
-  useEffect(() => { if (item) focusTask(detailHeading.current); }, [item]);
-  useEffect(() => { if (error) focusTask(errorMessageBox.current); else if (notice) focusTask(resultMessage.current); }, [error, notice]);
+  useEffect(() => { if (item && !silentSave.current) focusTask(detailHeading.current); }, [item]);
+  useEffect(() => { if (error) focusTask(errorMessageBox.current); else if (notice && !silentSave.current) focusTask(resultMessage.current); }, [error, notice]);
   useEffect(() => { if (confirmation) focusTask(confirmationBox.current); }, [confirmation]);
 
   function accept(next: ReviewItem) {
@@ -126,6 +144,7 @@ export default function ReviewWorkspace() {
   async function select(id: string) {
     if (busy || dirty || confirmation || kind === "ai" || kind === "trash") return;
     const entry = list.find(row => row.id === id);
+    silentSave.current = false; completedAction.current = null; uncertainAction.current = null; setNextIndex(null);
     setError(""); setNotice(""); setItem(null);
     if (kind === "facts" && entry?.sourceName === "myseoul_program") { setProgramId(null); setMyseoulId(id); return; }
     setMyseoulId(null);
@@ -137,6 +156,7 @@ export default function ReviewWorkspace() {
   }
   function switchKind(next: ReviewKind | "ai" | "trash" | "published") {
     if (busy || dirty || confirmation || next === kind) return;
+    ++listGeneration.current; setNextIndex(null); setCandidateTotal(null); silentSave.current = false;
     setKind(next); setOffset(0); setList([]); setItem(null); setProgramId(null); setMyseoulId(null); setFacts(null); setContent(null); setNotice(""); setError(""); setErrors({}); setLoading(next !== "ai" && next !== "trash");
   }
   function openAiRecheck(next:AiReview){
@@ -146,8 +166,46 @@ export default function ReviewWorkspace() {
     else if(next.sourceName==='myseoul_program'){setMyseoulId(next.sourceItemId);setProgramId(null);}
     else{setProgramId(null);setMyseoulId(null);setBusy(true);void call(`/api/admin/review/facts/${next.sourceItemId}`).then(data=>accept(data.item)).catch(e=>setError(e instanceof RequestFailure?e.code:'unavailable')).finally(()=>setBusy(false));}
   }
+  function applyCandidate(command: CandidateAction, next: Extract<ReviewItem, { kind: "candidates" }>, result: string) {
+    ++listGeneration.current;
+    completedAction.current = command.action !== "save_candidate" || next.version !== command.version ? next.id + ":" + command.version : null;
+    uncertainAction.current = null;
+    silentSave.current = command.action === "save_candidate";
+    setError(""); accept(next);
+    if (command.action === "save_candidate") {
+      setList(old => old.map(entry => entry.id === next.id ? { ...entry, title: next.content.titleKo, status: next.status } : entry));
+    } else {
+      setNextIndex(Math.max(0, list.findIndex(entry => entry.id === next.id)));
+      setList(old => old.filter(entry => entry.id !== next.id));
+      setItem(null); setContent(null); setImageSelection(null);
+      setCandidateTotal(null);
+      setReload(n => n + 1);
+    }
+    setNotice(result);
+  }
+  async function checkCandidateResult(command: CandidateAction) {
+    if (!item || item.kind !== "candidates") return;
+    if (command.action === "save_candidate" && (JSON.stringify(content) !== JSON.stringify(command.content) ||
+        (command.imageSelection && (imageSelection?.mode !== command.imageSelection.mode || imageSelection?.url !== command.imageSelection.url)))) return false;
+    if (command.action !== "save_candidate" && (fieldsDirty || (command.action === "reject" && note !== command.note))) return false;
+    const data = await call(`/api/admin/review/candidates/${item.id}`);
+    const next: ReviewItem = data.item;
+    if (next?.id !== item.id || next.kind !== "candidates" || next.version === command.version ||
+        next.revision !== command.revision || next.status !== candidateResultStatus(command.action)) return false;
+    if (command.action === "save_candidate") {
+      if (Object.entries(command.content).some(([key, value]) => next.content[key as keyof CandidateContent] !== value.trim())) return false;
+      const image = command.imageSelection;
+      if (image && (next.image?.mode !== image.mode || next.image?.url !== image.url)) return false;
+    }
+    const status = command.action === "save_candidate" ? "비공개 저장본 일치" : statusText[next.status];
+    applyCandidate(command, next, `${next.content.titleKo} · 최신 조회로 확인한 결과: ${status}`);
+    return true;
+  }
   async function submit(command: ReviewCommand & { reasonCode?: QuickReason }) {
     if (!item || busy || sending.current) return;
+    const candidateCommand = kind === "candidates" && (command.action === "save_candidate" || command.action === "publish" || command.action === "reject") ? command : null;
+    if (candidateCommand && completedAction.current === item.id + ":" + command.version) return;
+    silentSave.current = false;
     sending.current = true;
     setBusy(true); setError(""); setErrors({}); setNotice("");
     try {
@@ -155,7 +213,15 @@ export default function ReviewWorkspace() {
       const key = JSON.stringify(payload);
       if (payload && pendingRequest.current?.key !== key) pendingRequest.current = { key, id: crypto.randomUUID() };
       const data = await call(payload ? "/api/admin/review-trash" : `/api/admin/review/${detailKind}/${item.id}${detailQuery}`, payload ? { ...payload, requestId: pendingRequest.current!.id } : command);
-      const next: ReviewItem = data.item; accept(next); setChangeNote("");
+      const next: ReviewItem = data.item;
+      if (candidateCommand) {
+        if (next?.id !== item.id || next.kind !== "candidates" || next.status !== candidateResultStatus(candidateCommand.action) || !next.content || !next.version) throw new RequestFailure("unavailable");
+        const result = candidateCommand.action === "save_candidate" ? "비공개로 저장했습니다." :
+          candidateCommand.action === "reject" ? "반려했습니다." : `승인·게시와 이력을 기록했습니다. ${data.mode === "database" ? homeColorNotice(data.homeColor) : "로컬 시험에서는 실제 이미지 분석을 실행하지 않았습니다."}`;
+        applyCandidate(candidateCommand, next, `${next.content.titleKo} · ${result}${data.mode === "local-fixture" ? " 실제 DB 저장·게시는 아닌 로컬 시험 결과입니다." : ""}`);
+        return;
+      }
+      accept(next); setChangeNote("");
       setList((old) => old.flatMap((entry) => next.kind === "facts" && entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry]));
       const result = command.action === "save_facts" && next.kind === "facts" ?
         next.status === "excluded" ? "사실 저장 후 대상 부적격으로 판정되었습니다. AI는 진행하지 않습니다." : `사실을 저장했습니다. 남은 확인 사유 ${next.reasons.length}개. ${aiStatusText[next.aiStatus]} 저장 요청에서 AI를 실행하지 않았습니다.` :
@@ -166,7 +232,15 @@ export default function ReviewWorkspace() {
       if (command.action === "exclude") { setItem(null); setFacts(null); pendingRequest.current = null; }
       setNotice(data.mode === "local-fixture" ? `${result} 실제 DB 저장·게시는 아닌 로컬 시험 결과입니다.` : result);
     } catch (e) {
-      setError(e instanceof RequestFailure ? e.code : "unavailable"); setErrors(e instanceof RequestFailure ? e.fields : {}); setConfirmation(null);
+      const code = e instanceof RequestFailure ? e.code : "unavailable";
+      setConfirmation(null);
+      if (candidateCommand && code === "unavailable") {
+        uncertainAction.current = candidateCommand;
+        if (await checkCandidateResult(candidateCommand).catch(() => false)) return;
+        setError("candidate_result_unknown");
+      } else {
+        setError(code); setErrors(e instanceof RequestFailure ? e.fields : {});
+      }
     } finally { sending.current = false; setBusy(false); }
   }
   function confirmAction() {
@@ -177,7 +251,7 @@ export default function ReviewWorkspace() {
     else void submit({ ...preconditions(), action: confirmation, note });
   }
   function preconditions() { return { revision: item!.revision, version: item!.version }; }
-  const errorMessage = error ? publishedMode && error === "program_unavailable" ? "현재 수집원 권한 또는 공개 상태로 본문을 수정할 수 없습니다. 입력은 유지했습니다." : failureText[error] ?? failureText.unavailable : "";
+  const errorMessage = error === "candidate_result_unknown" ? "최신 조회로 처리 결과를 확인하지 못했습니다. 입력은 유지했습니다." : error ? publishedMode && error === "program_unavailable" ? "현재 수집원 권한 또는 공개 상태로 본문을 수정할 수 없습니다. 입력은 유지했습니다." : failureText[error] ?? failureText.unavailable : "";
   const source = item ? sourceLink(item.source.url) : null;
 
   return <PcWorkerProvider><div className="mt-8">
@@ -200,6 +274,13 @@ export default function ReviewWorkspace() {
       {error === "not_connected" && <p className="mt-3 max-w-3xl text-info-body">권한 확인은 완료됐습니다. 연결 전에는 아래 두 검토 단계의 실제 데이터가 표시되지 않습니다.</p>}
       <div className="mt-4 flex flex-wrap gap-4">
         {["signed_out", "forbidden"].includes(error) && <Link prefetch={false} className={secondaryButton} href="/ko/login?next=%2Fko%2Fadmin">로그인 상태 확인</Link>}
+        {error === "candidate_result_unknown" && <button className={secondaryButton} disabled={busy} onClick={async () => {
+          const command = uncertainAction.current;
+          if (sending.current || !command) return;
+          sending.current = true; setBusy(true);
+          try { await checkCandidateResult(command); } catch { /* Keep the draft and the read-only retry. */ }
+          finally { sending.current = false; setBusy(false); }
+        }}>처리 결과 다시 확인</button>}
         {!item && <button className={secondaryButton} disabled={busy || loading || dirty} onClick={() => { setLoading(true); setError(""); setReload((n) => n + 1); }}>목록 다시 확인</button>}
         {item && <button className={secondaryButton} disabled={busy} onClick={async () => { setBusy(true); try { const data = await call(`/api/admin/review/${detailKind}/${item.id}${detailQuery}`); accept(data.item); setError(""); setNotice(""); } catch (e) { setError(e instanceof RequestFailure ? e.code : "unavailable"); } finally { setBusy(false); } }}>입력을 버리고 최신 내용 불러오기</button>}
       </div>
@@ -208,10 +289,12 @@ export default function ReviewWorkspace() {
     {kind==='facts'&&!loading&&<LocationResearchPanel items={list} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||dirty||Boolean(confirmation)} onBusy={setLocationBusy} onSaved={()=>{setProgramId(null);setMyseoulId(null);setItem(null);setReload(n=>n+1);}}/>}
     {!loading && <div className="grid gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <aside aria-label="검토 목록" className="min-w-0">
-        <h2 className="mb-3 text-lg font-bold">{kind === "facts" ? "사실 확인 항목" : publishedMode ? "게시된 글" : "결과 후보"}</h2>
-        {!list.length && !error && <p className="py-6 leading-7 text-info-muted">현재 검토할 항목이 없습니다. 새 항목이 준비되면 이 목록에서 확인할 수 있습니다.</p>}
+        <h2 className="mb-3 text-lg font-bold">{kind === "facts" ? "사실 확인 항목" : publishedMode ? "게시된 글" : "결과 후보"}
+          {kind === "candidates" && <span className="ml-2 text-sm font-normal">{candidateTotal === null ? (error ? "남은 건수 확인 필요" : "남은 건수 확인 중") : `남은 ${candidateTotal}건`}</span>}
+        </h2>
+        {!list.length && !error && (kind !== "candidates" || candidateTotal === 0) && <p className="py-6 leading-7 text-info-muted">현재 검토할 항목이 없습니다. 새 항목이 준비되면 이 목록에서 확인할 수 있습니다.</p>}
         <ul className="divide-y divide-info-rule border-y border-info-rule">
-          {list.map((entry) => <li key={entry.id}><button disabled={busy || dirty || Boolean(confirmation)} aria-current={(item?.id ?? myseoulId ?? programId) === entry.id ? "true" : undefined} className={`w-full px-3 py-5 text-left hover:bg-info-surface disabled:cursor-not-allowed disabled:opacity-60 ${(item?.id ?? myseoulId ?? programId) === entry.id ? "bg-info-surface" : ""}`} onClick={() => select(entry.id)}>
+          {list.map((entry) => <li key={entry.id}><button disabled={busy || (kind === "candidates" && candidateTotal === null) || dirty || Boolean(confirmation)} aria-current={(item?.id ?? myseoulId ?? programId) === entry.id ? "true" : undefined} className={`w-full px-3 py-5 text-left hover:bg-info-surface disabled:cursor-not-allowed disabled:opacity-60 ${(item?.id ?? myseoulId ?? programId) === entry.id ? "bg-info-surface" : ""}`} onClick={() => select(entry.id)}>
             <span className="block text-sm text-info-status">{statusText[entry.status] ?? "상태 확인 필요"}</span>
             <span className="mt-2 block break-keep font-semibold leading-6">{entry.title}</span>
             <span className="mt-2 block text-sm text-info-muted">{entry.sourceName === "myseoul_program" ? "마이서울플러스" : entry.sourceName === "seoul_reservation" ? "서울 공공서비스예약" : entry.sourceName}</span>
@@ -219,11 +302,12 @@ export default function ReviewWorkspace() {
           </button></li>)}
         </ul>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || offset === 0} onClick={() => { setOffset((n) => Math.max(0, n - 25)); setItem(null); setProgramId(null); setMyseoulId(null); setLoading(true); }}>이전 목록</button>
-          <button className={secondaryButton} disabled={busy || dirty || Boolean(confirmation) || !hasMore} onClick={() => { setOffset((n) => n + 25); setItem(null); setProgramId(null); setMyseoulId(null); setLoading(true); }}>다음 목록</button>
+          <button className={secondaryButton} disabled={busy || (kind === "candidates" && candidateTotal === null) || dirty || Boolean(confirmation) || offset === 0} onClick={() => { setOffset((n) => Math.max(0, n - 25)); setItem(null); setProgramId(null); setMyseoulId(null); setLoading(true); }}>이전 목록</button>
+          <button className={secondaryButton} disabled={busy || (kind === "candidates" && candidateTotal === null) || dirty || Boolean(confirmation) || !hasMore} onClick={() => { setOffset((n) => n + 25); setItem(null); setProgramId(null); setMyseoulId(null); setLoading(true); }}>다음 목록</button>
         </div>
       </aside>
       <section aria-label="선택한 항목 검토" aria-busy={busy} className="min-w-0">
+        {kind === "candidates" && nextIndex !== null && !item && candidateTotal !== null && list.length > 0 && <button type="button" className={primaryButton} disabled={busy || dirty} onClick={() => select(list[Math.min(nextIndex, list.length - 1)].id)}>다음 후보 검토</button>}
         {myseoulId ? <MySeoulReviewPanel key={myseoulId} id={myseoulId} onBlocked={setProgramBlocked} onResult={programResult}/> : programId ? <ProgramReviewPanel key={programId} id={programId} onBlocked={setProgramBlocked} onResult={programResult}/> : !item ? <p className="py-6 leading-7 text-info-muted">{busy ? "항목을 불러오는 중입니다." : "목록에서 항목을 선택하면 원문과 검토할 내용을 확인할 수 있습니다."}</p> : <>
           <header className="border-b border-info-rule pb-5">
             <p className="text-sm text-info-status">{statusText[item.status]}</p>
