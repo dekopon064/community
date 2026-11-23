@@ -106,7 +106,31 @@ class NavigationTermsTests(unittest.TestCase):
                 self.assertIn(ja, output['contentJa'])
                 self.assertIn(output['contentKo'], requests[1]['input'][0]['content'])
                 self.assertIn('exact quoted Korean search input', requests[1]['instructions'])
+                self.assertIn('각각 본문 첫 등장에 「한국어 원문」（일본어 뜻）', requests[1]['instructions'])
+                self.assertIn('같은 이름이 다시 나오면 「예약내역」', requests[1]['instructions'])
                 self.assertEqual(sum(name.startswith('finish_') for name, _ in calls), 1)
+
+    def test_first_menu_gloss_and_repeated_label_in_application_body(self):
+        source = "[신청 방법]\n'마이페이지' 메뉴를 선택하세요. '예약내역' 탭을 클릭하세요.\n'예약내역'에서 해당 회차를 선택한 뒤 '예약취소' 버튼을 클릭하세요."
+        body = ('[申請方法]\n「마이페이지」（マイページ）を選択し、「예약내역」（予約履歴）タブをクリックしてください。\n'
+                '「예약내역」で該当する回を選択し、「예약취소」（予約キャンセル）ボタンをクリックしてください。')
+        self.assertEqual(checked_navigation_texts(source, body)[2], [])
+        validate_japanese_output('正歌', body, source)
+
+    def test_cancellation_path_with_glosses_and_an_unquoted_booking_number(self):
+        source = "[신청 방법]\n온라인 예약 취소는 '마이페이지' → '예약내역' → 해당 회차 예약 번호 → '예약취소' 순서로 진행하세요."
+        path = '「마이페이지」（マイページ）→「예약내역」（予約履歴）→ 該当回の予約番号 →「예약취소」（予約キャンセル）'
+        body = '[申請方法]\nオンライン予約のキャンセルは、' + path + 'の順に選択してください。'
+        self.assertEqual([term for term, _, _ in navigation_literals(source)],
+                         ['마이페이지', '예약내역', '예약취소'])
+        validate_japanese_output('正歌', body, source)
+        for invalid in (body.replace('「예약내역」', '「새 메뉴」'),
+                        body.replace('「예약취소」（予約キャンセル）', '予約キャンセル'),
+                        body.replace('（予約履歴）', '（예약내역）'),
+                        body.replace('[申請方法]', '[対象]')):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                validate_japanese_output('正歌', invalid, source)
+        self.assertFalse(navigation_literals("[신청 방법]\n대상: '청소년' → '성인'"))
 
 
 if __name__ == '__main__':
