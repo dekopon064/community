@@ -5,6 +5,7 @@ import { ReviewFailure } from "./contracts";
 import type { CandidateItem, ReviewKind, ReviewStore } from "./contracts";
 import type { HomeColorOutcome } from '../home-colors/publication';
 import { validateCommand } from "./validation";
+import { candidateQueuePage } from "./candidate-queue-page";
 
 type Dependencies = { authorize: () => Promise<{ userId: string }>; store: () => ReviewStore;
   onPublished?: (item: CandidateItem, actor: string) => Promise<HomeColorOutcome> };
@@ -34,6 +35,10 @@ export async function listReviews(request: Request, deps: Dependencies) {
     if (!/^\d{1,6}$/.test(rawOffset)) throw new ReviewFailure("invalid_input");
     const scope = reviewScope(request, kind);
     const store = deps.store();
+    if (kind === "candidates" && scope === "pending" && new URL(request.url).searchParams.get("includeTotal") === "1") {
+      const page = await candidateQueuePage(offset => store.list(kind, offset, scope), Number(rawOffset));
+      return privateResponse(Response.json({ mode: store.mode, ...page }));
+    }
     const items = await store.list(kind, Number(rawOffset), scope);
     return privateResponse(Response.json({ mode: store.mode, items, hasMore: items.length === 25 }));
   } catch (error) { return failure(error); }
