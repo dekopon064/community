@@ -151,8 +151,9 @@ def _schedule_heading_or_invitation(line: str) -> bool:
 
 def schedule_block(lines: list[str]) -> str:
     """Keep evidence boundaries as list items; never split source slashes."""
-    return ('**진행 일정:**\n' + '\n'.join('- ' + line.replace('\n', '\n  ') for line in lines)
-            if lines else '')
+    items = [line if re.match(r'^[ \t]*-[ \t]+\S', line)
+             else '- ' + line.replace('\n', '\n  ') for line in lines]
+    return '**진행 일정:**\n' + '\n'.join(items) if items else ''
 
 
 def _schedule_display_line(line: str) -> str:
@@ -179,8 +180,10 @@ def schedule_lines(f: dict) -> list[str]:
                                  if not _schedule_heading_or_invitation(line)))
     lines = []
     in_schedule = False
-    for line in f.get('description', '').splitlines():
-        line = line.strip()
+    previous_record = -2
+    margin = 0
+    for index, source_line in enumerate(f.get('description', '').splitlines()):
+        line = source_line.strip()
         if not line:
             continue
         plain = _plain_schedule_line(line)
@@ -196,6 +199,13 @@ def schedule_lines(f: dict) -> list[str]:
         labeled = re.search(r'일정|일시|회차|교육일|수업일|(?:운영|교육|수업|진행)\s*기간', line)
         if (dated_bullet or counted_class or labeled) and any(values.values()):
             line = _schedule_display_line(line)
+            indent = len(re.match(r'^[ \t]*', source_line)[0].expandtabs(4))
+            # A shared left margin is not nesting. Keep relative child indentation
+            # only among consecutive extracted records, never across sections.
+            margin = indent if index != previous_record + 1 else min(margin, indent)
+            previous_record = index
+            if re.match(r'^-[ \t]+\S', line):
+                line = ' ' * (indent - margin) + line
             if line not in lines:
                 lines.append(line)
         elif in_schedule and not re.match(r'(?:장소|시간)\s*[:：]', plain):
