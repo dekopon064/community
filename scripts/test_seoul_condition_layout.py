@@ -235,8 +235,14 @@ class ConditionLayoutTests(unittest.TestCase):
                 body = assemble_seoul_body('[한 줄 요약]\n합성 요약입니다.\n[주요 내용]\n공식 프로그램입니다.',
                                            facts, review=SeoulCandidateReview(None))
                 roles = public_roles(facts)
+                application = optional_section(body, '[신청 방법]')
                 for value in roles['booking']:
-                    self.assertIn(value, optional_section(body, '[신청 방법]'))
+                    if name == 'gwanghwamun' and value.startswith(('참 가비 : 무료 (', '1회 신청 시,')):
+                        self.assertEqual(optional_section(body, '[주요 내용]').count('**비용:** 무료'), 1)
+                        self.assertEqual(application.count('최대 1개 회차를 예약할 수 있습니다.'), 1)
+                        self.assertEqual(application.count('신청당 최대 2명까지 예약할 수 있습니다.'), 1)
+                    else:
+                        self.assertIn(value, application)
                 for value in roles['activity']:
                     self.assertIn(value, optional_section(body, '[주요 내용]'))
 

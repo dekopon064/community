@@ -342,6 +342,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     content, sections = clean_fact_repetitions(content, sections, facts)
     content, sections = clean_role_repetitions(content, sections, facts)
     from ingest.seoul_condition_display import clean_projected_duplicates, additional_role, covered_condition
+    from ingest.seoul_condition_display import reservation_clauses, reservation_evidence
     from ingest.seoul_condition_layout import cancellation_covers, cancellation_steps
     content, sections = clean_projected_duplicates(content, sections, facts)
     method = optional_section(content, '[신청 방법]')
@@ -349,6 +350,7 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
     bookings = public_roles(facts)['booking']
     cancellations = [v for v in bookings if cancellation_steps(v)]
     cancellation_proof = method.splitlines()
+    booking_proof = reservation_evidence(method, sections['[주요 내용]'])
     for value in bookings:
         steps = cancellation_steps(value)
         if steps:
@@ -358,9 +360,19 @@ def assemble_seoul_body(content: str, facts: dict, *, reviewed: dict | None = No
                 sections['[신청 방법]'] += '\n- **취소 방법:** ' + steps
                 cancellation_proof.append(value)
             continue
-        covered = covered_condition(value, method) or (not additional_role(value) and booking_covered(value, method))
-        if not covered:
-            sections['[신청 방법]'] += '\n- **예약 절차:** ' + plain(value)
+        clauses = reservation_clauses(value)
+        if clauses:
+            missing = [clause for clause in clauses if clause not in booking_proof]
+            if not missing:
+                continue
+            booking_proof.update(missing)
+            if len(missing) < len(clauses):
+                for clause in missing:
+                    sections['[신청 방법]'] += '\n- **예약 절차:** ' + clause
+                continue
+        elif covered_condition(value, method) or (not additional_role(value) and booking_covered(value, method)):
+            continue
+        sections['[신청 방법]'] += '\n- **예약 절차:** ' + plain(value)
     content = merge_reviewed_sections(content, sections)
     content = common_timetable(content, common)
     content = ensure_application_guidance(content, facts)

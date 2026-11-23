@@ -165,7 +165,7 @@ def condition_signature(value):
         ('accompanied_minor', r'어린이및청소년\(만(\d+)세이하\)은성인\(만(\d+)세이상\)이예약하고동반시참여가능합니다'),
         ('accompanied_minor', r'만(\d+)세이하는만(\d+)세이상성인이예약하고동반해야참여할수있습니다'),
         ('photo_consent', r'행사중사진촬영이이루어지며,신청시이에동의하는것으로간주합니다'),
-        ('photo_consent', r'신청하면행사사진촬영에동의한것으로간주합니다'),
+        ('photo_consent', r'신청하면행사(?:중)?사진촬영에동의한것으로(?:간주합니다|봅니다)'),
         ('late_arrival_denied', r'해당회차시작\(출발\)후에는참여가불가능합니다'),
         ('late_arrival_denied', r'출발후에는참여할수없습니다'),
         ('no_show_restriction', r'예약후별도연락없이불참하실경우,추후신청이제한될수있습니다'),
