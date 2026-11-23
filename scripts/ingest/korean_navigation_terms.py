@@ -14,6 +14,26 @@ _KO_BEFORE = re.compile(r'(?:검색어|검색\s*입력어|메뉴명|메뉴|탭|�
 _JA_AFTER = re.compile(r'^\s*(?:[（(][^()（）\n]{1,80}[）)]\s*)?(?:(?:を|で|と)\s*(?:検索|入力|選択|クリック)|で[^.!?。\n「」]{0,40}選択|(?:メニュー|タブ|ボタン|予約項目)(?:を|から|で|に|へ|の|\s|$))')
 _JA_BEFORE = re.compile(r'(?:検索語|検索キーワード|入力語|メニュー名|メニュー|タブ|ボタン|予約項目名|予約項目)\s*[:：]?\s*$')
 
+# Confirm a complete navigation instruction before allowing labels separated by
+# arrows. The unquoted reservation number is an action, never an exempt label.
+_KO_PATH = re.compile(
+    r'(?:온라인\s*)?(?:예약|신청)(?:\s*취소)?(?:\s*(?:방법|경로|절차))?\s*(?:는|은|[:：])\s*'
+    r'LABEL(?:\s*→\s*(?:해당\s*(?:회차\s*)?예약\s*번호(?:\s*클릭)?\s*→\s*)?LABEL)+'
+    r'(?:\s*순서로\s*(?:진행|선택|클릭)(?:하세요|합니다|해\s*주세요))?[.!]?')
+_JA_PATH = re.compile(
+    r'(?:オンライン)?(?:予約|申込)(?:のキャンセル)?(?:方法|手順)?\s*(?:は、?|[:：])\s*'
+    r'LABEL(?:\s*→\s*(?:該当(?:する)?回の予約番号(?:をクリック)?\s*→\s*)?LABEL)+'
+    r'\s*(?:の順に|を)?(?:選択|クリック)してください。?')
+
+
+def _in_menu_path(line, matches, pattern):
+    if '→' not in line or 'LABEL' in line:
+        return False
+    skeleton = _QUOTED.sub('LABEL', line.strip().rstrip('\\').rstrip())
+    if pattern is _JA_PATH:
+        skeleton = re.sub(r'LABEL（[^（）「」\n]{1,80}）', 'LABEL', skeleton)
+    return len(matches) >= 2 and pattern.fullmatch(skeleton) is not None
+
 
 def _eligible_lines(text, headers):
     """With structured bodies, never authorize quotes outside application."""
@@ -29,19 +49,20 @@ def _eligible_lines(text, headers):
         offset += len(line)
 
 
-def _literals(text, headers, before, after, conjunction):
+def _literals(text, headers, before, after, conjunction, path_pattern):
     for offset, line in _eligible_lines(text, headers):
         # Do not interpret opaque links, code or table cells as UI instructions.
         if '://' in line or '`' in line or '|' in line:
             continue
         matches = list(_QUOTED.finditer(line))
+        menu_path = _in_menu_path(line, matches, path_pattern)
         accepted = set()
         for index in range(len(matches) - 1, -1, -1):
             match = matches[index]
             term = next(v for v in match.groups() if v is not None)
             if (HANGUL.search(term) and term == term.strip()
                     and not re.search(r'[<>\[\]{}\\\x00-\x1f]', term)
-                    and (before.search(line[:match.start()]) or after.match(line[match.end():])
+                    and (menu_path or before.search(line[:match.start()]) or after.match(line[match.end():])
                          or (index + 1 in accepted and re.fullmatch(conjunction,
                              line[match.end():matches[index + 1].start()])))):
                 accepted.add(index)
@@ -51,7 +72,7 @@ def _literals(text, headers, before, after, conjunction):
 
 
 def navigation_literals(korean):
-    return list(_literals(korean, {'[신청 방법]'}, _KO_BEFORE, _KO_AFTER, r'\s*(?:또는|혹은|및|와|과)\s*'))
+    return list(_literals(korean, {'[신청 방법]'}, _KO_BEFORE, _KO_AFTER, r'\s*(?:또는|혹은|및|와|과)\s*', _KO_PATH))
 
 
 def checked_navigation_texts(korean, japanese):
@@ -59,7 +80,7 @@ def checked_navigation_texts(korean, japanese):
     source = navigation_literals(korean)
     terms = {term for term, _, _ in source}
     target = [entry for entry in _literals(japanese, {'[申請方法]', '[申込方法]'}, _JA_BEFORE, _JA_AFTER,
-                                          r'\s*(?:または|もしくは|と|及び|および)\s*')
+                                          r'\s*(?:または|もしくは|と|及び|および)\s*', _JA_PATH)
               if entry[0] in terms]
     def mask(text, entries):
         for _, start, end in sorted(entries, key=lambda item: item[1], reverse=True):
