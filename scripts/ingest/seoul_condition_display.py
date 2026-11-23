@@ -96,6 +96,62 @@ def _sentences(body):
         yield from (plain(s) for s in re.split(r'(?<=[.!?。])\s+', line.rstrip('\\').strip()) if s.strip())
 
 
+def reservation_clauses(value):
+    """Fully understood booking statements only. Each clause can stand alone."""
+    text = key(re.sub(r'^예약 절차\s*[:：]\s*', '', plain(value)))
+    free = '참가비는 무료입니다.'
+    advance = '사전 예약제로 진행합니다.'
+    order = '선착순으로 모집합니다.'
+    onsite = '현장 접수는 받지 않습니다.'
+
+    def limits(sessions, people):
+        return (f'최대 {sessions}개 회차를 예약할 수 있습니다.', f'신청당 최대 {people}명까지 예약할 수 있습니다.')
+
+    match = re.fullmatch(r'참가비[:：]무료\(최대(\d+)회차예약가능/1회에(\d+)(?:명|인)까지신청가능\)', text)
+    if match:
+        return (free, *limits(*match.groups()))
+    match = re.fullmatch(r'(선착순사전예약(?:제로|으로))?최대(\d+)(?:개)?회차,'
+                         r'(?:신청당|1회신청에)(\d+)(?:명|인)까지예약할수'
+                         r'(?:있습니다|있으며,?(현장접수는(?:받지않습니다|없습니다)))', text)
+    if match:
+        clauses = limits(match[2], match[3])
+        if match[1]:
+            clauses = (order, advance, *clauses)
+        if match[4]:
+            clauses += (onsite,)
+        return clauses
+    match = re.fullmatch(r'(?:1회신청시,?|신청당)최대(\d+)(?:인|명)까지예약할수있습니다', text)
+    if match:
+        return (f'신청당 최대 {match[1]}명까지 예약할 수 있습니다.',)
+    match = re.fullmatch(r'최대(\d+)개회차를예약할수있습니다', text)
+    if match:
+        return (f'최대 {match[1]}개 회차를 예약할 수 있습니다.',)
+    if re.fullmatch(r'(?:본행사는)?(?:원활한운영과사전준비를위해)?사전신청제로진행되며,?현장접수는받지않습니다', text):
+        return (advance, onsite)
+    if text == '선착순사전예약제입니다':
+        return (order, advance)
+    if text in ('현장접수는불가합니다', '현장접수는없습니다'):
+        return (onsite,)
+    for clause in (free, advance, order, onsite):
+        if text == key(clause):
+            return (clause,)
+    if condition_signature(value) == ('photo_consent',):
+        return ('신청하면 행사 중 사진 촬영에 동의한 것으로 봅니다.',)
+    return ()
+
+
+def reservation_evidence(method, reviewed_main):
+    # A group-specific limit or a following exception is not a general rule.
+    if re.search(r'단,|다만|예외|에\s*한해|에만\s*해당|(?:개인|단체|가족)\s*(?:예약|신청)'
+                 r'|(?:한정|전용|대상자|대상|경우)\s*$|[:：]\s*$|^\s*\[[^]]+\]\s*$',
+                 inline_text(method), re.MULTILINE):
+        return set()
+    proof = {clause for sentence in _sentences(method) for clause in reservation_clauses(sentence)}
+    if any(key(line) == '비용:무료' for line in reviewed_main.splitlines()):
+        proof.add('참가비는 무료입니다.')
+    return proof
+
+
 def _advice_signature(text):
     # Whole simple clauses. Extra qualifications/negation prevent a match.
     text = key(text)
@@ -233,6 +289,8 @@ def clean_projected_duplicates(content, sections, facts):
     from ingest.seoul_fact_roles import public_roles, optional_section
     from ingest.ai_worker import KO_SECTION_HEADERS
     roles = public_roles(facts)
+    # On reassembly, regenerate partial booking rows from the current facts too.
+    booking_rows = {'- **예약 절차:** ' + clause for v in roles['booking'] for clause in reservation_clauses(v)}
     cancellations = [v for v in roles['booking'] if cancellation_steps(v)]
     originals = {key(v) for v in facts['conditions']}
     originals.update(key(v) for values in roles.values() for v in values if additional_role(v))
@@ -251,6 +309,8 @@ def clean_projected_duplicates(content, sections, facts):
         continuation = index + 1 < len(source_lines) and source_lines[index + 1][:1].isspace() and source_lines[index + 1].strip()
         if match and continuation:
             attached.add(key(match[1]))
+        if current == '[신청 방법]' and not continuation and line in booking_rows:
+            continue
         if (current in ('[대상]', '[신청 방법]') and line.strip() and not continuation
                 and not line[:1].isspace() and '|' not in line
                 and any(cancellation_covers(v, line) and
