@@ -16,6 +16,7 @@ from ingest.http_client import HttpClient
 from ingest.models import BatchMeta, BatchResult, Checkpoint, ObservationRecord
 from ingest.source_images import source_image_url
 from ingest.seoul_links import seoul_source_link
+from ingest.seoul_image_alt import detail_image_evidence, placeholder_description
 
 SEOUL_SOURCE_ID = "seoul_reservation"
 SEOUL_API_KEY_ENV = "SEOUL_OPEN_DATA_API_KEY"
@@ -49,6 +50,7 @@ class _BodyParser(HTMLParser):
         self.table_stack: list[tuple[Any, Any, Any]] = []
         self.skip = 0
         self.images = False
+        self.image_alts: list[tuple[int, str]] = []
         self.attachments = False
         self.table_ranges: list[tuple[int, int, int]] = []
         self._outer_table: tuple[int, int] | None = None
@@ -61,6 +63,8 @@ class _BodyParser(HTMLParser):
         attributes = dict(attrs)
         if tag == "img":
             self.images = True
+            if attributes.get("alt"):
+                self.image_alts.append((len(self.parts), attributes["alt"]))
         if tag == "a" and re.search(r"\.(?:pdf|hwp|hwpx|jpg|png)(?:[?#]|$)", attributes.get("href") or "", re.I):
             self.attachments = True
         if tag in {"br", "p", "div", "li", "tr", "h1", "h2", "h3", "dt", "dd"}:
@@ -118,7 +122,7 @@ class _BodyParser(HTMLParser):
                     parent_cell["text"] += " " + data
 
 
-def parse_body(raw: str) -> dict[str, Any]:
+def parse_body(raw: str, *, title: str = "", target: str = "") -> dict[str, Any]:
     parser = _BodyParser()
     parser.feed(raw.replace("\\r\\n", "\n"))
     lines = [re.sub(r"[ \t\u00a0]+", " ", part).strip() for part in "".join(parser.parts).splitlines()]
@@ -153,8 +157,40 @@ def parse_body(raw: str) -> dict[str, Any]:
     # Boilerplate without a details section is not program evidence.
     if not marker and "공공시설 예약서비스 이용시 필수 준수사항" in plain:
         details = ""
-    return {"plain_text": plain, "program_text": details, "tables": parser.tables,
-            "body_has_images": parser.images, "attachment_links_present": parser.attachments}
+    result = {"plain_text": plain, "program_text": details, "tables": parser.tables,
+              "body_has_images": parser.images, "attachment_links_present": parser.attachments}
+    if parser.image_alts:
+        # Match the same detail boundary in the original part stream (before table rendering).
+        detail_marker = re.search(r"(?:3\s*\.\s*)?상세\s*내용", "".join(parser.parts))
+        first = 0
+        if detail_marker:
+            consumed = 0
+            while consumed < detail_marker.end():
+                consumed += len(parser.parts[first])
+                first += 1
+        if placeholder_description(details, title):
+            details = ""
+            result["program_text"] = ""
+        evidence = detail_image_evidence(details, title, target, (alt for at, alt in parser.image_alts if at >= first))
+        if evidence:
+            result["image_alt_evidence"] = evidence
+            if evidence["used_for_description"]:
+                # Keep separate source quotes intact; present each repeated sentence only once.
+                lines = {}
+                for part in (details, *evidence["quotes"]):
+                    for line in re.split(r'[\r\n]+|(?<=[다요]\.)\s+|(?<=[!?。])\s+', part):
+                        if line.strip():
+                            lines.setdefault(" ".join(line.split()), line.strip())
+                description = "\n".join(lines.values())
+                if len(description) < 20 and title and title not in description:
+                    description = title + "\n" + description
+                # An oversized poster still has its full raw HTML for manual review.
+                # Keep extracted facts inside the existing RPC text/array contract.
+                if len(lines) <= 200 and all(len(v) <= 4000 for v in lines.values()) and len(description.encode("utf-8")) <= 60000:
+                    result["program_text"] = description
+                else:
+                    evidence["used_for_description"] = False
+    return result
 
 
 def parse_seoul_date(raw: str) -> dict[str, str | None]:
@@ -240,7 +276,7 @@ def normalize_seoul_item(item: dict[str, Any], *, culture_external_links: bool =
     except ValueError:
         raise SeoulContractError('seoul_link_invalid') from None
     source_url = link['url']
-    body = parse_body(raw["DTLCONT"])
+    body = parse_body(raw["DTLCONT"], title=raw["SVCNM"], target=raw["USETGTINFO"])
     normalized = {
         "source_id": SEOUL_SOURCE_ID, "title": raw["SVCNM"], "source_url": source_url,
         "source_body_html": raw["DTLCONT"],  # inert internal source data; never render as HTML

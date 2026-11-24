@@ -109,6 +109,16 @@ def extract_program_facts(record: ObservationRecord, *, itinerary_title: str = "
     if explicit_personal and not explicitly_exclusive:
         institution = False
     actor = "institution" if institution else "individual_or_group" if explicit_personal else "individual"
+    image_evidence = payload.get("image_alt_evidence") or {}
+    conflicts.extend(image_evidence.get("conflicts", ()))
+    if image_evidence.get("used_for_description") or image_evidence.get("recruitment"):
+        # Let the existing filter/participation decision own the purpose value.
+        # A cultural activity in an image alone does not establish who can book.
+        if kind == "program":
+            kind = "unknown"
+    if image_evidence.get("group_only"):
+        institution = True
+        actor = "institution"
     if institution and explicit_personal:
         conflicts.append("application_actor_conflict")
 
