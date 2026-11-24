@@ -5,7 +5,7 @@ from typing import Callable
 from uuid import UUID
 from ingest.ai_errors import AiJobError
 from ingest.ai_failure_policy import (terminal_failure_result, terminate_no_retry, uncertain_failure,
-                                     unknown_failure_result, validate_no_retry_context)
+                                     hold_or_stop, unknown_failure_result, validate_no_retry_context)
 from ingest.program_candidate_review import ProgramCandidateReview, private_output, validate_candidate_fields
 from ingest.seoul_ai_correction import current_output
 from ingest.program_failure_diagnostic import program_failure_detail
@@ -86,7 +86,7 @@ def process_program_job(adapter: ProgramAIAdapter, *, source_item_id: str, revis
         stage = getattr(exc, "failure_stage", stage)
         if no_retry:
             if stage == "candidate_completion" or uncertain_failure(exc):
-                return unknown_failure_result(exc, stage)
+                return hold_or_stop(adapter, c, exc, stage)
             try:
                 terminate_no_retry(adapter, c, exc, failure_rpc=PROGRAM_FAILURE_ENDPOINTS[rpc_source],
                                    failure_detail=program_failure_detail(stage, exc),

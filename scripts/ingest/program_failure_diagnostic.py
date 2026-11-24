@@ -47,11 +47,28 @@ def program_failure_detail(stage, error):
                        error.diagnostic if isinstance(error, ValidationError) else None)
 
 
+def response_detail(diagnostic):
+    d = diagnostic if isinstance(diagnostic, dict) else {}
+    code = d.get('code')
+    detail = {'code': code if isinstance(code, str) and code in LABELS['response'] else 'unknown',
+              'completedSeen': d.get('completedSeen') if type(d.get('completedSeen')) is bool else None}
+    # Only enumerated causes and the HTTP status leave this process.
+    causes = d.get('causeChain')
+    for cause in [*(causes if isinstance(causes, list) else ()), d.get('exceptionKind')]:
+        if isinstance(cause, str) and cause in LABELS['transport']:
+            detail['transport'] = cause
+            break
+    status = d.get('httpStatus')
+    if type(status) is int and 100 <= status <= 599:
+        detail['httpStatus'] = status
+    return detail
+
+
 def batch_failures(items, stopped):
     """The next row records actual processing, including across chunk boundaries."""
     rows = []
     for index, item in enumerate(items):
-        if not (item['failed'] or item['retried'] or item['stateUnknown']):
+        if not (item['failed'] or item['retried'] or item['stateUnknown'] or item.get('held')):
             continue
         stage, diagnostic = item['failureStage'], item['diagnostic']
         if stage == 'failure_termination' and isinstance(diagnostic, dict):
@@ -59,10 +76,18 @@ def batch_failures(items, stopped):
             diagnostic = diagnostic.get('validation')
         else:
             original = None
+        if stage == 'hold_storage' and isinstance(diagnostic, dict):
+            original = diagnostic.get('stage')
+            if original == 'review_correction':
+                original = 'correction'
         detail = safe_detail(original or stage, item['errorCode'], diagnostic)
         rows.append(dict(source=item['sourceName'], sourceItemId=str(UUID(item['sourceItemId'])),
                          sequence=index+1, detail=detail,
                          stopStage=stage if stage in LABELS['stage'] and stopped and index+1 == len(items) else None,
                          terminationConfirmed=item['terminationConfirmed'],
                          flow='continued' if index+1 < len(items) else 'stopped' if stopped else 'last'))
+        if item.get('held'):
+            rows[-1]['held'] = True
+        if (item['stateUnknown'] or item.get('held')) and stage in ('summary', 'translation', 'correction', 'hold_storage'):
+            rows[-1]['response'] = response_detail(diagnostic)
     return rows

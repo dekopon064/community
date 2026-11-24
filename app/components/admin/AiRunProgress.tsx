@@ -16,7 +16,8 @@ export function AiRunProgress({run, awaiting, uncertain, disabled, onReviewCandi
   const skipped = counts?.unavailable_skipped ?? 0;
   // Older workers only include individual failure receipts in the final report.
   const failed = counts?.confirmed_failed ?? run?.failures?.filter(row => row.terminationConfirmed).length ?? 0;
-  const confirmed = created + skipped + failed;
+  const held = counts?.held ?? 0;
+  const confirmed = created + skipped + failed + held;
   const unknown = uncertain || run?.state === 'unknown';
   const running = !unknown && (awaiting || run?.state === 'running');
   const finished = !unknown && (run?.state === 'completed' || run?.state === 'partial' ||
@@ -32,6 +33,7 @@ export function AiRunProgress({run, awaiting, uncertain, disabled, onReviewCandi
     ? 'text-emerald-800 [[data-theme=dark]_&]:text-emerald-300' : 'text-amber-800 [[data-theme=dark]_&]:text-amber-300';
   const summary = [
     total !== undefined && `후보 생성 ${created}건`,
+    held > 0 && `응답 보류 ${held}건`,
     failed > 0 && `정식 실패 ${failed}건`,
     skipped > 0 && `건너뜀 ${skipped}건`,
     !!counts?.state_unknown && `결과 불명 ${counts.state_unknown}건`,

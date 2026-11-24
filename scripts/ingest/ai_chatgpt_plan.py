@@ -19,6 +19,21 @@ class PlanResponseUnknown(RpcAmbiguous):
         self.diagnostic = diagnostic
 
 
+    @property
+    def item_scoped(self):
+        d = self.diagnostic
+        if d.get('phase') == 'read':
+            return (d.get('code') == 'invalid_terminal_output_item' or
+                    d.get('completedSeen') is True and d.get('code') in
+                    ('duplicate_completed_event', 'invalid_completed_output'))
+        if d.get('phase') != 'validation':
+            return False
+        if d.get('code') == 'stream_missing_completed':
+            return d.get('itemOutputSeen') is True and d.get('completedSeen') is False
+        return d.get('completedSeen') is True and d.get('code') in {
+            'conflicting_terminal_output', 'invalid_completed_output'}
+
+
 class PlanCommonFailure(AiJobError):
     failure_scope = 'batch'
 
@@ -77,6 +92,7 @@ class ChatGPTPlanAdapter:
             raise AiJobError('ai_or_enqueue_failed')
         self._client, self._session = client, session
         self._blocked = False
+        self._pending_item_response = None
         self._reset_job()
 
     def _reset_job(self):
@@ -93,6 +109,13 @@ class ChatGPTPlanAdapter:
         """
         if self._blocked:
             raise RpcAmbiguous()
+        self._reset_job()
+
+    def release_held_attempt(self, diagnostic):
+        if self._pending_item_response is None or not self._blocked or self._pending_item_response is not diagnostic:
+            raise RpcAmbiguous()
+        self._pending_item_response = None
+        self._blocked = False
         self._reset_job()
 
     def close(self):
@@ -141,8 +164,10 @@ class ChatGPTPlanAdapter:
                             'stream_not_completed', 'duplicate_completed_event',
                             'invalid_terminal_output_item', 'conflicting_terminal_output',
                             'invalid_completed_output', 'unexpected_response_model'}:
-                raise PlanResponseUnknown({'stage': stage, 'code': exc.code,
-                    **(exc.diagnostic or {})}) from None
+                failure = PlanResponseUnknown({'stage': stage, 'code': exc.code, **(exc.diagnostic or {})})
+                if failure.item_scoped:
+                    self._pending_item_response = failure.diagnostic
+                raise failure from None
             mapping = {'plan_http_401':'ai_http_401', 'plan_http_403':'ai_http_403',
                        'plan_http_400':'ai_http_400', 'plan_http_404':'ai_http_404',
                        'subscription_sharing_user_not_eligible':'ai_http_403',

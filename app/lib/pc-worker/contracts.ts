@@ -12,7 +12,7 @@ export type WorkerCommand = { source: string; kind: 'collect' | 'ai'; limit: num
 export type WorkerHello = { schema: typeof pcWorkerSchema; instance: string; challenge: string; project: string; catalog: string };
 export type WorkerResult = { state: 'running' | 'completed' | 'partial' | 'failed' | 'stopped' | 'unknown' | 'auth_required'; code: string; counts: Record<string, number> };
 export type WorkerSourceResult = WorkerResult & {source:string};
-export type WorkerFailure = {source:string;sourceItemId:string;sequence:number;terminationConfirmed:boolean;
+export type WorkerFailure = {source:string;sourceItemId:string;title?:string;held?:true;response?:{code:keyof typeof labels.response;completedSeen:boolean|null;transport?:keyof typeof labels.transport;httpStatus?:number};sequence:number;terminationConfirmed:boolean;
   flow:'continued'|'last'|'stopped';stopStage:keyof typeof labels.stage|null;detail:FailureDetail};
 export type WorkerRun = WorkerResult & { requestId: string; command: WorkerCommand; sourceResults?:WorkerSourceResult[];failures?:WorkerFailure[] };
 export type WorkerStatus = { busy: boolean; run: WorkerRun | null };
@@ -63,7 +63,21 @@ export function workerStatus(value: unknown): WorkerStatus {
         || typeof f.sequence!=='number'||!Number.isInteger(f.sequence)||f.sequence<1||f.sequence>5000
         || typeof f.terminationConfirmed!=='boolean'||!['continued','last','stopped'].includes(String(f.flow))
         || f.stopStage!==null && (typeof f.stopStage!=='string'||!Object.hasOwn(labels.stage,f.stopStage))) throw Error('invalid_worker_response');
-      return {source:f.source,sourceItemId:f.sourceItemId,sequence:f.sequence,terminationConfirmed:f.terminationConfirmed,
+      if(f.held!==undefined && (f.held!==true || f.terminationConfirmed || !f.response)) throw Error('invalid_worker_response');
+      if(f.title!==undefined && (typeof f.title!=='string'||!f.title.length||Array.from(f.title).length>500)) throw Error('invalid_worker_response');
+      let response:WorkerFailure['response'];
+      if(f.response!==undefined){
+        const d=object(f.response);
+        if(typeof d.code!=='string'||!Object.hasOwn(labels.response,d.code)||
+          !(d.completedSeen===null||typeof d.completedSeen==='boolean')) throw Error('invalid_worker_response');
+        if(d.transport!==undefined && (typeof d.transport!=='string'||!Object.hasOwn(labels.transport,d.transport)) ||
+          d.httpStatus!==undefined && (typeof d.httpStatus!=='number'||!Number.isInteger(d.httpStatus)||d.httpStatus<100||d.httpStatus>599))
+          throw Error('invalid_worker_response');
+        response={code:d.code as keyof typeof labels.response,completedSeen:d.completedSeen,
+          ...(typeof d.transport==='string'?{transport:d.transport as keyof typeof labels.transport}:{}),
+          ...(typeof d.httpStatus==='number'?{httpStatus:d.httpStatus}:{})};
+      }
+      return {...(f.held===true?{held:true as const}:{}),...(typeof f.title==='string'?{title:f.title}:{}),...(response?{response}:{}),source:f.source,sourceItemId:f.sourceItemId,sequence:f.sequence,terminationConfirmed:f.terminationConfirmed,
         flow:f.flow as WorkerFailure['flow'],stopStage:f.stopStage as WorkerFailure['stopStage'],detail:failureDetail(f.detail)};
     });
   }

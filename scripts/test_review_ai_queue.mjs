@@ -11,6 +11,10 @@ const row={jobId:id,sourceItemId:sid,revision:'a'.repeat(64),currentRevision:tru
 const snap=(items=[],observed=[])=>({checkedAt:when,items,observed,hasMore:false});
 let checks=0;const eq=(a,b)=>{assert.deepEqual(a,b);checks++;};
 eq(aiStateText(row),'AI 작업 대기');eq(aiStateText({...row,retryCount:1}),'재시도 대기');eq(aiStateText({...row,status:'claimed',leaseState:'expired'}),'처리 상태 확인 필요');
+const heldJob=aiSnapshot(snap([{...row,status:'failed',errorCode:'ai_response_held',completedAt:when}])).items[0];
+eq(aiStateText(heldJob),'응답 불명 · 보류');
+eq(aiStateText({...heldJob,errorCode:'ai_schema_error'}),'최종 실패');
+eq(aiFailureText(heldJob),'AI 응답을 확정할 수 없어 자동 재시도 없이 보류했습니다.');
 eq(aiFailureText({...row,errorCode:'RAW_SECRET'}),'실패 이유를 확인할 수 없습니다.');
 eq(JSON.stringify(aiSnapshot(snap([row]))).includes('MUST_NOT_ECHO'),false);
 eq(aiSnapshot(snap([{...row,sourceName:'myseoul_program'}])).items[0].sourceName,'myseoul_program');

@@ -156,6 +156,94 @@ class FrozenQueueTests(unittest.TestCase):
             result=ExistingWorkers(PROJECT,ai_context=lambda:(ProgramAIAdapter(q.rpc),object(),lambda:None))(dict(source='all',kind='ai',limit='all'))
         self.assertEqual(result['state'],'stopped');self.assertEqual(result['code'],'queue_snapshot_changed');self.assertEqual(q.claims,[])
 
+    def test_auto_hold_real_worker_with_fake_pro_rpc(self):
+        import json
+        from ingest.ai_chatgpt_plan import ChatGPTPlanAdapter
+        from ingest.seoul_content import assemble_seoul_body
+        from test_ingest_ai_chatgpt_plan import verified_session, streamed
+        from test_ingest_ai_openai import response
+        from test_seoul_fact_roles import replay_context, confirmed_case, fake_translation
+        from test_chatgpt_plan_probe import FakeClient
+
+        _, template = replay_context(False)
+        summary = confirmed_case()['summary']
+        ko = assemble_seoul_body(summary['content_ko'], template['facts'])
+        ja = {'title_ja':'合成の解説', 'content_ja':fake_translation(ko)}
+        pair = streamed([response(json.dumps(v,ensure_ascii=False)) for v in (summary,ja)]).events
+        for scenario in ('confirmed', 'translation_duplicate', 'lost_receipt', 'wrong_receipt', 'empty_stream', 'quota'):
+            with self.subTest(scenario=scenario):
+                rows = [item(i, title=f'합성 전시 {i}') for i in range(1,11)]
+                queue = Queue(rows)
+                claims, saves, holds = [], [], []
+                def rpc(name, args):
+                    if name == 'admin_review_ai_queue':
+                        return queue.rpc(name,args)
+                    if name == 'claim_seoul_program_ai_no_retry':
+                        src = args['p_source_item_id']
+                        row = next(r for r in rows if r['sourceItemId']==src)
+                        claims.append(src)
+                        ctx = copy.deepcopy(template)
+                        ctx.update(sourceItemId=src, revision=row['revision'], jobId=row['jobId'],
+                                   workerId=args['p_worker_id'], failurePolicy={'policy':'no_retry','attempt':'f'*64})
+                        ctx['filterContext']['workerId'] = ctx['workerId']
+                        return [ctx]
+                    if name == 'hold_program_ai_response':
+                        holds.append(args.copy())
+                        if scenario == 'lost_receipt':
+                            raise TimeoutError()
+                        return dict(outcome='held', jobId=args['p_job_id'], evidence=args['p_evidence'],
+                                    revision=args['p_revision'], attempt='wrong' if scenario=='wrong_receipt' else args['p_attempt'])
+                    if name == 'fail_seoul_ai_no_retry' and scenario == 'quota':
+                        return 'failed'
+                    if name.startswith('finish_'):
+                        saves.append(args['p_job_id'])
+                        return {'outcome':'inserted','candidateId':str(uuid4())}
+                    raise AssertionError(name)
+                event = [{'type':'response.output_text.delta','delta':'synthetic'}]
+                if scenario == 'empty_stream':
+                    event = []
+                elif scenario == 'quota':
+                    event = [{'type':'error','code':'subscription_sharing_usage_limit_exceeded'}]
+                fourth = [event]
+                translation = scenario == 'translation_duplicate'
+                if translation:
+                    terminal = next(e for e in pair[1] if e['type']=='response.completed')
+                    fourth = [pair[0], [terminal,terminal]]
+                first = FakeClient(pair*3 + fourth + pair*6)
+                def context():
+                    provider = ChatGPTPlanAdapter(session=verified_session(),client=first)
+                    return ProgramAIAdapter(rpc), provider, provider.close
+                worker = ExistingWorkers(PROJECT,ai_context=context)
+                control = PcWorkerControl(project=PROJECT,origin=ORIGIN,key=lambda:KEY,execute=worker,clock=lambda:1001)
+                worker.progress = control.report
+                token = control.connect(ticket(control))['token']
+                original = dict(source='all',kind='ai',limit='all')
+                control.submit(token,ticket(control,'run',cmd=original))
+                control.wait()
+                run = control.status(token)['run']
+                continued = scenario == 'confirmed' or translation
+                hold_attempted = translation or scenario in ('confirmed','wrong_receipt','lost_receipt')
+                self.assertEqual(len(holds), int(hold_attempted))
+                self.assertEqual(len(first.calls), 19 + int(translation) if continued else 7)
+                self.assertEqual(claims, [r['sourceItemId'] for r in rows[:10 if continued else 4]])
+                self.assertEqual(saves, [r['jobId'] for r in rows[:3]+(rows[4:] if continued else [])])
+                counts = run['counts']
+                self.assertEqual((counts['completed'],counts['held'],counts['unprocessed']),
+                                 (9,1,0) if continued else (3,0,6))
+                failure, = run['failures']
+                self.assertEqual(failure['sequence'],4)
+                if scenario == 'quota':
+                    self.assertEqual((run['state'], run['code']), ('stopped','common_failure'))
+                else:
+                    self.assertEqual(failure['title'],'합성 전시 4')
+                    self.assertEqual(failure['response'],{'code':'duplicate_completed_event' if translation else 'stream_missing_completed','completedSeen':translation})
+                    self.assertEqual(failure['detail']['stage'],'translation' if translation else 'summary')
+                    self.assertEqual(failure['flow'],'continued' if continued else 'stopped')
+                    self.assertEqual(failure.get('held',False),continued)
+                    self.assertEqual(failure['stopStage'],None if continued else 'hold_storage' if hold_attempted else 'summary')
+                    self.assertEqual(run['state'],'partial' if continued else 'unknown')
+                self.assertNotIn('remainingCount',run)
+
     def test_progress_is_internal_read_only_status_and_never_restarts_unknown(self):
         release=__import__('threading').Event();control=None
         def execute(command):

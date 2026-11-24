@@ -15,6 +15,7 @@ class NoRetryResult(AiWorkerResult):
     failure_stage: str | None = None
     diagnostic: dict | None = None
     termination_confirmed: bool = False
+    hold_confirmed: bool = False
 
 
 def terminal_failure_result(error, stage):
@@ -38,6 +39,34 @@ def unknown_failure_result(error, stage, *, validation_error=None, validation_st
     return NoRetryResult(status='ai_state_unknown', claimed=1, state_unknown=1,
         error_code=getattr(validation_error or error, 'code', None),
         failure_scope='batch', failure_stage=stage, diagnostic=diagnostic)
+
+
+def hold_or_stop(adapter, context, error, stage):
+    from ingest.ai_chatgpt_plan import PlanResponseUnknown
+
+    if not isinstance(error, PlanResponseUnknown) or not error.item_scoped:
+        return unknown_failure_result(error, stage)
+    d = error.diagnostic
+    provider_stage = {'review_correction': 'correction'}.get(d['stage'], d['stage'])
+    if provider_stage not in ('summary', 'translation', 'correction') or stage not in (provider_stage, 'generation'):
+        return unknown_failure_result(error, stage)
+    try:
+        validate_no_retry_context(context)
+        attempt = context['failurePolicy']['attempt']
+        evidence = dict(stage=provider_stage, code=d['code'], completedSeen=d['completedSeen'])
+        expected = dict(outcome='held', jobId=context['jobId'], revision=context['revision'],
+                        attempt=attempt, evidence=evidence)
+        receipt = adapter.invoke('hold_program_ai_response', {
+            'p_source': context['source'], 'p_job_id': context['jobId'], 'p_revision': context['revision'],
+            'p_claimed_at': context['claimedAt'], 'p_lease_until': context['leaseUntil'],
+            'p_worker_id': context['workerId'], 'p_attempt': attempt, 'p_evidence': evidence})
+        if receipt != expected or type(receipt['evidence']['completedSeen']) is not bool:
+            raise RpcAmbiguous()
+    except Exception:
+        return NoRetryResult(status='ai_state_unknown', claimed=1, state_unknown=1, failure_scope='batch',
+                             failure_stage='hold_storage', diagnostic=d)
+    return NoRetryResult(status='response_held', claimed=1, failure_scope='item',
+                         failure_stage=provider_stage, diagnostic=d, hold_confirmed=True)
 
 
 def validate_no_retry_context(context: dict) -> None:

@@ -70,6 +70,20 @@ class PlanWorkerTests(unittest.TestCase):
         self.addCleanup(adapter.close)
         return adapter, client, session
 
+    def test_unknown_summary_distinguishes_completed_event_and_safe_error(self):
+        for events,code,seen in [
+            ([], 'stream_missing_completed', False),
+            ([{'type':'response.completed','response':None}], 'invalid_completed_output', True),
+            ([{'type':'response.completed','response':{'model':'synthetic-other'}}], 'unexpected_response_model', True),
+        ]:
+            with self.subTest(code=code):
+                adapter,client,_ = self.adapter(FakeClient([events]))
+                with self.assertRaises(RpcAmbiguous) as error:
+                    adapter.summarize_program_ko('test','https://example.invalid',title='test')
+                self.assertEqual(len(client.calls),1)
+                self.assertEqual(error.exception.diagnostic['code'],code)
+                self.assertIs(error.exception.diagnostic['completedSeen'],seen)
+
     def test_explicit_plan_selection_never_reads_api_keys_or_authenticates(self):
         class Env(dict):
             def get(self, key, *args):

@@ -15,7 +15,7 @@ COUNT_KEYS = frozenset({'scanned','target','existing_skipped','new_saved','revie
     'completed','unavailable_skipped','state_skipped','state_unknown','unprocessed','other_source','eligible',
     'inserted','updated','unchanged','excluded','created','skipped','total','duplicates','review','ai',
     'discovered','new','known','closed_skipped','processed','pending_remaining','carried_selected','list_pages',
-    'processed_items','confirmed_failed','chunks_total','chunks_done','snapshot_read_pages'})
+    'processed_items','held','confirmed_failed','chunks_total','chunks_done','snapshot_read_pages'})
 
 
 def outcome(value):
@@ -26,7 +26,7 @@ def outcome(value):
     unknown=bool(value.get('state_unknown')) or value.get('status')=='state_unknown'
     stopped=bool(value.get('batch_stopped')) or value.get('status') in {'partial','truncated','incomplete'}
     complete=value.get('status') in {'complete','completed','skipped'} or ('completed' in value and not unknown and not stopped and not value.get('failed'))
-    partial=bool(value.get('failed')) and bool(value.get('completed'))
+    partial=bool(value.get('held')) or bool(value.get('failed')) and bool(value.get('completed'))
     state='unknown' if unknown else 'stopped' if stopped else 'partial' if partial else 'completed' if complete else 'failed'
     reason=value.get('stop_reason')
     code='state_unknown' if unknown else reason if stopped and reason in {'common_failure','retry_registered','provider_not_reusable'} else 'batch_stopped' if stopped else 'completed' if complete else 'worker_failed'
@@ -95,14 +95,14 @@ class ExistingWorkers:
         from ingest.pc_worker_queue import frozen_queue_targets
         if limit=='all':targets,counts=frozen_queue_targets(adapter,sources=tuple(SOURCES),progress=self.progress)
         else:targets,counts=bounded_queue_targets(adapter,max_jobs=limit,queue_pages=1,source=tuple(SOURCES))
-        counts.update(items=[],batch_stopped=False,stop_reason=None,processed_items=0,confirmed_failed=0,
+        counts.update(items=[],held=0,batch_stopped=False,stop_reason=None,processed_items=0,confirmed_failed=0,
             chunks_total=(len(targets)+QUEUE_PAGE_SIZE-1)//QUEUE_PAGE_SIZE,chunks_done=0)
         def confirmed_failures(part):
             return sum(item['failed'] for item in part.get('items', ()) if item['terminationConfirmed'] and not item['stateUnknown'])
         def report(part=None):
             current={key:value for key,value in counts.items() if key in COUNT_KEYS and type(value) is int}
             if part is not None:
-                for key in ('completed','failed','unavailable_skipped','state_unknown'):current[key]+=part[key]
+                for key in ('completed','held','failed','unavailable_skipped','state_unknown'):current[key]+=part[key]
                 current['processed_items']+=len(part.get('items',[]))
                 current['confirmed_failed']+=confirmed_failures(part)
             current['unprocessed']=len(targets)-current['processed_items']
@@ -124,13 +124,13 @@ class ExistingWorkers:
         # Every chunk consumes only the already fixed membership. Never refill or
         # requery a shrinking offset queue after claims have begun.
         for start in range(0,len(targets),QUEUE_PAGE_SIZE):
-            part=dict(completed=0,failed=0,unavailable_skipped=0,state_unknown=0,unprocessed=0)
+            part=dict(completed=0,held=0,failed=0,unavailable_skipped=0,state_unknown=0,unprocessed=0)
             try:
                 process_ready_targets(targets[start:start+QUEUE_PAGE_SIZE],part,process,policy_for=policy,after_each=report)
             except Exception:
                 part.update(batch_stopped=True,stop_reason='state_unknown')
                 part['state_unknown']+=1
-            for key in ('completed','failed','unavailable_skipped','state_unknown'):counts[key]+=part[key]
+            for key in ('completed','held','failed','unavailable_skipped','state_unknown'):counts[key]+=part[key]
             counts['items'].extend(part.get('items',[]));counts['processed_items']=len(counts['items'])
             counts['confirmed_failed']+=confirmed_failures(part)
             counts['unprocessed']=len(targets)-counts['processed_items']
@@ -143,13 +143,18 @@ class ExistingWorkers:
             items=[item for item in result['items'] if item['sourceName']==source]
             if not items:continue
             row=dict(completed=sum(i['completed'] for i in items),failed=sum(i['failed']+i['retried'] for i in items),
-                     state_unknown=sum(i['stateUnknown'] for i in items))
+                     held=sum(bool(i.get('held')) for i in items),state_unknown=sum(i['stateUnknown'] for i in items))
             if result['batch_stopped'] and source==result['items'][-1]['sourceName']:
                 row.update(batch_stopped=True,stop_reason=result['stop_reason'])
             rows.append(dict(source=source,**outcome(row)))
         report_result = dict(**outcome(result),sourceResults=rows)
         failures = batch_failures(result['items'], result['batch_stopped'])
         if failures:
+            for failure in failures:
+                if failure.get('response') or result['items'][failure['sequence']-1]['stateUnknown']:
+                    title = targets[failure['sequence']-1].get('title')
+                    if isinstance(title,str) and title.strip():
+                        failure['title'] = ' '.join(title.split())[:500]
             report_result['failures'] = failures
         return report_result
 

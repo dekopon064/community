@@ -8,6 +8,7 @@ function stopReason(run:WorkerRun){
   if(run.code!=='state_unknown')return null;
   const last=run.failures?.findLast(row=>row.flow==='stopped');
   switch(last?.stopStage){
+    case 'hold_storage': return '보류 저장 결과를 확인할 수 없어 전체 실행을 중단했습니다.';
     case 'failure_termination': return '정식 실패 저장 결과를 확인할 수 없어 전체 실행을 중단했습니다.';
     case 'candidate_completion': return '후보 저장 결과를 확인할 수 없어 전체 실행을 중단했습니다.';
     case 'claim': return '작업 선점 또는 입력 상태를 확인할 수 없어 전체 실행을 중단했습니다.';
@@ -20,12 +21,14 @@ export function RunFailures({run}:{run:WorkerRun}){
   return <>
     {stop&&<p className="mt-2 text-sm text-info-status">{stop}</p>}
     {!!run.failures?.length&&<details className="mt-3" open={run.failures.length<=3}>
-      <summary className="cursor-pointer font-semibold">항목별 실패 진단 {run.failures.length}건</summary>
+      <summary className="cursor-pointer font-semibold">항목별 처리 진단 {run.failures.length}건</summary>
       <ol className="mt-2 space-y-3">{run.failures.map(row=><li key={row.sequence} className="border-t border-info-rule pt-2">
-        <p className="font-semibold">{row.sequence}번째 · {workerSources[row.source]}</p>
+        <p className="font-semibold">{row.sequence}번째 · {row.title && <>{row.title} · </>}{workerSources[row.source]}</p>
         <p className="text-xs break-all">항목 ID {row.sourceItemId}</p>
-        {failureLines(row.detail).map((line,i)=><p key={i}>{line}</p>)}
-        <p>{row.terminationConfirmed?'정식 실패 저장 확인':'정식 실패 저장 미확인'} · {row.flow==='continued'?'다음 항목 처리 진행':row.flow==='last'?'마지막 항목':'전체 중단'}</p>
+        {row.response && <><p>{labels.stage[row.detail.stage]} · {labels.response[row.response.code]} ({row.response.code}){row.response.transport && ' · '+labels.transport[row.response.transport]}{row.response.httpStatus && ' · HTTP '+row.response.httpStatus}</p>
+          <p>완료 응답 수신 여부 · {row.response.completedSeen===null?'미확인':row.response.completedSeen?'수신':'미수신'}</p></>}
+        {!row.response && failureLines(row.detail).map((line,i)=><p key={i}>{line}</p>)}
+        <p>{row.held?'응답 불명 · 보류 저장 확인':row.stopStage==='hold_storage'?'보류 저장 미확인':row.terminationConfirmed?'정식 실패 저장 확인':'정식 실패 저장 미확인'} · {row.flow==='continued'?'다음 항목 처리 진행':row.flow==='last'?'마지막 항목':'전체 중단'}</p>
       </li>)}</ol>
     </details>}
   </>;

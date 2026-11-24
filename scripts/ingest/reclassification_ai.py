@@ -340,7 +340,8 @@ def process_reclassified_job(adapter:ProgramAIAdapter,*,source_item_id:str,revis
                     return unknown_failure_result(finish_exc, 'failure_termination',
                                                   validation_error=exc, validation_stage=stage)
         if review:
-            return unknown_failure_result(exc, stage)
+            from ingest.ai_failure_policy import hold_or_stop
+            return hold_or_stop(adapter, c, exc, stage)
         # No new write/provider retry. A separate fenced status read can establish
         # completion; expired attempts require an explicit close before any new job.
         try:

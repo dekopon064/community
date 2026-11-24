@@ -40,6 +40,14 @@ def command(value):
     return dict(value)
 
 
+def valid_response(value):
+    return (isinstance(value, dict) and set(value) - {'transport','httpStatus'} == {'code', 'completedSeen'}
+            and ('transport' not in value or value['transport'] in LABELS['transport'])
+            and ('httpStatus' not in value or type(value['httpStatus']) is int and 100 <= value['httpStatus'] <= 599)
+            and value['code'] in LABELS['response']
+            and (value['completedSeen'] is None or type(value['completedSeen']) is bool))
+
+
 def b64(value):
     return base64.urlsafe_b64encode(value).rstrip(b'=')
 
@@ -175,7 +183,10 @@ class PcWorkerControl:
                 if run['command']['kind'] != 'ai' or not isinstance(failures,list) or len(failures)>5000:
                     raise ValueError('invalid_failure_list')
                 for item in failures:
-                    if (set(item) != {'source','sourceItemId','sequence','detail','stopStage','terminationConfirmed','flow'}
+                    if (set(item) - {'title','response','held'} != {'source','sourceItemId','sequence','detail','stopStage','terminationConfirmed','flow'}
+                        or 'held' in item and (item['held'] is not True or 'response' not in item or item['terminationConfirmed'])
+                        or 'title' in item and (not isinstance(item['title'],str) or not 1 <= len(item['title']) <= 500)
+                        or 'response' in item and not valid_response(item['response'])
                         or item['source'] not in SOURCES or str(UUID(item['sourceItemId'])) != item['sourceItemId']
                         or type(item['sequence']) is not int or not 1 <= item['sequence'] <= 5000
                         or type(item['terminationConfirmed']) is not bool

@@ -47,7 +47,7 @@ def frozen_queue_targets(adapter,*,sources,progress=lambda counts:None):
                 for item in eligible:
                     key=(item['sourceName'],str(UUID(item['sourceItemId'])),item['revision'])
                     if key not in seen:
-                        seen.add(key);targets.append({key:item[key] for key in FIELDS})
+                        seen.add(key);targets.append({**{key:item[key] for key in FIELDS}, 'title':item.get('title')})
             except (ValueError,TypeError,KeyError,AttributeError):
                 raise QueueSnapshotError('queue_snapshot_invalid') from None
             progress({'snapshot_read_pages':reads})
