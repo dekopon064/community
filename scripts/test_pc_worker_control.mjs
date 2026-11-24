@@ -161,4 +161,38 @@ await test('AI progress uses confirmed outcomes from status reads and review nav
  html=renderToStaticMarkup(AiRunProgress({awaiting:true,uncertain:true}));
  assert.match(html,/실행 상태 확인 필요/);assert.doesNotMatch(html,/ai-run-indeterminate|후보 검토로 이동/);
 });
+await test('show held and stopped diagnostics with no resume action',async()=>{
+ const {renderToStaticMarkup}=await import('react-dom/server');
+ const {createElement}=await import('react');
+ const {RunFailures}=await import('../app/components/admin/RunFailures.tsx');
+ const f=fixture();await f.client.connect();await f.client.run({...cmd,limit:'all'});
+ const row={source:'seoul_reservation',sourceItemId:id(),title:'합성 용산 전시',sequence:4,
+  detail:{stage:'summary',code:'unknown',rule:'unknown',reason:'unknown'},stopStage:'summary',terminationConfirmed:false,
+  flow:'stopped',response:{code:'stream_missing_completed',completedSeen:false}};
+ f.report({state:'unknown',code:'state_unknown',counts:{selected:10,completed:3,state_unknown:1,unprocessed:6},failures:[row]});
+ await f.client.refresh();const parent=f.view.run;
+ const html=renderToStaticMarkup(createElement(RunFailures,{run:parent}));
+ assert.match(html,/합성 용산 전시/);assert.match(html,/한국어 요약 응답/);assert.match(html,/완료 이벤트 없음/);assert.match(html,/미수신/);
+ for(const [seen,label] of [[true,'수신'],[null,'미확인']]){
+  const result=workerStatus({busy:true,run:{...parent,failures:[{...row,response:{code:'unknown',completedSeen:seen}}]}});
+  assert.match(renderToStaticMarkup(createElement(RunFailures,{run:result.run})),new RegExp(label));
+ }
+ const transportRow={...row,response:{completedSeen:false,code:'plan_transport_unknown',transport:'connection_reset',httpStatus:502}};
+ const transport=workerStatus({busy:true,run:{...parent,failures:[transportRow]}});
+ const info=renderToStaticMarkup(createElement(RunFailures,{run:transport.run}));
+ assert.match(info,/연결 끊김/);assert.match(info,/HTTP 502/);
+ assert.throws(()=>workerStatus({busy:true,run:{...parent,failures:[{...row,response:{...row.response,transport:'raw-error'}}]}}));
+ const held={...row,held:true,flow:'continued',stopStage:null};
+ const confirmed=workerStatus({busy:false,run:{...parent,state:'partial',counts:{selected:10,completed:9,held:1},failures:[held]}});
+ const holdHtml=renderToStaticMarkup(createElement(RunFailures,{run:confirmed.run}));
+ assert.match(holdHtml,/보류 저장 확인/);assert.match(holdHtml,/다음 항목 처리 진행/);
+ assert.doesNotMatch(holdHtml,/이어서 실행/);
+ const {AiRunProgress}=await import('../app/components/admin/AiRunProgress.tsx');
+ const progress=renderToStaticMarkup(AiRunProgress({run:confirmed.run,awaiting:false,uncertain:false}));
+ assert.match(progress,/10 \/ 10건 확정/);assert.match(progress,/응답 보류 1건/);
+ const storage=workerStatus({busy:false,run:{...parent,failures:[{...row,stopStage:'hold_storage'}]}});
+ assert.match(renderToStaticMarkup(createElement(RunFailures,{run:storage.run})),/보류 저장 결과를 확인할 수 없어/);
+ assert.throws(()=>workerCommand({...cmd,limit:'all',resumeOf:parent.requestId}));
+ await f.client.run(cmd);assert.equal(f.ai,1);
+});
 console.log(JSON.stringify({passed,real_auth:0,real_ai:0,db:0,external_network:0}));

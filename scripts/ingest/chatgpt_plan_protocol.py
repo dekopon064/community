@@ -169,6 +169,8 @@ def read_completed_stream(client, request, *, observe=None, on_completed=None, e
     extract = extractor or extract_payload
     same = equivalent or (lambda left, right: left == right)
     completed, items = None, {}
+    completed_seen = False
+    saw_item_output = False
     phase, event_count = 'create', 0
     try:
         with client.responses.create(**request) as stream:
@@ -180,6 +182,8 @@ def read_completed_stream(client, request, *, observe=None, on_completed=None, e
                     observe(event)
                     phase = 'read'
                 kind = get_field(event, 'type')
+                if kind in ('response.output_text.delta', 'response.output_item.added', 'response.output_item.done'):
+                    saw_item_output = True
                 if kind in {'response.failed', 'response.incomplete', 'error'}:
                     error = (get_field(get_field(event, 'response'), 'error') or
                              get_field(event, 'error') or (event if kind == 'error' else None))
@@ -189,6 +193,7 @@ def read_completed_stream(client, request, *, observe=None, on_completed=None, e
                         'subscription_sharing_unsupported_capability', 'subscription_sharing_route_not_supported'}
                     raise ProbeError(code if code in known else 'stream_not_completed')
                 if kind == 'response.completed':
+                    completed_seen = True
                     if completed is not None:
                         raise ProbeError('duplicate_completed_event')
                     completed = get_field(event, 'response')
@@ -202,21 +207,29 @@ def read_completed_stream(client, request, *, observe=None, on_completed=None, e
             phase = 'close'
     except ProbeError as exc:
         exc.diagnostic = stream_failure_diagnostic(exc, phase=phase,
-            event_count=event_count, completed_seen=completed is not None)
+            event_count=event_count, completed_seen=completed_seen)
         raise
     except Exception as exc:
         status = getattr(exc, 'status_code', None)
         diagnostic = stream_failure_diagnostic(exc, phase=phase,
-            event_count=event_count, completed_seen=completed is not None)
+            event_count=event_count, completed_seen=completed_seen)
         code = ('plan_timeout' if diagnostic['exceptionKind'] == 'timeout' else
                 'plan_http_' + str(status) if type(status) is int and 100 <= status <= 599 else
                 'plan_transport_unknown')
         raise ProbeError(code, diagnostic=diagnostic) from None
+    try:
+        return _validated_stream_output(completed, items, extract, same, on_completed)
+    except ProbeError as exc:
+        exc.diagnostic = stream_failure_diagnostic(exc, phase='validation',
+            event_count=event_count, completed_seen=completed_seen)
+        if saw_item_output:
+            exc.diagnostic['itemOutputSeen'] = True
+        raise
+
+
+def _validated_stream_output(completed, items, extract, same, on_completed):
     if completed is None:
-        error = ProbeError('stream_missing_completed')
-        error.diagnostic = stream_failure_diagnostic(error, phase='validation',
-            event_count=event_count, completed_seen=False)
-        raise error
+        raise ProbeError('stream_missing_completed')
     if get_field(completed, 'model') != GPT_MODEL:
         raise ProbeError('unexpected_response_model')
     final = get_field(completed, 'output')

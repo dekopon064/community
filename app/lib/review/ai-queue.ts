@@ -2,6 +2,7 @@ import { ReviewFailure } from "./contracts";
 import type { RpcClient } from "./database-store";
 
 export const aiErrors: Record<string,string> = {
+ ai_response_held:"AI 응답을 확정할 수 없어 자동 재시도 없이 보류했습니다.",
  ai_or_enqueue_failed:"AI 결과를 준비하지 못했습니다.",ai_blocked_cost_cap:"AI 비용 한도 때문에 작업을 진행하지 못했습니다.",
  ai_cost_bound_breach:"AI 비용 제한을 확인해야 합니다.",ai_refusal:"AI가 결과 생성을 거절했습니다.",
  ai_schema_error:"AI 결과 형식을 확인해야 합니다.",ai_timeout:"AI 응답 시간이 초과되었습니다.",
@@ -71,7 +72,7 @@ export class DatabaseAiQueueStore implements AiQueueStore{
 }
 export function aiStateText(j:AiJob){
  if(j.status==="claimed")return j.leaseState==="active"?"AI 처리 중":"처리 상태 확인 필요";
- if(j.status==="failed")return "최종 실패";
+ if(j.status==="failed")return j.errorCode==="ai_response_held"?"응답 불명 · 보류":"최종 실패";
  if(j.status==="queued")return j.retryCount>0||j.nextRetryAt?"재시도 대기":"AI 작업 대기";
  return j.status==="completed"?"AI 작업 완료":"취소됨";
 }

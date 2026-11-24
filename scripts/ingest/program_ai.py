@@ -243,8 +243,8 @@ def process_seoul_program_job(adapter: ProgramAIAdapter, *, source_item_id: str,
         return AiWorkerResult(status="processed", claimed=1, completed=1)
     except (RpcAmbiguous, RpcTimeout) as exc:
         if no_retry:
-            from ingest.ai_failure_policy import unknown_failure_result
-            return unknown_failure_result(exc, stage)
+            from ingest.ai_failure_policy import hold_or_stop
+            return hold_or_stop(adapter, c, exc, stage)
         return AiWorkerResult(status="ai_state_unknown", claimed=1, state_unknown=1)
     except Exception as exc:
         if no_retry:

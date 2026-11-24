@@ -269,8 +269,12 @@ def process_ready_targets(targets,counts,process_one,*,policy_for,after_each=Non
         result=process_one(item)
         no_retry,summarize_ko,translate_ja=policy_for(item)
         confirmed = getattr(result,'termination_confirmed',False) is True
+        held = result.status == 'response_held' and no_retry and getattr(result,'hold_confirmed',False) is True
+        missing_hold = result.status == 'response_held' and not held
         missing_receipt = no_retry and result.failed and getattr(result,'failure_scope',None)=='item' and not confirmed
-        unknown = result.state_unknown or int(result.status=='ai_state_unknown' or bool(missing_receipt))
+        unknown = result.state_unknown or int(result.status=='ai_state_unknown' or bool(missing_receipt) or missing_hold)
+        if held:
+            counts['held'] = counts.get('held', 0) + 1
         counts['completed']+=result.completed
         failed = 0 if missing_receipt else result.failed
         counts['failed']+=failed+result.retried
@@ -281,7 +285,7 @@ def process_ready_targets(targets,counts,process_one,*,policy_for,after_each=Non
             stateUnknown=unknown, errorCode=getattr(result,'error_code',None),
             failureScope=getattr(result,'failure_scope',None),
             failureStage=getattr(result,'failure_stage',None),
-            terminationConfirmed=confirmed,
+            terminationConfirmed=confirmed, held=held,
             diagnostic=getattr(result,'diagnostic',None)))
         stop = ('state_unknown' if unknown else
                 'retry_registered' if result.retried else
@@ -299,6 +303,14 @@ def process_ready_targets(targets,counts,process_one,*,policy_for,after_each=Non
                         raise ValueError('provider_pair_mismatch')
                     release()
                 stop = None
+            except Exception:
+                stop = 'provider_not_reusable'
+        if held and not stop:
+            owner = getattr(summarize_ko, '__self__', None)
+            try:
+                if getattr(translate_ja, '__self__', None) is not owner:
+                    raise ValueError('provider_pair_mismatch')
+                owner.release_held_attempt(result.diagnostic)
             except Exception:
                 stop = 'provider_not_reusable'
         if stop:

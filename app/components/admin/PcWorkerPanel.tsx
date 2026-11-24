@@ -10,7 +10,7 @@ import type { WorkerCommand,WorkerRun } from '@/app/lib/pc-worker/contracts';
 import { fieldClass,primaryButton,secondaryButton } from './ReviewEditors';
 const stateText={running:'처리 중',completed:'완료',partial:'일부 실패',failed:'실패',stopped:'처리 중단',unknown:'결과 확인 필요',auth_required:'Pro 인증 확인 필요'};
 const countText:Record<string,string>={scanned:'조회',target:'선별',existing_skipped:'기존 중복',new_saved:'신규 저장',
-  review_waiting:'사람 검토 대기',ai_waiting:'AI 대기',failed:'실패',invalid_id_count:'잘못된 식별값',status_excluded:'상태 제외',
+  review_waiting:'사람 검토 대기',ai_waiting:'AI 대기',held:'응답 보류',failed:'실패',invalid_id_count:'잘못된 식별값',status_excluded:'상태 제외',
   audience_excluded:'대상 제외',request_count:'HTTP 요청',requests:'HTTP 요청',selected:'선택',completed:'후보 생성',
   unavailable_skipped:'현재 처리 불가·건너뜀',state_skipped:'상태 건너뜀',state_unknown:'결과 불명',unprocessed:'미처리',
   other_source:'다른 수집원',eligible:'실행 가능',inserted:'신규',updated:'갱신',unchanged:'변경 없음',excluded:'제외',created:'신규',skipped:'건너뜀',total:'전체',duplicates:'중복',review:'사람 검토',ai:'AI 대기',
@@ -70,11 +70,14 @@ export function PcAiRunPanel({disabled=false,onReviewCandidates}:{disabled?:bool
     <AiRunProgress run={awaiting ? undefined : runs.ai} awaiting={awaiting} uncertain={uncertain}
       disabled={disabled} onReviewCandidates={onReviewCandidates}/>
     <p className="max-w-3xl text-sm leading-6 text-info-muted">선택한 건수까지 처리합니다. 숫자 선택은 대기 목록 첫 25건에서, 전체는 시작 시 확인한 실행 가능한 항목을 고정해 25건씩 처리합니다. 실행 중 새 항목은 추가하지 않습니다. 건별 요약·번역은 각각 최대 1회, 후보 생성까지만 진행합니다.</p>
-    <p className="text-sm leading-6 text-info-muted">개별 항목의 오류는 재시도 없이 실패로 저장한 뒤 다음 항목을 처리합니다. 공통 오류가 발생하거나 AI 응답·저장 결과를 확인할 수 없으면 전체 실행을 중단합니다.</p>
+    <p className="text-sm leading-6 text-info-muted">개별 항목의 오류는 재시도 없이 실패로 저장한 뒤 다음 항목을 처리합니다. 개별 응답 불명은 보류 저장이 확인되면 다음 항목으로 넘어갑니다. 공통 장애나 처리·저장 결과를 확인할 수 없는 경우에는 전체 실행을 중단합니다.</p>
     {view.connection!=='ready'&&<p className="text-sm text-info-status">검토 관리 상단에서 PC를 먼저 연결해 주세요.</p>}
     {disabled&&<p className="text-sm text-info-status">편집·저장 중인 내용을 먼저 정리해 주세요.</p>}
     {!awaiting&&<RunResult kind="ai" uncertain={uncertain}/>}
   </section>;
+}
+function resultState(result:Pick<WorkerRun,"state"|"counts">){
+  return result.state==='partial' && result.counts.held && !result.counts.failed?'보류 포함 완료':stateText[result.state];
 }
 function Counts({counts}:{counts:Record<string,number>}){
   return <ul className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-sm text-info-body">{Object.entries(counts).map(([key,value])=>countText[key]&&<li key={key}>{countText[key]} {value}{key.endsWith('_sources')||key.startsWith('chunks_')?'개':['list_pages','snapshot_read_pages'].includes(key)?'페이지':['requests','request_count'].includes(key)?'회':'건'}</li>)}</ul>;
@@ -83,9 +86,9 @@ function RunResult({kind,uncertain=false}:{kind:WorkerCommand['kind'];uncertain?
   const {runs}=useWorker(),run=runs[kind];if(!run)return null;
   const counts=kind==='collect'&&run.sourceResults?.length?Object.fromEntries(Object.entries(run.counts).filter(([key])=>key.endsWith('_sources'))):run.counts;
   return <section aria-label={`최근 ${kind==='collect'?'수집':'AI'} 실행 결과`} aria-live="polite" className="border-t border-info-rule pt-4">
-    <h3 className="font-semibold">{kind==='ai'?'AI 실행 상세':run.command.source==='all'?'전체 수집원':workerSources[run.command.source]} · {uncertain?stateText.unknown:stateText[run.state]}</h3>
+    <h3 className="font-semibold">{kind==='ai'?'AI 실행 상세':run.command.source==='all'?'전체 수집원':workerSources[run.command.source]} · {uncertain?stateText.unknown:resultState(run)}</h3>
     {run.state==='auth_required'?<p className="mt-2 text-sm leading-6 text-info-status">기존 Pro 로그인 경로에서 인증을 확인해 주세요. 이 화면에서는 로그인을 자동으로 열거나 AI를 다시 호출하지 않습니다.</p>:<Counts counts={counts}/>}
-    {!!run.sourceResults?.length&&<ul className="mt-3 space-y-3">{run.sourceResults.map(row=><li key={row.source}><p className="text-sm font-semibold">{workerSources[row.source]} · {stateText[row.state]}</p><Counts counts={row.counts}/></li>)}</ul>}
+    {!!run.sourceResults?.length&&<ul className="mt-3 space-y-3">{run.sourceResults.map(row=><li key={row.source}><p className="text-sm font-semibold">{workerSources[row.source]} · {resultState(row)}</p><Counts counts={row.counts}/></li>)}</ul>}
     {kind==='ai'&&<RunFailures run={run}/>}
     {run.code==='queue_snapshot_changed'&&<p className="mt-2 text-sm leading-6 text-info-status">대상 확인 중 목록이 바뀌어 AI를 시작하지 않았습니다. 최신 목록을 확인한 뒤 새 실행을 요청해 주세요.</p>}
     {run.code==='queue_snapshot_invalid'&&<p className="mt-2 text-sm leading-6 text-info-status">대기 목록의 페이지·식별값을 확인하지 못해 AI를 시작하지 않았습니다.</p>}
