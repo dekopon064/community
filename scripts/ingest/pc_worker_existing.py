@@ -182,11 +182,12 @@ class ExistingWorkers:
         name=require_ai_provider()
         if name!='chatgpt_plan':raise ProviderError('explicit_chatgpt_plan_required')
         key=require_provider_key(name)
-        manager=PlanSessionManager()
+        from ingest.chatgpt_plan_protocol import PROGRAM_PLAN_MODEL
+        manager=PlanSessionManager(model=PROGRAM_PLAN_MODEL)
         class ReuseOnly:
             def acquire(self):return manager.acquire(allow_login=False)
         session=authenticate_worker(manager=ReuseOnly())
-        provider=create_provider_adapter(name,key,plan_session=session)
+        provider=create_provider_adapter(name,key,plan_session=session,program=True)
         try:
             url=os.environ.get('SUPABASE_URL','')
             if url.rstrip('/')!=f'https://{self.project}.supabase.co':raise ValueError('wrong_project')

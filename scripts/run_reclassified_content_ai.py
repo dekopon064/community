@@ -17,7 +17,7 @@ def execute_target(args):
     if url.rstrip('/')!=f'https://{args.project_ref}.supabase.co' or not key.strip():raise ValueError('invalid_server_configuration')
     provider_name,provider_key=require_configured_provider()
     if args.no_retry and provider_name!='chatgpt_plan':raise ValueError('explicit_chatgpt_plan_required')
-    provider=create_provider_adapter(provider_name,provider_key)
+    provider=create_provider_adapter(provider_name,provider_key,program=args.no_retry)
     try:
         return process_reclassified_job(ProgramAIAdapter.from_supabase(create_ingest_client(url,key)),source_item_id=args.source_item_id,revision=args.revision,classification_version=args.classification_version,summarize_ko=provider.summarize_ko,translate_ja=provider.translate_ja,worker_id='classification-manual-'+uuid4().hex,no_retry=args.no_retry)
     finally:

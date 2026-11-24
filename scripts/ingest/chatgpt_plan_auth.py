@@ -11,6 +11,7 @@ import time
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+from ingest.ai_openai import GPT_MODEL
 from ingest.chatgpt_plan_protocol import (AuthorizationAttempt, ProbeError, DISCOVERY,
     TOKEN, JWKS, RESOURCE, verify_grant, validate_discovery, model_available)
 
@@ -26,6 +27,7 @@ class PlanSession:
     _verified: object = field(repr=False)
     _renew: object = field(default=None, repr=False)
     _record: object = field(default=None, repr=False)
+    model: str = field(default=GPT_MODEL, kw_only=True)
 
     def __post_init__(self):
         if self._verified is not _VERIFIED:
@@ -35,15 +37,15 @@ class PlanSession:
         return 'PlanSession(credentials=redacted)'
 
     @classmethod
-    def from_grant(cls, grant, *, client_id, nonce, keys, catalog):
+    def from_grant(cls, grant, *, client_id, nonce, keys, catalog, model=GPT_MODEL):
         access = verify_grant(grant, client_id=client_id, nonce=nonce, keys=keys)
-        model_available(catalog)
+        model_available(catalog, model)
         import jwt
         # Signature/audience/issuer/subject/permission checked above.
         expiry = jwt.decode(access, options={'verify_signature':False})['exp']
         if type(expiry) not in {int, float}:
             raise ProbeError('invalid_access_expiry')
-        session = cls(access, expiry, _VERIFIED)
+        session = cls(access, expiry, _VERIFIED, model=model)
         subject = jwt.decode(access, options={'verify_signature':False})['sub']
         session._record = {'client_id':client_id, 'nonce':nonce, 'subject':subject, 'grant':dict(grant)}
         session.require_active()
@@ -53,6 +55,9 @@ class PlanSession:
         # Leave enough time for both existing 120-second stages before a claim.
         if self._access and time.time() + 250 >= self.expires_at and self._renew:
             renewed = self._renew()
+            if renewed.model != self.model:
+                renewed.clear()
+                raise ProbeError('plan_session_model_changed')
             self._access, self.expires_at = renewed._access, renewed.expires_at
             renewed.clear()
         if not self._access or time.time() + 250 >= self.expires_at:
@@ -92,7 +97,7 @@ def fetch(session, url, **kwargs):
     return response.json()
 
 
-def _interactive_worker(saved_registration=None):
+def _interactive_worker(saved_registration=None, *, model=GPT_MODEL):
     """Normal loopback OAuth, only when no reusable credential is available."""
     if not sys.stdin.isatty():
         raise ProbeError('chatgpt_plan_login_requires_terminal')
@@ -162,7 +167,7 @@ def _interactive_worker(saved_registration=None):
                 access = verify_grant(grant, client_id=form['client_id'], nonce=attempt.nonce, keys=keys)
                 catalog = fetch(http, RESOURCE + '/models', headers={'Authorization':'Bearer ' + access})
                 selected = PlanSession.from_grant(grant, client_id=form['client_id'],
-                    nonce=attempt.nonce, keys=keys, catalog=catalog)
+                    nonce=attempt.nonce, keys=keys, catalog=catalog, model=model)
                 selected._record['host_id'] = record['host_id']
                 try:
                     record['client_id'] = form['client_id']
@@ -179,11 +184,11 @@ def _interactive_worker(saved_registration=None):
             form.clear()
 
 
-def authenticate_worker(*, manager=None):
+def authenticate_worker(*, manager=None, model=GPT_MODEL):
     """Only explicit provider execution; valid credentials need no browser/TTY."""
     if manager is None:
         from ingest.chatgpt_plan_sessions import PlanSessionManager
-        manager = PlanSessionManager()
+        manager = PlanSessionManager(model=model)
     try:
         return manager.acquire()
     except ProbeError as exc:

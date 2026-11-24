@@ -43,15 +43,17 @@ def grant_fixture():
     return grant, keys
 
 
-def verified_session():
+def verified_session(model=GPT_MODEL):
     grant, keys = grant_fixture()
     return PlanSession.from_grant(grant, client_id='oaiapp_synthetic', nonce='nonce',
-        keys=keys, catalog={'models':[{'slug':GPT_MODEL,'visibility':'list'}]})
+        keys=keys, model=model, catalog={'models':[{'slug':model,'visibility':'list'}]})
 
 
-def streamed(responses):
+def streamed(responses, *, model=None):
     events = []
     for completed in responses:
+        if model is not None:
+            completed = {**completed, 'model': model}
         done = {'type':'response.output_item.done', 'output_index':1, 'item':completed['output'][1]}
         events.append([done, {'type':'response.completed','response':{**completed,'output':[]}}])
     return FakeClient(events)
@@ -63,10 +65,10 @@ class PlanWorkerTests(unittest.TestCase):
         guard.start()
         self.addCleanup(guard.stop)
 
-    def adapter(self, client=None):
-        session = verified_session()
+    def adapter(self, client=None, *, program=False):
+        session = verified_session('gpt-6.2-sol' if program else GPT_MODEL)
         client = client or streamed([response(SUMMARY_JSON), response(TRANSLATION_JSON)])
-        adapter = create_provider_adapter('chatgpt_plan', None, client=client, plan_session=session)
+        adapter = create_provider_adapter('chatgpt_plan', None, client=client, plan_session=session, program=program)
         self.addCleanup(adapter.close)
         return adapter, client, session
 
@@ -83,6 +85,34 @@ class PlanWorkerTests(unittest.TestCase):
                 self.assertEqual(len(client.calls),1)
                 self.assertEqual(error.exception.diagnostic['code'],code)
                 self.assertIs(error.exception.diagnostic['completedSeen'],seen)
+
+    def test_old_session_rejected_and_paid_budget_kept_for_programs(self):
+        old = verified_session('gpt-6.1-sol')
+        client = FakeClient([])
+        with self.assertRaisesRegex(ProviderError, 'program_plan_model_mismatch'):
+            create_provider_adapter('chatgpt_plan', None, plan_session=old, client=client, program=True)
+        self.assertEqual(client.calls, [])
+
+        from test_ingest_ai_openai import FakeClient as PaidClient
+        from ingest.ai_openai import GPT_JOB_USD_CAP
+        paid = PaidClient()
+        paid.responses.count_values = [100000]
+        adapter = create_provider_adapter('openai', 'synthetic', client=paid, program=True)
+        with self.assertRaisesRegex(AiJobError, 'ai_blocked_cost_cap'):
+            adapter.summarize_program_ko('sample', None)
+        self.assertEqual(GPT_JOB_USD_CAP, 0.10)
+        self.assertEqual([req['model'] for req in paid.responses.counts], ['gpt-6.1-sol'])
+        self.assertEqual(paid.responses.requests, [])
+
+    def test_seoul_excerpt_uses_program_model_once(self):
+        client = streamed([response(json.dumps({'replacement':'corrected'}))], model='gpt-6.2-sol')
+        adapter, _, _ = self.adapter(client, program=True)
+        args = dict(before='old', evidence='synthetic', value='corrected')
+        self.assertEqual(adapter.correct_seoul_excerpt(**args), 'corrected')
+        with self.assertRaisesRegex(AiJobError, 'ai_call_budget'):
+            adapter.correct_seoul_excerpt(**args)
+        self.assertEqual([req['model'] for req in client.calls], ['gpt-6.2-sol'])
+        self.assertEqual([r['model'] for r in adapter._usage_records], ['gpt-6.2-sol'])
 
     def test_explicit_plan_selection_never_reads_api_keys_or_authenticates(self):
         class Env(dict):
@@ -304,9 +334,9 @@ class PlanWorkerTests(unittest.TestCase):
         for mode in ('success','unknown'):
             c = native_packet()
             before = copy.deepcopy(c)
-            client = streamed(native_client(c).responses.results)
+            client = streamed(native_client(c).responses.results, model='gpt-6.2-sol')
             result, calls, adapter = gpt_fixture.GPTPipelineTests().native_run(c,client,mode,
-                adapter_factory=lambda **kw:self.adapter(kw['client'])[0])
+                adapter_factory=lambda **kw:self.adapter(kw['client'], program=True)[0])
             self.assertEqual(result.completed, 1 if mode=='success' else 0)
             self.assertEqual(result.state_unknown, 0 if mode=='success' else 1)
             self.assertEqual(c,before)
@@ -314,7 +344,9 @@ class PlanWorkerTests(unittest.TestCase):
             self.assertEqual(sum(n.startswith('finish_') for n,_ in calls),1)
             self.assertFalse(any(n.startswith('fail_') for n,_ in calls))
             output = calls[-1][1]['p_output']
-            self.assertEqual(output['aiModel'],GPT_MODEL)
+            self.assertEqual(output['aiModel'], 'gpt-6.2-sol')
+            self.assertEqual([req['model'] for req in client.calls], ['gpt-6.2-sol'] * 2)
+            self.assertEqual([row['model'] for row in adapter._usage_records], ['gpt-6.2-sol'] * 2)
             self.assertIn('총 3회',output['contentKo'])
             self.assertIn('선착순 25명',output['contentKo'])
             self.assertNotIn('173%',output['contentKo'])
@@ -545,7 +577,7 @@ class PlanWorkerTests(unittest.TestCase):
                     with patch('ingest.supabase_store.create_ingest_client',return_value=object()):
                         with patch(module+'.'+method,return_value=AiWorkerResult(status='processed')) as worker:
                             cli.execute_target(args)
-            factory.assert_called_once_with('chatgpt_plan',None)
+            factory.assert_called_once_with('chatgpt_plan',None, program=(cli is not classified or args.no_retry))
             self.assertIs(worker.call_args.kwargs['translate_ja'].__self__,adapter)
             with self.assertRaises(ProbeError):
                 session.access_token()

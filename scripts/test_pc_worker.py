@@ -197,13 +197,14 @@ class ExistingWorkerTests(unittest.TestCase):
         class Manager:
             def acquire(self,**kwargs):calls.append(('acquire',kwargs));return session
         with patch('ingest.ai_provider.require_ai_provider',return_value='chatgpt_plan'),\
-             patch('ingest.chatgpt_plan_sessions.PlanSessionManager',return_value=Manager()),\
+             patch('ingest.chatgpt_plan_sessions.PlanSessionManager',return_value=Manager()) as manager_factory,\
              patch('ingest.ai_provider.create_provider_adapter',side_effect=lambda *a,**kw:calls.append(('provider',kw)) or provider),\
              patch('ingest.ai_provider.close_provider_adapter'),\
              patch('ingest.supabase_store.create_ingest_client',side_effect=lambda *a:calls.append(('db',None)) or object()),\
              patch('ingest.pc_worker_existing.os.environ',{'SUPABASE_URL':f'https://{PROJECT}.supabase.co','SUPABASE_SERVICE_KEY':KEY}):
             context=ExistingWorkers(PROJECT)._ai_context();context[2]()
-        self.assertEqual(calls[0],('acquire',{'allow_login':False}));self.assertEqual(calls[1],('provider',{'plan_session':session}));self.assertEqual(calls[2][0],'db')
+        manager_factory.assert_called_once_with(model='gpt-6.2-sol')
+        self.assertEqual(calls[0],('acquire',{'allow_login':False}));self.assertEqual(calls[1],('provider',{'plan_session':session,'program':True}));self.assertEqual(calls[2][0],'db')
 
     def test_other_provider_is_rejected_before_any_key_auth_or_db_access(self):
         with patch('ingest.ai_provider.require_ai_provider',return_value='openai'),\

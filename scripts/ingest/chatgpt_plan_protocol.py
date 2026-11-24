@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import UUID
 from ingest.ai_openai import GPT_MODEL, extract_payload
 
+PROGRAM_PLAN_MODEL = 'gpt-6.2-sol'
 ISSUER = 'https://auth.openai.com'
 DISCOVERY = ISSUER + '/.well-known/openid-configuration'
 AUTHORIZE = ISSUER + '/api/accounts/authorize'
@@ -122,12 +123,13 @@ def verify_grant(data, *, client_id, nonce, keys):
     return data['access_token']
 
 
-def model_available(data):
+
+def model_available(data, model=GPT_MODEL):
     if not isinstance(data, dict) or not isinstance(data.get('models'), list):
         raise ProbeError('unexpected_model_catalog')
-    if not any(m.get('slug') == GPT_MODEL and m.get('visibility') == 'list'
+    if not any(m.get('slug') == model and m.get('visibility') == 'list'
                for m in data['models'] if isinstance(m, dict)):
-        raise ProbeError('gpt_6_1_sol_not_in_account_catalog')
+        raise ProbeError('gpt_6_1_sol_not_in_account_catalog' if model == GPT_MODEL else 'program_model_not_in_account_catalog')
 
 
 def get_field(value, key, default=None):
@@ -166,6 +168,7 @@ def stream_failure_diagnostic(exc, *, phase, event_count, completed_seen):
 
 def read_completed_stream(client, request, *, observe=None, on_completed=None, extractor=None, equivalent=None):
     """Only terminal JSON after completion; never join/accept partial deltas."""
+    expected_model = request.get('model', GPT_MODEL)
     extract = extractor or extract_payload
     same = equivalent or (lambda left, right: left == right)
     completed, items = None, {}
@@ -218,7 +221,7 @@ def read_completed_stream(client, request, *, observe=None, on_completed=None, e
                 'plan_transport_unknown')
         raise ProbeError(code, diagnostic=diagnostic) from None
     try:
-        return _validated_stream_output(completed, items, extract, same, on_completed)
+        return _validated_stream_output(completed, items, extract, same, on_completed, expected_model)
     except ProbeError as exc:
         exc.diagnostic = stream_failure_diagnostic(exc, phase='validation',
             event_count=event_count, completed_seen=completed_seen)
@@ -227,10 +230,10 @@ def read_completed_stream(client, request, *, observe=None, on_completed=None, e
         raise
 
 
-def _validated_stream_output(completed, items, extract, same, on_completed):
+def _validated_stream_output(completed, items, extract, same, on_completed, expected_model):
     if completed is None:
         raise ProbeError('stream_missing_completed')
-    if get_field(completed, 'model') != GPT_MODEL:
+    if get_field(completed, 'model') != expected_model:
         raise ProbeError('unexpected_response_model')
     final = get_field(completed, 'output')
     if not isinstance(final, list):

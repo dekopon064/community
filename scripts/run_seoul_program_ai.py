@@ -48,7 +48,7 @@ def execute_target(args: argparse.Namespace):
     provider_name, provider_key = require_configured_provider()
     if provider_name != 'chatgpt_plan':
         raise ValueError('explicit_chatgpt_plan_required')
-    provider = create_provider_adapter(provider_name, provider_key)
+    provider = create_provider_adapter(provider_name, provider_key, program=True)
     try:
         client = create_ingest_client(url, key)
         return process_seoul_program_job(
@@ -72,7 +72,7 @@ def execute_queue(args: argparse.Namespace):
     name,provider_key=require_configured_provider()
     if name!='chatgpt_plan':
         raise ValueError('explicit_chatgpt_plan_required')
-    provider=create_provider_adapter(name,provider_key)
+    provider=create_provider_adapter(name,provider_key,program=True)
     try:
         client=create_ingest_client(url,key)
         return process_seoul_queue(ProgramAIAdapter.from_supabase(client),max_jobs=args.max_jobs,

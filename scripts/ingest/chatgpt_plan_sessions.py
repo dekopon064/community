@@ -3,6 +3,7 @@
 Official flow: https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions
 Refresh intent is protected before sending: unknown rotation is never resent.
 """
+from functools import partial
 import copy
 import math
 import re
@@ -10,6 +11,7 @@ import secrets
 import time
 from uuid import UUID
 
+from ingest.ai_openai import GPT_MODEL
 from ingest.chatgpt_plan_auth import PlanSession, _VERIFIED, _interactive_worker, fetch
 from ingest.chatgpt_plan_protocol import (ProbeError, DISCOVERY, TOKEN, JWKS, RESOURCE,
     ISSUER, model_available, validate_discovery)
@@ -76,7 +78,7 @@ def validate_record(record, keys):
 
 
 class PlanSessionManager:
-    def __init__(self, *, store=None, http_factory=None, login=None, clock=None):
+    def __init__(self, *, store=None, http_factory=None, login=None, clock=None, model=GPT_MODEL):
         if store is None:
             from ingest.chatgpt_plan_store import WindowsPlanStore
             store = WindowsPlanStore()
@@ -84,7 +86,8 @@ class PlanSessionManager:
             import requests
             http_factory = requests.Session
         self.store, self.http_factory = store, http_factory
-        self.login, self.clock = login or _interactive_worker, clock or time.time
+        self.model = model
+        self.login, self.clock = login or partial(_interactive_worker, model=model), clock or time.time
 
     def __repr__(self):
         return 'PlanSessionManager(credentials=redacted)'
@@ -107,7 +110,7 @@ class PlanSessionManager:
                 except Exception:
                     raise ProbeError('plan_auth_transport_unavailable') from None
                 try:
-                    if not isinstance(session,PlanSession) or not session._record:
+                    if not isinstance(session,PlanSession) or not session._record or session.model != self.model:
                         raise ProbeError('unverified_plan_session')
                     record = {'format':1,'state':'ready',**copy.deepcopy(session._record)}
                     # Only renewable, explicitly consented sessions are persisted.
@@ -153,12 +156,12 @@ class PlanSessionManager:
                             raise ProbeError(REAUTH)
                     # Catalog access checks current account eligibility without inference.
                     model_available(fetch(http,RESOURCE+'/models',headers={
-                        'Authorization':'Bearer '+record['grant']['access_token']}))
+                        'Authorization':'Bearer '+record['grant']['access_token']}), self.model)
             except ProbeError:
                 raise
             except Exception:
                 raise ProbeError('plan_auth_transport_unavailable') from None
-            session = PlanSession(record['grant']['access_token'],claims['exp'],_VERIFIED)
+            session = PlanSession(record['grant']['access_token'],claims['exp'],_VERIFIED, model=self.model)
             self._attach(session,record,identity)
             return session
 

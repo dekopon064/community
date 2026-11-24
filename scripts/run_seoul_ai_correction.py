@@ -3,6 +3,7 @@ import argparse
 import os
 from uuid import UUID, uuid4
 
+from ingest.chatgpt_plan_protocol import PROGRAM_PLAN_MODEL
 from ingest.ai_provider import close_provider_adapter, create_provider_adapter, require_configured_provider
 from ingest.chatgpt_plan_sessions import PlanSessionManager
 from ingest.program_ai import ProgramAIAdapter
@@ -28,7 +29,8 @@ def main():
         name, secret = require_configured_provider()
         if name != 'chatgpt_plan':
             raise ValueError()
-        provider = create_provider_adapter(name, secret, plan_session=PlanSessionManager().acquire(allow_login=False))
+        session = PlanSessionManager(model=PROGRAM_PLAN_MODEL).acquire(allow_login=False)
+        provider = create_provider_adapter(name, secret, plan_session=session, program=True)
         adapter = ProgramAIAdapter.from_supabase(create_ingest_client(url, key))
         result = process_correction(adapter, str(args.draft_id), 'seoul-correction-' + uuid4().hex,
                                     provider.correct_seoul_excerpt)

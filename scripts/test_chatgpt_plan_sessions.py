@@ -61,6 +61,7 @@ class SessionTests(unittest.TestCase):
         grant['refresh_token'] = 'synthetic-refresh-original'
         self.record = dict(format=1,state='ready',client_id='oaiapp_synthetic',host_id=HOST,
             nonce='nonce',subject=self.access['sub'],grant=grant)
+        self.catalog_model = GPT_MODEL
         self.store = FakeStore(self.record)
         self.calls, self.login_calls = [], []
         self.refresh_error, self.get_error, self.refresh_patch = None, None, {}
@@ -78,7 +79,7 @@ class SessionTests(unittest.TestCase):
                     data = dict(issuer=ISSUER,authorization_endpoint=AUTHORIZE,token_endpoint=TOKEN,jwks_uri=JWKS)
                 elif url == JWKS:data = owner.keys
                 elif url == RESOURCE+'/models':
-                    data = {'models':[{'slug':GPT_MODEL,'visibility':'list'}]}
+                    data = {'models':[{'slug':owner.catalog_model,'visibility':'list'}]}
                     if owner.get_error:return SimpleNamespace(status_code=owner.get_error,json=lambda:{})
                     if kwargs['headers']['Authorization'] != 'Bearer '+owner.store.record['grant']['access_token']:
                         raise AssertionError('old credential used')
@@ -102,16 +103,31 @@ class SessionTests(unittest.TestCase):
                 return SimpleNamespace(status_code=200,json=lambda:copy.deepcopy(grant))
         self.http = HTTP
 
-    def manager(self,store=None):
+    def manager(self,store=None, *, model=GPT_MODEL):
         def login(registration):
             self.login_calls.append(copy.deepcopy(registration))
             grant = copy.deepcopy(self.record['grant'])
             session = PlanSession.from_grant(grant,client_id=self.record['client_id'],
-                nonce='nonce',keys=self.keys,catalog={'models':[{'slug':GPT_MODEL,'visibility':'list'}]})
+                nonce='nonce',keys=self.keys,model=model,catalog={'models':[{'slug':self.catalog_model,'visibility':'list'}]})
             session._record['host_id'] = HOST
             return session
         return PlanSessionManager(store=store or self.store,http_factory=self.http,
-            login=login,clock=self.clock)
+            login=login,clock=self.clock,model=model)
+
+    def test_program_model_checked_before_work_and_again_on_renewal(self):
+        manager = self.manager(model='gpt-6.2-sol')
+        self.assert_code(lambda:manager.acquire(allow_login=False), 'program_model_not_in_account_catalog')
+        self.catalog_model = 'gpt-6.2-sol'
+        session = manager.acquire(allow_login=False)
+        self.addCleanup(session.clear)
+        self.assertEqual(session.model, 'gpt-6.2-sol')
+        session.expires_at = self.now + 100
+        session.require_active()
+        self.catalog_model = 'gpt-6.1-sol'
+        session.expires_at = self.now + 100
+        self.assert_code(session.require_active, 'program_model_not_in_account_catalog')
+        self.assertEqual(self.login_calls, [])
+        self.assertEqual(self.store.writes, [])
 
     def near_expiry(self):
         self.store.record['grant']['access_token'] = self.encode({**self.access,'exp':int(self.now)+200})
@@ -336,8 +352,10 @@ class SessionTests(unittest.TestCase):
             events = []
             owned_client = FakeClient()
             owned_client.close = lambda:None
-            def auth():
-                session = authenticate_worker(manager=self.manager())
+            self.catalog_model = 'gpt-6.2-sol'
+            def auth(*, model):
+                self.assertEqual(model, 'gpt-6.2-sol')
+                session = authenticate_worker(manager=self.manager(model=model))
                 events.append('verified-auth'); return session
             def db(*args):
                 self.assertEqual(events,['verified-auth']); events.append('fake-rpc'); return object()
@@ -360,7 +378,7 @@ class SessionTests(unittest.TestCase):
         self.store.record['state'] = 'refresh_pending'
         with patch.dict('os.environ',{'AI_PROVIDER':'chatgpt_plan','SUPABASE_URL':'https://'+'a'*20+'.supabase.co',
                                      'SUPABASE_SERVICE_KEY':'synthetic'},clear=True):
-            with patch('ingest.chatgpt_plan_auth.authenticate_worker',side_effect=lambda:self.manager().acquire()), \
+            with patch('ingest.chatgpt_plan_auth.authenticate_worker',side_effect=lambda *,model:self.manager(model=model).acquire()), \
                  patch('ingest.supabase_store.create_ingest_client') as db:
                 self.assert_code(lambda:seoul.execute_target(args),'plan_refresh_result_unknown')
         db.assert_not_called()
