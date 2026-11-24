@@ -149,6 +149,7 @@ def program_input(c: dict[str, Any]) -> str:
         "capacityEvidence": view['capacity_raw'], "sessionEvidence": [line for line in schedule_lines(view)
             if line not in view.get('weekly_validation_records', [])],
         "weeklyScheduleEvidence": matrix,
+        **({"viewingHoursEvidence": view['viewing_hours']} if view['viewing_hours'] else {}),
         "publicConditionRoles": public_roles(f),
         "operatingDayEvidence": view.get("operating_day_evidence", []),
         "facilityHoursEvidence": view['facility_hours_evidence'],

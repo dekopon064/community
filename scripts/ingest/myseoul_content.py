@@ -559,6 +559,10 @@ def validate_summary_period(summary: str, canonical: str, f: dict) -> None:
                 or re.match(_DATED_LINE, _plain_schedule_line(line))):
             actual = schedule_values(line)
             durations = _durations(line)
+            if f.get('schedule_notice_signatures') and durations:
+                from ingest.seoul_condition_layout import condition_signature
+                if condition_signature(line) in f['schedule_notice_signatures']:
+                    continue  # This complete clause is a witnessed cancellation threshold.
             if durations.keys() - expected_durations.keys():
                 raise ValidationError('schedule_duration_minutes', 'unsupported',
                                       expected=list(expected_durations), actual=list(durations))

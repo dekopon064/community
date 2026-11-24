@@ -19,6 +19,10 @@ from test_reclassification_ai import context as classified_context, ID, REV
 from test_ingest_translation_fidelity import CONTEXTUAL_CASES
 
 
+# Keep the full input reserve and job cost cap for these short fake translations.
+FIXTURE_TRANSLATION_MAX_TOKENS = 512
+
+
 def summary_response(content):
     return response(json.dumps({'content_ko': content,
         'facts': {k: '' for k in SUMMARY_SCHEMA['properties']['facts']['required']}}, ensure_ascii=False))
@@ -84,6 +88,7 @@ class GPTPipelineTests(unittest.TestCase):
             translate_ja=adapter.translate_ja, worker_id=c['workerId'])
         return result, calls, adapter
 
+    @patch('ingest.ai_openai.TRANSLATION_MAX_TOKENS', FIXTURE_TRANSLATION_MAX_TOKENS)
     def test_native_candidate_preserves_capacity_sessions_image_and_fence(self):
         c = native_packet(); before = copy.deepcopy(c); client = native_client(c)
         result, calls, adapter = self.native_run(c, client)
@@ -108,12 +113,15 @@ class GPTPipelineTests(unittest.TestCase):
         self.assertEqual(len(client.responses.requests), 2)
         self.assertEqual(len(adapter._usage_records), 2)
 
+    @patch('ingest.ai_openai.TRANSLATION_MAX_TOKENS', FIXTURE_TRANSLATION_MAX_TOKENS)
     def test_bad_translation_never_finishes_and_unknown_finish_never_rewrites(self):
         c = native_packet(); client = native_client(c)
         client.responses.results[1]['output'][1]['content'][0]['text'] = json.dumps(
             {'title_ja': '合成', 'content_ja': '[要約]\n合成\n[対象]\n対象\n[期間・状況]\n期間\n[主な内容]\n25歳\n[申請方法]\n公式'})
         result, calls, _ = self.native_run(c, client)
         self.assertEqual(result.completed, 0)
+        self.assertEqual(calls[-1][0], 'fail_myseoul_program_ai')
+        self.assertEqual(calls[-1][1]['p_error_code'], 'ai_schema_error')
         self.assertFalse(any(n.startswith('finish_') for n, _ in calls))
         self.assertEqual(len(client.responses.requests), 2)
         client = native_client(c); result, calls, _ = self.native_run(c, client, 'unknown')
@@ -130,6 +138,7 @@ class GPTPipelineTests(unittest.TestCase):
             self.assertEqual(client.responses.requests, [])
             self.assertEqual(len(calls), 1)
 
+    @patch('ingest.ai_openai.TRANSLATION_MAX_TOKENS', FIXTURE_TRANSLATION_MAX_TOKENS)
     def test_reclassified_categories_share_prompt_and_image_supplement(self):
         for category in ['program', 'event', 'youth_space', 'policy', 'living']:
             c = classified_context(category); c['body'] = ''
@@ -165,6 +174,7 @@ class GPTPipelineTests(unittest.TestCase):
             self.assertIn('Contextual terminology', client.responses.requests[1]['instructions'])
             self.assertEqual(len(client.responses.requests), 2)
 
+    @patch('ingest.ai_openai.TRANSLATION_MAX_TOKENS', FIXTURE_TRANSLATION_MAX_TOKENS)
     def test_contextual_counterexamples_remain_accepted_by_gpt_adapter(self):
         for ko, alternatives, misleading in CONTEXTUAL_CASES:
             for ja in alternatives:
@@ -175,6 +185,7 @@ class GPTPipelineTests(unittest.TestCase):
                 # Misleading contextual wording requires model/human evaluation;
                 # do not pretend fake generation proves it cannot occur.
 
+    @patch('ingest.ai_openai.TRANSLATION_MAX_TOKENS', FIXTURE_TRANSLATION_MAX_TOKENS)
     def test_installed_official_sdk_serializes_without_network(self):
         import httpx
         from openai import OpenAI
@@ -197,6 +208,7 @@ class GPTPipelineTests(unittest.TestCase):
             adapter.summarize_ko('합성', None); adapter.translate_ja('합성', '합성')
         self.assertEqual([path for path, _ in events], ['/v1/responses/input_tokens', '/v1/responses',
                                                        '/v1/responses/input_tokens', '/v1/responses'])
+        self.assertEqual(events[-1][1]['max_output_tokens'], FIXTURE_TRANSLATION_MAX_TOKENS)
 
     def test_native_and_classified_entrypoints_construct_selected_provider_only(self):
         import run_myseoul_program_ai as native_cli

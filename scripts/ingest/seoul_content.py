@@ -118,15 +118,20 @@ def validation_view(facts: dict) -> dict:
     facts = {**facts, 'description': description}
     # Only explicitly labelled capacity text; V_MIN/V_MAX have no known role.
     roles = public_roles(facts)
-    capacity = list(dict.fromkeys(roles['capacity'] + [line.strip() for line in description.splitlines()
-                if re.match(r'^(?:모집\s*인원|참가\s*인원|인원|정원)\s*[:：]', plain(line))]))
+    from ingest.seoul_fact_roles import capacity_text, viewing_hours
+    capacity = list(dict.fromkeys([*(plain(line) for line in roles['capacity']),
+                                   *(plain(line) for line in description.splitlines() if capacity_text(line))]))
     sessions = schedule_table_lines(description)
     view = {'target': facts['target_raw'], 'description': description,
             'conditions': roles['eligibility'], 'capacity_raw': capacity,
+            'viewing_hours': [value for _, value in viewing_hours(description)],
             'facility_hours_evidence': facility_hours_evidence(description),
             **({'session_evidence': sessions} if sessions else {}),
             'periods': {role: [{'status': 'ok', 'endpoints': [facts['periods'][k] for k in pair]}]
                         for role, pair in PAIRS.items()}}
+    from ingest.seoul_condition_layout import condition_signature
+    view['schedule_notice_signatures'] = [sig for v in roles['schedule'] if
+                                          (sig := condition_signature(v)) and sig[0] == 'session_no_participants']
     recruitment = _recruitment_session_lines(view)
     if recruitment:
         # Retain existing tables/ordinary schedules as well as this narrowly
@@ -237,8 +242,17 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
     view = validation_view(facts)
     roles = public_roles(facts)
     target = public_audience(facts, participation_constraints(view))
-    target += ['모집 인원: ' + re.sub(r'^(?:모집\s*인원|참가\s*인원|인원|정원)\s*[:：]\s*', '', plain(v))
-               for v in view['capacity_raw']]
+    from ingest.seoul_fact_roles import capacity_text, is_booking_capacity
+    booking_capacity = []
+    for value in view['capacity_raw']:
+        # Keep standalone capacity under its existing neutral label. Channel
+        # quotas and reservation limits describe how to book.
+        row = capacity_text(value) or plain(value)
+        if is_booking_capacity(value):
+            row = re.sub(r'^(회(?:차)?당)\s*예약\s*인원\s+(?=최대\s*\d+\s*명)', r'\1 ', row)
+            booking_capacity.append('예약 인원: ' + row)
+        else:
+            target.append('모집 인원: ' + row)
     dates = ['신청기간: ' + period_text(facts, 'application'),
              '진행기간: ' + period_text(facts, 'operation')]
     sessions = schedule_block([line for line in schedule_lines(view)
@@ -246,16 +260,20 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
     if sessions:
         dates.append('\n' + sessions)
     from ingest.seoul_condition_display import additional_role
+    tables = schedule_tables(view['description'])
+    # A copied source table replaces the ordinary schedule block below. Other
+    # source rows may carry exceptions outside that table and must survive.
+    session_rows = set() if tables else {key(plain(line)) for line in schedule_lines(view)}
     for value in roles['schedule']:
-        if additional_role(value) == 'schedule' and value not in schedule_lines(view):
+        if additional_role(value) == 'schedule' and key(plain(value)) not in session_rows:
             dates.append('진행 일정: ' + plain(value))
     # Explicit table cells come from current description, not an old observed
     # HTML snapshot. Copy only the already parsed supported schedule tables.
-    tables = schedule_tables(view['description'])
     if tables:
         dates = [line for line in dates if line != '\n' + sessions]
         dates += ['\n' + table.markdown for table in tables]
     dates += announcement_lines(view)
+    dates.extend(view['viewing_hours'])
     activity = ['진행 방식: ' + {'online': '온라인', 'offline': '오프라인', 'hybrid': '온·오프라인 혼합'}[facts['delivery_mode']]]
     activity += ['- **이용 안내:** ' + plain(value) for value in roles['activity']]
     if facts['activity_evidence']:
@@ -270,6 +288,7 @@ def reviewed_sections(facts: dict, *, now: datetime | None = None) -> dict[str, 
     methods = [dict(internet='인터넷 예약', onsite='현장 접수', phone='전화 신청')[v]
                for v in facts['application_methods']]
     method = ['신청 방법: ' + ' / '.join(methods)] if methods else []
+    method.extend(booking_capacity)
     if facts['application_actor'] == 'individual_or_group':
         method.append('신청 주체: 개인 또는 단체')
     return {header: format_reviewed_block('\n'.join(lines)) for header, lines in (

@@ -218,6 +218,15 @@ def covered_condition(value, body):
     if re.search(r'단,|다만|예외|에 한해|에만 해당', body):
         return False
     sentences = list(_sentences(body))
+    # A prohibition can also be an independent first clause of a longer
+    # instruction. Keep the entire generated sentence including its other rules.
+    if signature == ('no_recording',):
+        for sentence in sentences:
+            ban = re.fullmatch(r'(?:전시\s*)?해설(?:의|은)?\s*녹취(?:는|가)?\s*'
+                               r'(?:불가하며|할\s*수\s*없으며)\s*,\s*(.+)', sentence)
+            if (ban and re.match(r'직원\s*안내에\s*협조|전시관\s*내\s*음식물\s*섭취', ban[1])
+                    and not re.search(r'예외|허용|허가|제외|한해|녹취|녹음|경우|가능', ban[1])):
+                return True
     for sentence in [*sentences, *(a + ' ' + b for a, b in zip(sentences, sentences[1:]))]:
         sentence = re.sub(r'^(?:참가 조건|예약 절차|신청 안내)\s*[:：]\s*', '', sentence)
         if source == key(sentence):
@@ -286,9 +295,16 @@ def clean_projected_duplicates(content, sections, facts):
     Legacy generated input is supported for local reassembly, not bulk editing.
     Only exact canonical rows from these current facts qualify for relocation.
     """
-    from ingest.seoul_fact_roles import public_roles, optional_section
+    from ingest.seoul_fact_roles import public_roles, optional_section, viewing_hours, is_booking_capacity
     from ingest.ai_worker import KO_SECTION_HEADERS
     roles = public_roles(facts)
+    garden_windows = {key(re.split(r'[:：]', row, maxsplit=1)[1]) for row, _ in viewing_hours(facts['description'])
+                      if re.match(r'^정원\s*[:：]', row)}
+    destinations = {key(v): header
+                    for role, header in (('activity', '[주요 내용]'), ('booking', '[신청 방법]'),
+                                         ('schedule', '[일정 안내]'))
+                    for v in roles[role] if role != 'schedule' or additional_role(v) == 'schedule'}
+    destinations.update({key(v): '[신청 방법]' if is_booking_capacity(v) else '[대상]' for v in roles['capacity']})
     # On reassembly, regenerate partial booking rows from the current facts too.
     booking_rows = {'- **예약 절차:** ' + clause for v in roles['booking'] for clause in reservation_clauses(v)}
     cancellations = [v for v in roles['booking'] if cancellation_steps(v)]
@@ -296,7 +312,7 @@ def clean_projected_duplicates(content, sections, facts):
     originals.update(key(v) for values in roles.values() for v in values if additional_role(v))
     old_keys = {key(v) for v in facts['conditions']}
     originals.update(key(v) for v in projected_conditions(facts) if key(v) not in old_keys)
-    if not originals:
+    if not originals and not garden_windows:
         return content, sections
     lines = []
     current = None
@@ -309,6 +325,19 @@ def clean_projected_duplicates(content, sections, facts):
         continuation = index + 1 < len(source_lines) and source_lines[index + 1][:1].isspace() and source_lines[index + 1].strip()
         if match and continuation:
             attached.add(key(match[1]))
+        # An old summary can already call the garden's clock range a headcount.
+        # Drop that erroneous label only when the same complete window is in
+        # the confirmed viewing-hours block, which supplies the correct row.
+        cap = re.fullmatch(r'모집\s*인원\s*[:：]\s*(.+)', plain(line))
+        if (current in ('[대상]', '[일정 안내]', '[주요 내용]', '[신청 방법]')
+                and cap and key(cap[1]) in garden_windows and not continuation
+                and not line[:1].isspace()):
+            continue
+        if (current in ('[대상]', '[주요 내용]', '[일정 안내]', '[신청 방법]')
+                and not line[:1].isspace() and '|' not in line and not continuation):
+            destination = destinations.get(key(line.rstrip('\\')))
+            if destination and destination != current:
+                continue  # The complete source row is already routed below.
         if current == '[신청 방법]' and not continuation and line in booking_rows:
             continue
         if (current in ('[대상]', '[신청 방법]') and line.strip() and not continuation

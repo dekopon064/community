@@ -13,7 +13,7 @@ ORDINAL = r'(?:제\s*)?\d+\s*회차'
 WEEKDAY = r'[월화수목금토일](?:요일)?'
 CLOCK = r'(?:[01]?\d|2[0-3]):[0-5]\d'
 EMPTY_CELL = frozenset({'', '—', '–', '-', '없음'})
-CAPACITY = r'(?:참가\s*인원|모집\s*인원|인원|정원)'
+CAPACITY = r'(?:(?:참가|참여|모집|예약)\s*인원|(?:해설\s*)?정원|인원)'
 SCHEDULE = r'(?:해설|운영|진행|수업|교육)\s*(?:시간|일시|일정)(?:\s*안내)?'
 RESTRICTION = r'필수|의무|불가|금지|제한|전용|한정|보호자|동반|거주|국적|비자|증빙|제출|취소|환불|선착순'
 
@@ -25,6 +25,43 @@ def plain(text):
 
 def key(text):
     return re.sub(r'\s+', '', inline_text(text))
+
+
+def capacity_text(line):
+    """Keep explicit enrolment limits. A clock range is never a headcount."""
+    text = plain(line)
+    match = re.match(CAPACITY + r'\s*[:：]\s*(.+)', text)
+    if match and re.match(CLOCK + r'\s*[~～–-]\s*' + CLOCK, match[1]):
+        return None
+    if match and (not re.match(r'^정원\s*[:：]', text)
+                  or re.fullmatch(r'(?:제한\s*없음|미정|추후\s*공지)', match[1])):
+        return match[1]
+    count = re.search(r'\d+\s*(?:명|인(?!당|분)|팀|가족|가구|단체|쌍)', text)
+    if count and (match or re.match(r'(?:회당|회차당)\s*예약\s*인원|(?:개인|단체)\s*[:：].*명\s*정원', text)):
+        return match[1] if match else text
+    return None
+
+
+def is_booking_capacity(value):
+    return bool(re.search(r'예약\s*인원|온라인\s*예약|현장\s*접수', value))
+
+
+def viewing_hours(description):
+    """Pair a named viewing-hours heading with its consecutive, labelled rows."""
+    records = []
+    facilities = set()
+    for line in description.splitlines():
+        text = plain(line)
+        heading = re.fullmatch(r'([가-힣]+(?:\s*(?:및|·|와|과)\s*[가-힣]+)*)\s+관람\s*시간\s*[:：]?', text)
+        if heading:
+            facilities = set(re.split(r'\s+및\s+|\s*·\s*|(?:와|과)\s+', heading[1]))
+            continue
+        row = re.fullmatch(r'([가-힣]+)\s*[:：]\s*(' + CLOCK + r'\s*[~～–-]\s*' + CLOCK + r')', text)
+        if row and row[1] in facilities:
+            records.append((text, f'{row[1]} 관람시간: {row[2]}'))
+        elif text:
+            facilities.clear()
+    return records
 
 
 @dataclass(frozen=True)
@@ -144,8 +181,11 @@ def public_roles(facts):
     annotations = {key(m[0]) for cell in cells for m in re.finditer(r'[（(][^()（）]+[）)]', cell)}
     table_rows={key('| '+' | '.join(row)+' |') for row in matrix.rows} if matrix and not matrix.flattened else set()
     roles = {name: [] for name in ('eligibility', 'capacity', 'schedule', 'booking', 'activity')}
+    hours = dict(viewing_hours(facts['description']))
     for value in projected_conditions(facts):
         text = plain(value)
+        if text in hours:
+            continue  # Emitted once with its facility and viewing-hours label.
         if key(text) in table_rows:
             continue
         target=re.fullmatch(r'(?:참가\s*대상|대상)\s*[:：]\s*(.+)', text)
@@ -160,7 +200,7 @@ def public_roles(facts):
         extra_role = additional_role(text)
         if extra_role:
             role = extra_role
-        elif re.match(CAPACITY + r'\s*[:：]', text):
+        elif capacity_text(text):
             role = 'capacity'
         elif re.match(SCHEDULE + r'\s*[:：]', text) and not re.search(RESTRICTION, text):
             role = 'schedule'

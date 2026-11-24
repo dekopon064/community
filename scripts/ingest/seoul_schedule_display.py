@@ -214,6 +214,30 @@ def _operation_period_display(sections: dict, view: dict, *, dated_records=None)
     return result
 
 
+def _timed_session_rows(section, records):
+    """Match one complete ordinal/time table, keeping each source duration."""
+    tables = read_body(section).tables
+    if len(tables) != 1 or tuple(tables[0].headers) != ('회차', '진행 시간'):
+        return {}
+    source = {}
+    clock = r'(?:[01]?\d|2[0-3]):[0-5]\d'
+    for line in records:
+        text = re.sub(r'^[\s*•-]+', '', inline_text(line))
+        match = re.fullmatch(rf'(\d+\s*회차)\s*[-–]\s*({clock})\s*~\s*({clock})\s*'
+                             r'\((약\s*\d+\s*분)\)', text)
+        if match:
+            slot = (match[1].replace(' ', ''), match[2]+'~'+match[3])
+            if slot in source:
+                return {}
+            source[slot] = (line, match[1]+' 소요 시간: '+match[4])
+        elif re.search(r'\d+\s*회차', text):
+            return {}  # Another scoped/qualified record cannot be merged.
+    rows = [tuple(re.sub(r'\s+', '', cell) for cell in row) for row in tables[0].rows]
+    if not source or len(rows) != len(source) or set(rows) != set(source):
+        return {}
+    return dict(source.values())
+
+
 def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[str,dict]:
     """Keep verified session tables and only source records they fully cover.
 
@@ -248,6 +272,8 @@ def clean_schedule_display(content: str, sections: dict, view: dict) -> tuple[st
                 if not represented or not re.search(r'준수|시간을?\s*지켜',inline_text(original)):
                     notes.append(parts[1])
     remaining=[record for record in records if record not in covered]
+    durations_by_session = _timed_session_rows(original, remaining)
+    remaining = [durations_by_session.get(record, record) for record in remaining]
     numbered = numbered_day_source(view, records)
     dated_records = None
     duration = None

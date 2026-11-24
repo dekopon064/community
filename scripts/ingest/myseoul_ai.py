@@ -10,7 +10,7 @@ from uuid import UUID
 from ingest.ai_errors import AiJobError, ValidationError, failure_stage
 from ingest.body_sections import normalize_schedule_heading
 from ingest.application_links import application_link_facts_view, normalize_application_link_text
-from ingest.body_markdown import format_reviewed_block, comparison_text
+from ingest.body_markdown import format_reviewed_block, inline_text
 from ingest.ai_worker import (KO_SUMMARY_HEADER, KO_SECTION_HEADERS, JA_SUMMARY_HEADER,
                              JA_SECTION_HEADERS, extract_summary_section)
 from ingest.myseoul_db import SCHEMA, evaluate_myseoul_facts
@@ -174,14 +174,19 @@ def fact_sections(f: dict) -> dict[str, str]:
     if announcements:
         period += "\n" + "\n".join(announcements)
     activity = ("장소: " + f["venue"] + "\n" if f["venue"] else "") + "비용: " + fees
+    method = " / ".join(f["application_methods"])
+    target = f["target"]
     if f.get("capacity_raw"):
-        activity += "\n모집 인원: " + " / ".join(f["capacity_raw"])
+        capacity = " / ".join(f["capacity_raw"])
+        embedded = re.fullmatch(r'(.+?)\s*\(정원\s*(\d+\s*명)\)', target)
+        if embedded and embedded[2].replace(' ', '') == capacity.replace(' ', ''):
+            target = embedded[1].strip()
+        activity += "\n모집 인원: " + capacity
     if f["delivery_mode"] in {"online", "mixed"}:
         activity += "\n진행 방식: " + {"online": "온라인", "mixed": "온라인·현장 병행"}[f["delivery_mode"]]
-    method = " / ".join(f["application_methods"])
     if f["application_links"]:
         method += "\n신청 링크: " + " / ".join(f["application_links"])
-    return {"[대상]": f["target"], "[일정 안내]": period, "activity": activity, "[신청 방법]": method}
+    return {"[대상]": target, "[일정 안내]": period, "activity": activity, "[신청 방법]": method}
 
 
 def _check_schedule_values(schedule, content_ja, report):
@@ -232,19 +237,41 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
                 raise
             review.record(error)  # Keep the disputed sentence for the operator.
         main = deduplicate_summary_venue(main, f["venue"])
-        conditions = [v for v in participation_constraints(f) if v not in comparison_text(main) and v not in f["target"]]
-        if conditions:
-            main += "\n참가 조건: " + " / ".join(conditions)
+        conditions = participation_constraints(f)
+        # Relocate whole rows. Never detach table cells or nested exceptions.
+        lines = main.splitlines()
+        main = '\n'.join(line for i, line in enumerate(lines)
+                         if line[:1].isspace() or '|' in line or
+                         (i + 1 < len(lines) and lines[i + 1][:1].isspace()) or
+                         re.sub(r'^[-*]?\s*(?:참가 조건:\s*)?', '', inline_text(line)).strip() not in conditions)
+        for value in conditions:
+            if value == f['target'] or (re.fullmatch(r'(?:만\s*)?\d+\s*세\s*(?:이상|이하)', value)
+                    and re.fullmatch(re.escape(value) + r'\s+(?:성인\s*)?(?:외국인\s*)?주민', f['target'])):
+                continue
+            if re.fullmatch(r'선착순\s*\d+\s*명[,，]\s*정원\s*도달\s*시\s*마감', value):
+                parts['[신청 방법]'] += '\n예약 안내: ' + value
+            elif re.fullmatch(r'[가-힣]+어로\s*진행(?:합니다)?[.]?', value):
+                parts['activity'] += '\n진행 언어: ' + value
+            else:
+                parts['[대상]'] += "\n참가 조건: " + value
         # Reviewed limits are added deterministically below. Validate the assembled
         # activity, rather than requiring the model to repeat each value in prose.
-        check(validate_participant_quantities, f, main + "\n" + parts["activity"])
+        check(validate_participant_quantities, f, '\n'.join((main, parts['[대상]'], parts['activity'],
+                                                             parts['[신청 방법]'])))
         parts = {key: format_reviewed_block(value) for key, value in parts.items()}
+        reviewed_values = '\n'.join(parts.values())
         main = format_reviewed_block(main)
         # Preserve generated contact/payment/application instructions. Reviewed
         # method/links are merged by complete row, rather than replacing the section.
         boundary = '|'.join(re.escape(h) for h in KO_SECTION_HEADERS)
         method_match = re.search(r'(?ms)^\s*\[신청 방법\][ \t]*(.*?)(?=^\s*(?:'+boundary+r')|\Z)', content)
         method = method_match[1].strip() if method_match else ''
+        if len(f['application_links']) == 1 and f['application_methods'] == ['온라인 신청서 작성']:
+            link = f['application_links'][0]
+            form = r'\[온라인 신청서\]\(' + re.escape(link) + r'\)를 작성해 신청해 주세요\.'
+            if any(re.fullmatch(form, line.rstrip('\\').strip()) for line in method.splitlines()):
+                parts['[신청 방법]'] = '\n'.join(line for line in parts['[신청 방법]'].splitlines()
+                                          if line not in ('온라인 신청서 작성', '- **신청 링크:** ' + link))
         content = "\n\n".join([KO_SUMMARY_HEADER, summary, "[주요 내용]", main or parts['activity'],
                               "[신청 방법]", method])
         content = merge_reviewed_sections(content, {'[대상]': parts['[대상]'],
@@ -252,7 +279,7 @@ def generate_myseoul_output(c: dict[str, Any], *, summarize_ko: Callable, transl
             '[신청 방법]': parts['[신청 방법]']})
         numbers = lambda s: {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", s)}
         constraints = "\n".join([f["target"], *participation_constraints(f)])
-        required = numbers("\n".join(parts.values()) + "\n" + constraints)
+        required = numbers(reviewed_values + "\n" + constraints)
         check(_check_numbers, required, numbers(content), 'content_ko')
         check(validate_assembled_fees, content, parts["activity"])
         if draft is not None:
