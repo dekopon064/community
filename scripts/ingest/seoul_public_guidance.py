@@ -86,14 +86,15 @@ def ensure_application_guidance(content: str, facts: dict) -> str:
     notice = '구체적인 신청 방법은 공식 안내에서 확인해 주세요.'
     # Only identical standalone fallback sentences/links in the application
     # section. Preserve surrounding instructions, linked phrases and footnotes.
-    defaults = {notice}
+    notices = {notice, '구체적인 예약 방법은 공식 안내에서 확인해 주세요.'}
+    defaults = set(notices)
     if url:
         defaults.update((url, f'[공식 예약 페이지]({url})'))
     seen = set()
     kept = []
     for line in method.splitlines():
         text = line.rstrip().removesuffix('\\').rstrip()
-        identity = url if url and text in (url, f'[공식 예약 페이지]({url})') else text
+        identity = notice if text in notices else url if url and text in (url, f'[공식 예약 페이지]({url})') else text
         if text in defaults:
             if identity in seen:
                 continue
@@ -112,7 +113,7 @@ def ensure_application_guidance(content: str, facts: dict) -> str:
         return content
     fallback = (f'{notice}\n\n[공식 예약 페이지]({url})'
                 if url else '구체적인 신청 방법은 확인되지 않았습니다. 제공 기관에 확인해 주세요.')
-    if url and any(inline_text(line).strip().rstrip('\\').strip() == notice for line in method.splitlines()):
+    if url and notice in seen:
         fallback = f'[공식 예약 페이지]({url})'
     if fallback in method:
         return content

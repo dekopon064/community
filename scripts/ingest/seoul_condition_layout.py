@@ -50,6 +50,13 @@ def cancellation_covers(longer, shorter):
 
 def layout_role(value):
     text = display_text(value)
+    if re.match(r'휴\s*관\s*일\s*[:：]|(?:해설\s*)?예정\s*시각부터.*참여자가\s*없으면.*회차.*취소|'
+                r'전시관\s*사정에\s*따라.*회차가\s*조정', text):
+        return 'schedule'
+    if re.match(r'(?:전시\s*)?해설(?:\s*프로그램|\s*내용)?(?:의)?\s*녹취|'
+                r'안내견을\s*제외한\s*반려동물.*반입|기본수칙\s*준수\s*\(|'
+                r'전시관\s*내에서\s*음식물\s*섭취', text):
+        return 'activity'
     if session_slot(text):
         return 'schedule'
     if booking_notice(re.split(r'\.\s+(?=단,|다만)', text, maxsplit=1)[0]):
@@ -74,6 +81,9 @@ def layout_role(value):
         return None
     if cancellation_steps(text):
         return 'booking'
+    if (re.search(r'해설\s*가능.*안내데스크에\s*신청', text)
+            or re.match(r'(?:프로그램\s*)?예약\s*후\s*사전\s*취소\s*없이\s*(?:당일\s*)?불참', text)):
+        return 'booking'
     if (re.match(r'(?:참가\s*신청\s*[:：]|참\s*가비\s*[:：].*예약|\d+회\s*신청\s*시)', text)
             or re.match(r'(?:해당\s*)?프로그램은\s*선착순으로\s*모집', text)
             or re.match(r'프로그램\s*참여가\s*어려울\s*시,', text)
@@ -84,7 +94,7 @@ def layout_role(value):
     return None
 
 
-_EMPTY_HEADINGS = {'회차별운영시간', '신청및참여안내'}
+_EMPTY_HEADINGS = {'회차별운영시간', '신청및참여안내', '해설대상', '전시해설신청방법'}
 
 
 def session_slot(value):
@@ -119,6 +129,7 @@ def project_layout(value, lines):
         return [text]
     index = matches[0]
     text = re.sub(r'^✅\s*(?=대상\s*[:：])', '', text)
+    text = re.sub(r'^대\s+상(?=\s*[:：])', '대상', text)
     notice = re.fullmatch(r'\d+[.)]\s*주의사항\s*[○●▪]\s*(.+)', text)
     if notice and not re.search(r'\d+\s*번\s*(?:항|조건)|\d+\s*항\s*참[고조]', '\n'.join(lines)):
         text = notice[1]
@@ -134,6 +145,8 @@ def project_layout(value, lines):
     if audience:
         return ['대상: ' + audience[1].strip(), '정원: ' + audience[2]]
     previous = next((display_text(v) for v in reversed(lines[:index]) if v.strip()), '')
+    if previous == '주차' and text.startswith('불가'):
+        return ['주차 안내: ' + re.sub(r'(?<=\))\s+\d+\.\s*주의사항$', '', text)]
     if text.startswith('(') and re.fullmatch(r'주차\s*[:：]\s*장애인주차만\s*가능', previous):
         return ['주차 안내: ' + previous.split(':', 1)[-1].strip() + ' ' + text]
     # A route must have its own source heading. Carry that heading/date along
@@ -162,6 +175,13 @@ def condition_signature(value):
     if booking:
         return booking
     patterns = (
+        ('session_no_participants', r'(?:해설)?예정시각부터(\d+)분간참여자가없으면해당회차(?:해설)?(?:은|는)취소됩니다'),
+        ('closed_days', r'휴관일[:：]매주([월화수목금토일])요일\(공휴일제외\),(\d+)월(\d+)일'),
+        ('closed_days', r'매주([월화수목금토일])요일\(공휴일제외\)(?:과|와)(\d+)월(\d+)일은휴관합니다'),
+        ('no_recording', r'(?:전시)?해설(?:프로그램|내용)?(?:의|은)?녹취(?:는|가)?(?:불가합니다|할수없습니다)'),
+        ('guardian', r'어린이(?:및|와)노약자(?:참여시|방문시|는)보호자(?:동반필수|와함께방문해야합니다|와반드시동행해주세요)'),
+        ('family_grade', r'초등학교(\d+)학년이상\(가족동반가능\)'),
+        ('family_grade', r'초등학교(\d+)학년이상부터참여할수있으며,가족과함께오실수있습니다'),
         ('accompanied_minor', r'어린이및청소년\(만(\d+)세이하\)은성인\(만(\d+)세이상\)이예약하고동반시참여가능합니다'),
         ('accompanied_minor', r'만(\d+)세이하는만(\d+)세이상성인이예약하고동반해야참여할수있습니다'),
         ('photo_consent', r'행사중사진촬영이이루어지며,신청시이에동의하는것으로간주합니다'),

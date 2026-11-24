@@ -61,6 +61,14 @@ def _validate_hour_sentence(text, facts):
     ranges = _ranges(text)
     if not ranges:
         return False
+    viewing = re.fullmatch(r'([가-힣]+)\s*관람\s*시간\s*[:：]\s*' + _RANGE.pattern + r'[.。]?', text)
+    if viewing:
+        own = [r for line in facts.get('viewing_hours', []) if line.startswith(viewing[1]+' 관람시간:')
+               for r in _ranges(line)]
+        if own:
+            if len(ranges) != 1 or ranges[0] not in own:
+                raise ValidationError('receipt_or_viewing_hours', 'unsupported', expected=own, actual=ranges)
+            return True
     # A receipt/viewing window needs its own explicit current-description
     # evidence; an identical facility clock is not interchangeable authority.
     for role in (r'(?:신청|접수)\s*(?:시간|은|는)', r'(?:일반\s*)?관람\s*(?:시간|은|는)'):
