@@ -45,10 +45,10 @@ class CandidateReviewTests(unittest.TestCase):
         if mode == 'no_evidence':
             outcome['evidence'] = '없는 근거'
         client = streamed([response(json.dumps(summary, ensure_ascii=False)),
-                           response(json.dumps(translation, ensure_ascii=False))])
+                           response(json.dumps(translation, ensure_ascii=False))], model='gpt-6.2-sol')
         if mode == 'correction_unknown':
             client.events.append([])
-        provider = create_provider_adapter('chatgpt_plan', None, client=client, plan_session=verified_session())
+        provider = create_provider_adapter('chatgpt_plan', None, client=client, plan_session=verified_session('gpt-6.2-sol'), program=True)
         self.addCleanup(provider.close)
         rpc_calls = []
 
@@ -65,7 +65,7 @@ class CandidateReviewTests(unittest.TestCase):
                     raise ProbeError('subscription_sharing_usage_limit_exceeded')
                 if mode != 'correction_unknown':
                     proposal = response(json.dumps({'findings': [dict(outcome, issue=issue['issue'])]}, ensure_ascii=False))
-                    client.events.append(streamed([proposal]).events[0])
+                    client.events.append(streamed([proposal], model='gpt-6.2-sol').events[0])
             return read_completed_stream(client, request)
 
         def rpc(name, args):
@@ -89,6 +89,11 @@ class CandidateReviewTests(unittest.TestCase):
                 result = process_reclassified_job(ProgramAIAdapter(rpc), classification_version=ctx['classificationVersion'], **kwargs)
             else:
                 result = process_seoul_program_job(ProgramAIAdapter(rpc), **kwargs)
+        if result.completed:
+            expected_models = ['gpt-6.2-sol'] * len(client.calls)
+            self.assertEqual([req['model'] for req in client.calls], expected_models)
+            self.assertEqual([r['model'] for r in provider._usage_records], expected_models)
+            self.assertEqual(rpc_calls[-1][1]['p_output']['aiModel'], 'gpt-6.2-sol')
         return result, rpc_calls, client.calls
 
     def test_normal_and_review_candidates_through_both_workers(self):

@@ -144,8 +144,8 @@ class MySeoulTerminalBatch(unittest.TestCase):
                 responses=[summary, translation]
                 if not incomplete:
                     responses.append({'findings':[]})
-                client=streamed([response(json.dumps(value, ensure_ascii=False)) for value in responses])
-                pro=create_provider_adapter('chatgpt_plan', None, client=client, plan_session=verified_session())
+                client=streamed([response(json.dumps(value, ensure_ascii=False)) for value in responses], model='gpt-6.2-sol')
+                pro=create_provider_adapter('chatgpt_plan', None, client=client, plan_session=verified_session('gpt-6.2-sol'), program=True)
                 self.addCleanup(pro.close)
                 calls=[]
                 def rpc(name,args):
@@ -162,6 +162,9 @@ class MySeoulTerminalBatch(unittest.TestCase):
                         revision=c['revision'],worker_id=c['workerId'],no_retry=True,
                         summarize_ko=pro.summarize_myseoul_ko,translate_ja=pro.translate_ja)
                 self.assertEqual(len(calls),2)
+                expected_models = ['gpt-6.2-sol'] * len(responses)
+                self.assertEqual([req['model'] for req in client.calls], expected_models)
+                self.assertEqual([r['model'] for r in pro._usage_records], expected_models)
                 name,args=calls[-1]
                 if incomplete:
                     self.assertEqual((name,result.termination_confirmed,len(client.calls)),
@@ -171,6 +174,7 @@ class MySeoulTerminalBatch(unittest.TestCase):
                 else:
                     self.assertEqual((name,result.completed,len(client.calls)),
                                      ('finish_program_ai_candidate_review',1,3))
+                    self.assertEqual(args['p_output']['aiModel'], 'gpt-6.2-sol')
                     self.assertIn('schedule_times',[issue['rule'] for issue in args['p_review']['issues']])
 
     def test_first_failure_receipt_allows_next_candidate(self):

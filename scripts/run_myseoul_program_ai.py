@@ -47,7 +47,7 @@ def execute_target(args: argparse.Namespace):
     if url.rstrip("/") != f"https://{args.project_ref}.supabase.co" or not key.strip():
         raise ValueError("invalid_server_configuration")
     provider_name, provider_key = require_configured_provider()
-    provider = create_provider_adapter(provider_name, provider_key)
+    provider = create_provider_adapter(provider_name, provider_key, program=True)
     try:
         client = create_ingest_client(url, key)
         return process_myseoul_job(

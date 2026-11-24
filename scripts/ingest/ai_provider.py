@@ -64,15 +64,20 @@ def require_configured_provider(
     return provider, require_provider_key(provider, environ)
 
 
-def create_provider_adapter(provider: str, api_key: str | None, *, client=None, plan_session=None):
+def create_provider_adapter(provider: str, api_key: str | None, *, client=None, plan_session=None, program=False):
     """Lazy construction only after explicit execution; never load env files."""
     if provider == PROVIDER_CHATGPT_PLAN:
         from ingest.chatgpt_plan_auth import authenticate_worker
         from ingest.ai_chatgpt_plan import ChatGPTPlanAdapter
         if api_key is not None:
             raise ProviderError("chatgpt_plan_api_key_forbidden")
-        session = plan_session if plan_session is not None else authenticate_worker()
+        from ingest.chatgpt_plan_protocol import PROGRAM_PLAN_MODEL
+        session = plan_session
+        if session is None:
+            session = authenticate_worker(model=PROGRAM_PLAN_MODEL) if program else authenticate_worker()
         try:
+            if program and session.model != PROGRAM_PLAN_MODEL:
+                raise ProviderError('program_plan_model_mismatch')
             return ChatGPTPlanAdapter(session=session, client=client)
         except Exception:
             if hasattr(session, 'clear'):

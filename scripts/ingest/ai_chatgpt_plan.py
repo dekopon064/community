@@ -5,7 +5,7 @@ from ingest.ai_claude import (SUMMARY_SYSTEM, PROGRAM_SUMMARY_SYSTEM, MYSEOUL_SU
     SUMMARY_MAX_TOKENS, TRANSLATION_MAX_TOKENS, INFERENCE_TIMEOUT_S,
     validate_summary_payload, validate_translation_payload, translation_system_prompt)
 from ingest.ai_errors import AiJobError, ValidationError
-from ingest.ai_openai import GPT_MODEL, build_request, _integer
+from ingest.ai_openai import build_request, _integer
 from ingest.chatgpt_plan_auth import PlanSession
 from ingest.chatgpt_plan_protocol import ProbeError, RESOURCE, get_field, read_completed_stream
 from ingest.region_ja_glossary import validate_japanese_output
@@ -38,7 +38,7 @@ class PlanCommonFailure(AiJobError):
     failure_scope = 'batch'
 
 
-def plan_request(*, instructions, user, stage):
+def plan_request(*, instructions, user, stage, model):
     request = build_request(instructions=instructions, user=user,
                             stage='translation' if stage in {'correction', 'review_correction'} else stage)
     if stage == 'correction':
@@ -60,6 +60,7 @@ def plan_request(*, instructions, user, stage):
     # ceilings are checked after completion; this is NOT a server usage cap.
     for key in ('max_output_tokens', 'service_tier', 'truncation'):
         request.pop(key)
+    request['model'] = model
     request['stream'] = True
     return request
 
@@ -156,7 +157,7 @@ class ChatGPTPlanAdapter:
         self._create_calls += 1
         try:
             payload, response = read_completed_stream(self._client,
-                plan_request(instructions=instructions, user=user, stage=stage))
+                plan_request(instructions=instructions, user=user, stage=stage, model=self._session.model))
         except ProbeError as exc:
             self._blocked = True
             # Unknown completion must not go through a retryable job failure.
@@ -190,7 +191,7 @@ class ChatGPTPlanAdapter:
         except AiJobError:
             self._blocked = True
             raise PlanCommonFailure('ai_schema_error') from None
-        self._usage_records.append({'provider':'openai', 'model':GPT_MODEL,
+        self._usage_records.append({'provider':'openai', 'model':self._session.model,
             'auth_mode':'chatgpt_plan', 'billing':'chatgpt_plan',
             'input_tokens':input_tokens, 'output_tokens':output_tokens,
             'reasoning_tokens':reasoning, 'cost_upper_usd':None})
@@ -213,11 +214,11 @@ class ChatGPTPlanAdapter:
         from ingest.seoul_ai_correction import capture, current_output
         output = current_output.get()
         if output is not None:
-            output['model'] = GPT_MODEL
+            output['model'] = self._session.model
         capture('summary', payload)
         content = validate_summary_payload(payload)
         self._summary_ready = True
-        return content, 'success', GPT_MODEL
+        return content, 'success', self._session.model
 
     def summarize_program_ko(self, body, source_url, title=None):
         return self.summarize_ko(body, source_url, title, program=True)
@@ -270,4 +271,4 @@ class ChatGPTPlanAdapter:
         if review is None:
             validate_japanese_output(title_ja, content_ja, korean_source=title + '\n' + content_ko)
             validate_translation_fidelity(title, content_ko, title_ja, content_ja)
-        return title_ja, content_ja, 'success', GPT_MODEL
+        return title_ja, content_ja, 'success', self._session.model

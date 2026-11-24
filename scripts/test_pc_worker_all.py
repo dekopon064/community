@@ -169,8 +169,8 @@ class FrozenQueueTests(unittest.TestCase):
         summary = confirmed_case()['summary']
         ko = assemble_seoul_body(summary['content_ko'], template['facts'])
         ja = {'title_ja':'合成の解説', 'content_ja':fake_translation(ko)}
-        pair = streamed([response(json.dumps(v,ensure_ascii=False)) for v in (summary,ja)]).events
-        for scenario in ('confirmed', 'translation_duplicate', 'lost_receipt', 'wrong_receipt', 'empty_stream', 'quota'):
+        pair = streamed([response(json.dumps(v,ensure_ascii=False)) for v in (summary,ja)], model='gpt-6.2-sol').events
+        for scenario in ('confirmed', 'translation_duplicate', 'lost_receipt', 'wrong_receipt', 'empty_stream', 'quota', 'wrong_model'):
             with self.subTest(scenario=scenario):
                 rows = [item(i, title=f'합성 전시 {i}') for i in range(1,11)]
                 queue = Queue(rows)
@@ -204,6 +204,8 @@ class FrozenQueueTests(unittest.TestCase):
                     event = []
                 elif scenario == 'quota':
                     event = [{'type':'error','code':'subscription_sharing_usage_limit_exceeded'}]
+                elif scenario == 'wrong_model':
+                    event = streamed([response(json.dumps(summary))], model='gpt-6.1-sol').events[0]
                 fourth = [event]
                 translation = scenario == 'translation_duplicate'
                 if translation:
@@ -211,7 +213,7 @@ class FrozenQueueTests(unittest.TestCase):
                     fourth = [pair[0], [terminal,terminal]]
                 first = FakeClient(pair*3 + fourth + pair*6)
                 def context():
-                    provider = ChatGPTPlanAdapter(session=verified_session(),client=first)
+                    provider = ChatGPTPlanAdapter(session=verified_session('gpt-6.2-sol'),client=first)
                     return ProgramAIAdapter(rpc), provider, provider.close
                 worker = ExistingWorkers(PROJECT,ai_context=context)
                 control = PcWorkerControl(project=PROJECT,origin=ORIGIN,key=lambda:KEY,execute=worker,clock=lambda:1001)
@@ -236,7 +238,9 @@ class FrozenQueueTests(unittest.TestCase):
                     self.assertEqual((run['state'], run['code']), ('stopped','common_failure'))
                 else:
                     self.assertEqual(failure['title'],'합성 전시 4')
-                    self.assertEqual(failure['response'],{'code':'duplicate_completed_event' if translation else 'stream_missing_completed','completedSeen':translation})
+                    code = ('duplicate_completed_event' if translation else 'unexpected_response_model'
+                            if scenario == 'wrong_model' else 'stream_missing_completed')
+                    self.assertEqual(failure['response'], {'code':code,'completedSeen':translation or scenario == 'wrong_model'})
                     self.assertEqual(failure['detail']['stage'],'translation' if translation else 'summary')
                     self.assertEqual(failure['flow'],'continued' if continued else 'stopped')
                     self.assertEqual(failure.get('held',False),continued)
