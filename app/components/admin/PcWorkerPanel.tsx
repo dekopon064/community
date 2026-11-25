@@ -2,6 +2,7 @@
 import { createContext,useContext,useEffect,useRef,useState } from 'react';
 import type { ReactNode } from 'react';
 import {RunFailures} from './RunFailures';
+import SuitabilityPanel from './SuitabilityPanel';
 import {AiRunProgress} from './AiRunProgress';
 import { PcWorkerClient } from '@/app/lib/pc-worker/client';
 import type { PcWorkerView } from '@/app/lib/pc-worker/client';
@@ -36,7 +37,7 @@ export function PcWorkerProvider({children}:{children:ReactNode}){
 }
 function locked(view:PcWorkerView,disabled:boolean){return disabled||view.sending||view.busy||view.unknown||view.connection!=='ready';}
 export default function PcWorkerPanel({disabled=false}:{disabled?:boolean}){
-  const {view,connect,refresh,run}=useWorker();const [source,setSource]=useState('all');
+  const {view,runs,connect,refresh,run}=useWorker();const [source,setSource]=useState('all');
   return <div className="mb-6 border-y border-info-rule py-4">
     <section aria-label="PC 연결" className="space-y-3">
       <p className="max-w-3xl text-sm leading-6 text-info-body">실행기를 켠 같은 PC의 브라우저에서 수동으로 실행합니다. 휴대폰에서는 이 PC에 직접 연결할 수 없습니다.</p>
@@ -55,6 +56,8 @@ export default function PcWorkerPanel({disabled=false}:{disabled?:boolean}){
       {disabled&&<p className="text-sm text-info-status">편집·저장 중인 내용을 먼저 정리해 주세요.</p>}
       <RunResult kind="collect"/>
     </section>
+    <SuitabilityPanel locked={locked(view,disabled)} disabled={disabled || view.busy || view.sending || view.unknown} run={runs.suitability}
+      start={()=>run({source:"all",kind:"suitability",limit:"all"})}/>
   </div>;
 }
 export function PcAiRunPanel({disabled=false,onReviewCandidates}:{disabled?:boolean;onReviewCandidates:()=>void}){

@@ -8,7 +8,7 @@ export const pcWorkerEndpoint = 'http://127.0.0.1:14621';
 export const workerCatalog = sourceCatalog;
 export const workerSources:Record<string,string> = Object.fromEntries(sourceCatalog.map(row=>[row.id,row.label]));
 export const workerCatalogId=sourceCatalog.map(row=>[row.id,row.collector,row.ai].join(':')).join('|');
-export type WorkerCommand = { source: string; kind: 'collect' | 'ai'; limit: number | 'all' };
+export type WorkerCommand = { source: string; kind: 'collect' | 'ai' | 'suitability'; limit: number | 'all' };
 export type WorkerHello = { schema: typeof pcWorkerSchema; instance: string; challenge: string; project: string; catalog: string };
 export type WorkerResult = { state: 'running' | 'completed' | 'partial' | 'failed' | 'stopped' | 'unknown' | 'auth_required'; code: string; counts: Record<string, number> };
 export type WorkerSourceResult = WorkerResult & {source:string};
@@ -24,9 +24,9 @@ function object(value: unknown): Record<string, unknown> {
 export function workerUuid(value: unknown): string { if (typeof value !== 'string' || !uuid.test(value)) throw Error('invalid_worker_input'); return value; }
 export function workerCommand(value: unknown): WorkerCommand {
   const v = object(value);
-  if (Object.keys(v).sort().join() !== 'kind,limit,source' || typeof v.source !== 'string' || typeof v.kind !== 'string' || !(v.source==='all'||Object.hasOwn(workerSources, v.source)) || !['collect','ai'].includes(v.kind)
-    || (v.kind==='ai'&&v.source!=='all')
-    || !(v.kind==='ai'&&v.limit==='all')&&(!Number.isInteger(v.limit)||Number(v.limit)<1||Number(v.limit)>(v.kind==='collect'?1:25))) throw Error('invalid_worker_input');
+  if (Object.keys(v).sort().join() !== 'kind,limit,source' || typeof v.source !== 'string' || typeof v.kind !== 'string' || !(v.source==='all'||Object.hasOwn(workerSources, v.source)) || !['collect','ai','suitability'].includes(v.kind)
+    || (v.kind==='ai'&&v.source!=='all') || (v.kind==='suitability'&&(v.source!=='all'||v.limit!=='all'))
+    || !((v.kind==='ai'||v.kind==='suitability')&&v.limit==='all')&&(!Number.isInteger(v.limit)||Number(v.limit)<1||Number(v.limit)>(v.kind==='collect'?1:25))) throw Error('invalid_worker_input');
   return { source: v.source as WorkerCommand['source'], kind: v.kind as WorkerCommand['kind'], limit: v.limit==='all'?'all':Number(v.limit) };
 }
 export function workerHello(value: unknown): WorkerHello {

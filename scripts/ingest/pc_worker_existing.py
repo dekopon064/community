@@ -44,12 +44,18 @@ class ExistingWorkers:
         self.project,self.collect,self.ai_context=project,collect,ai_context
         self.progress=progress or (lambda counts:None)
 
+    def suitability(self, request_id):
+        from ingest.suitability import classify_run
+        return classify_run(request_id, self._program_db, self._plan_provider, self.progress)
+
     def __call__(self,value):
         value=command(value)
         try:
             if value['kind']=='collect':
                 return self._collect_selected(value['source'])
             else:
+                if value['kind']!='ai':
+                    raise ValueError('signed_request_id_required')
                 from ingest.myseoul_ai import process_myseoul_job
                 from ingest.program_ai import process_seoul_program_job
                 workers = {
@@ -172,13 +178,11 @@ class ExistingWorkers:
             return execute_collection(SimpleNamespace(project_ref=self.project))
         raise ValueError('unsupported_collector')
 
-    def _ai_context(self):
+    def _plan_provider(self):
         # Only an explicit, verified AI click reaches these imports/credentials.
-        from ingest.ai_provider import require_ai_provider,require_provider_key,ProviderError,create_provider_adapter,close_provider_adapter
+        from ingest.ai_provider import require_ai_provider,require_provider_key,ProviderError,create_provider_adapter
         from ingest.chatgpt_plan_auth import authenticate_worker
         from ingest.chatgpt_plan_sessions import PlanSessionManager
-        from ingest.program_ai import ProgramAIAdapter
-        from ingest.supabase_store import create_ingest_client
         name=require_ai_provider()
         if name!='chatgpt_plan':raise ProviderError('explicit_chatgpt_plan_required')
         key=require_provider_key(name)
@@ -187,11 +191,21 @@ class ExistingWorkers:
         class ReuseOnly:
             def acquire(self):return manager.acquire(allow_login=False)
         session=authenticate_worker(manager=ReuseOnly())
-        provider=create_provider_adapter(name,key,plan_session=session,program=True)
+        return create_provider_adapter(name,key,plan_session=session,program=True)
+
+    def _program_db(self):
+        from ingest.program_ai import ProgramAIAdapter
+        from ingest.supabase_store import create_ingest_client
+        url=os.environ.get('SUPABASE_URL','')
+        if url.rstrip('/')!=f'https://{self.project}.supabase.co':
+            raise ValueError('wrong_project')
+        client=create_ingest_client(url,os.environ.get('SUPABASE_SERVICE_KEY',''))
+        return ProgramAIAdapter.from_supabase(client)
+
+    def _ai_context(self):
+        from ingest.ai_provider import close_provider_adapter
+        provider=self._plan_provider()
         try:
-            url=os.environ.get('SUPABASE_URL','')
-            if url.rstrip('/')!=f'https://{self.project}.supabase.co':raise ValueError('wrong_project')
-            client=create_ingest_client(url,os.environ.get('SUPABASE_SERVICE_KEY',''))
-            return ProgramAIAdapter.from_supabase(client),provider,lambda:close_provider_adapter(provider)
+            return self._program_db(),provider,lambda:close_provider_adapter(provider)
         except Exception:
             close_provider_adapter(provider);raise

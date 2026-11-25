@@ -39,8 +39,11 @@ class PlanCommonFailure(AiJobError):
 
 
 def plan_request(*, instructions, user, stage, model):
-    request = build_request(instructions=instructions, user=user,
-                            stage='translation' if stage in {'correction', 'review_correction'} else stage)
+    base_stage = 'translation' if stage in {'correction', 'review_correction', 'suitability'} else stage
+    request = build_request(instructions=instructions, user=user, stage=base_stage)
+    if stage == 'suitability':
+        from ingest.suitability import SCHEMA
+        request['text']['format'].update(name='machimoa_suitability', schema=SCHEMA)
     if stage == 'correction':
         request['text']['format'].update(name='machimoa_correction', schema={
             'type': 'object', 'properties': {'replacement': {'type': 'string'}},
@@ -219,6 +222,13 @@ class ChatGPTPlanAdapter:
         content = validate_summary_payload(payload)
         self._summary_ready = True
         return content, 'success', self._session.model
+
+    def classify_suitability(self, policy, title, body):
+        import json
+        from ingest.suitability import INSTRUCTIONS
+        self._reset_job()
+        return self._create('suitability', json.dumps({'title':title,'source':body},ensure_ascii=False),
+                            INSTRUCTIONS+'\n공식 확정 지침\n'+policy)
 
     def summarize_program_ko(self, body, source_url, title=None):
         return self.summarize_ko(body, source_url, title, program=True)

@@ -32,9 +32,10 @@ def identity(value):
 def command(value):
     if (not isinstance(value, dict) or set(value) != {'source','kind','limit'}
         or not isinstance(value['source'],str) or value['source'] not in {*SOURCES,'all'}
-        or not isinstance(value['kind'],str) or value['kind'] not in {'collect','ai'}
+        or not isinstance(value['kind'],str) or value['kind'] not in {'collect','ai','suitability'}
+        or value['kind']=='suitability' and (value['source']!='all' or value['limit']!='all')
         or value['kind']=='ai' and value['source']!='all'
-        or not (value['kind']=='ai' and value['limit']=='all') and
+        or not (value['kind'] in {'ai','suitability'} and value['limit']=='all') and
             (type(value['limit']) is not int or not 1<=value['limit']<=(1 if value['kind']=='collect' else 25))):
         raise ControlError('invalid_command',422)
     return dict(value)
@@ -158,11 +159,14 @@ class PcWorkerControl:
 
     def _execute(self,run):
         try:
-            result=self.execute(dict(run['command']))
+            if run['command']['kind']=='suitability':
+                result=self.execute.suitability(run['requestId'])
+            else:
+                result=self.execute(dict(run['command']))
             if (not isinstance(result,dict) or set(result) not in ({'state','code','counts'},{'state','code','counts','sourceResults'},
                     {'state','code','counts','sourceResults','failures'})
                 or result['state'] not in {'completed','partial','failed','stopped','unknown','auth_required'}
-                or result['code'] not in {'','completed','worker_failed','state_unknown','reauth_required','auth_unavailable','batch_stopped','contract_unavailable','common_failure','retry_registered','provider_not_reusable','queue_snapshot_changed','queue_snapshot_invalid','queue_snapshot_limit'}
+                or result['code'] not in {'','completed','worker_failed','state_unknown','reauth_required','auth_unavailable','batch_stopped','contract_unavailable','common_failure','retry_registered','provider_not_reusable','queue_snapshot_changed','queue_snapshot_invalid','queue_snapshot_limit','policy_unavailable','suitability_unconfirmed'}
                 or not isinstance(result['counts'],dict) or len(result['counts'])>30
                 or any(not re.fullmatch('[a-z_]{1,40}',k) or type(v) is not int or v<0 for k,v in result['counts'].items())):
                 raise ValueError()
