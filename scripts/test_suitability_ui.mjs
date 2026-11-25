@@ -136,14 +136,16 @@ try {
  for(const i of [2,3])await page.getByRole('checkbox',{name:rows[i].title}).check();
  await page.getByRole('button',{name:'선택한 2건 휴지통으로 이동'}).click();
  lose=true;await page.getByRole('button',{name:'확인하고 이동'}).click();
- await page.waitForFunction(()=>document.body.textContent.split('이동 완료').length===3);
+ await page.getByRole('heading',{name:'적합 제안 1건'}).waitFor();
  assert.deepEqual(moves,[rows[0].id,rows[1].id,rows[2].id]);assert.equal(rows[3].moved,false);
  await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 1건'}).waitFor();
  const box=i=>page.getByRole('checkbox',{name:rows[i].title});
- assert.equal(await box(2).isChecked(),false);
+ assert.equal(await box(2).count(),0);
  assert.equal(await box(3).isChecked(),true);
  await page.reload();
- await page.getByRole('heading',{name:'적합 제안 2건'}).waitFor();
+ await page.getByRole('heading',{name:'적합 제안 1건'}).waitFor();
+ assert.equal(await box(0).count(),0);
+ assert.equal(await box(2).count(),0);
  assert.equal(calls,1);assert.equal(await page.locator('input:checked').count(),0);
  async function resetSelection(){
    for(const row of rows)row.moved=false;
@@ -164,13 +166,20 @@ try {
  assert.deepEqual(attempted,moves);
  assert.equal(await page.locator('input:checked').count(),0);
  assert.equal(rows[3].moved,false);
+ assert.equal(await page.getByRole('heading',{name:/제외 권장/}).count(),0);
+ assert.equal(await page.getByRole('checkbox').filter({visible:true}).count(),1);
+ await box(3).check();
+ await confirmMove(1);
+ await page.getByText('남은 점검 항목이 없습니다.').waitFor();
+ await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 0건'}).waitFor();
+ assert.deepEqual(moves,ids);
 
  await resetSelection();interruptItem=ids[1];
  await confirmMove(3);
  await summary.filter({hasText:'이동 성공 1건 · 실패 1건 · 미처리 1건'}).waitFor();
  assert.deepEqual(attempted,ids.slice(0,2));assert.deepEqual(moves,[ids[0]]);
  for(const i of [1,2]){assert.ok(await box(i).isChecked());assert.ok(await box(i).isEnabled());}
- assert.equal(await box(0).isChecked(),false);
+ assert.equal(await box(0).count(),0);
  await page.getByRole('button',{name:'점검 결과 다시 확인'}).click();
  interruptItem=undefined;
  await confirmMove(2);

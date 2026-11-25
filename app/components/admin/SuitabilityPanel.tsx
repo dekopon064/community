@@ -50,10 +50,11 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
     }).catch(()=>{if(!controller.signal.aborted) setNotice('점검 결과를 읽지 못했습니다. 결과를 다시 확인해 주세요.');});
     return ()=>controller.abort();
   },[requestId,active,refresh]);
-  const items = report?.items ?? [];
+  const reportItems = report?.items ?? [];
+  const movedIds = new Set(reportItems.filter(row=>row.moved || results[row.id]==='moved').map(row=>row.id));
+  const items = reportItems.filter(row=>!movedIds.has(row.id));
   const selected = items.filter(row=>checked.includes(row.id) && canSelect(row,results[row.id]));
   const counts = {moved:0,failed:0,unprocessed:0,skipped:0,unknown:0};
-  const movedIds = new Set(items.filter(row=>row.moved).map(row=>row.id));
   for(const id of lastBatch) {
     const outcome = results[id];
     if(outcome) counts[outcome==='unknown' && movedIds.has(id) ? 'moved' : outcome]++;
@@ -117,7 +118,7 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
         const rows=items.filter(row=>row.source===source);
         return rows.length ? label+' '+rows.length+'건 (기존 판정 '+rows.filter(row=>row.reused).length+'건)' : '';
       }).filter(Boolean).join(' · ')}</p>}
-      {!items.length && <p>점검 대상이 없습니다.</p>}
+      {!items.length && <p>{reportItems.length ? '남은 점검 항목이 없습니다.' : '점검 대상이 없습니다.'}</p>}
       {items.some(row=>row.decision && !row.moved) && <p className="text-sm text-info-muted">휴지통으로 옮길 항목만 체크하세요.</p>}
       {Object.entries(groups).map(([group,label])=>{
         const rows=items.filter(row=>row.decision?.group===group);
