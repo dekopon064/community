@@ -84,6 +84,26 @@ class OfflineTests(unittest.TestCase):
             with self.subTest(ko=ko):
                 validate_translation_fidelity('합성 안내', ko, '合成案内', bad)
 
+    def test_official_link_destinations_and_occurrences(self):
+        url = 'https://example.org/신청/日本語(本)?id=Ａ1&lang=ja#回次'
+        ko = f'[온라인 신청서]({url})를 작성해 주세요.'
+        ja = f'[オンライン申込フォーム]({url})に記入してください。'
+        for wrapper in ('{}', '- {}', '**{}**', '| 항목 | 안내 |\n|---|---|\n| A | {} |'):
+            with self.subTest(wrapper=wrapper):
+                validate_translation_fidelity('안내', wrapper.format(ko)+'\n'+url,
+                                              '案内', wrapper.format(ja)+'\n'+url)
+        for wrong in (url.replace('신청','접수'), url.replace('Ａ1','A1'), url.replace('回次','別'),
+                      url.replace('本)','本)別'), url.replace('example.org','other.example')):
+            with self.subTest(wrong=wrong):
+                # Even a visible label containing the original address cannot
+                # stand in for an altered destination.
+                with self.assertRaises(AiJobError) as caught:
+                    validate_translation_fidelity('안내', ko+'\n'+url, '案内', f'[{url}]({wrong})\n'+url)
+                self.assertEqual(caught.exception.diagnostic['rule'], 'official_link')
+        with self.assertRaises(AiJobError) as caught:
+            validate_translation_fidelity('안내', ko+'\n'+url, '案内', url)
+        self.assertEqual(caught.exception.diagnostic, dict(rule='official_link', reason='missing', location={'field':'body'}))
+
     def test_explicit_bad_values_fail_even_with_same_numbers_elsewhere(self):
         cases = (
             ('선착순 30명, 정원 도달 시 마감', '定員に達し次第締め切り。30日開催。'),

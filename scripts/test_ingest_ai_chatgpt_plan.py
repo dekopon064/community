@@ -190,6 +190,9 @@ class PlanWorkerTests(unittest.TestCase):
              '名簿を変更する場合は講習開始日の2日前までにご提出ください。当日の変更はできません。'),
             ('summarize_myseoul_ko', '성인과 청소년 모두 현장에서 신청합니다.',
              '성인과 청소년 모두 현장에서 신청하세요.', '大人も青少年も会場でお申し込みください。'),
+            ('summarize_myseoul_ko', '온라인 신청서로 접수합니다.',
+             '[온라인 신청서](https://example.org/form)를 작성해 주세요.\n\nhttps://example.org/form',
+             '[オンライン申込フォーム](https://example.org/form)に記入してください。\n\nhttps://example.org/form'),
         ]
         for method, source, ko, ja in cases:
             with self.subTest(method=method):

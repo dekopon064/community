@@ -11,7 +11,7 @@ import re
 from ingest.ai_errors import ValidationError
 
 _LIST = re.compile(r'^( *)(?:([-+*])\s+|(\d+)[.)]\s+)(\S.*)$')
-_LINK = re.compile(r'(?<!!)\[([^\]\n]+)\]\((https?://[^\s]+?)\)')
+_LINK_START = re.compile(r'(?<!!)\[([^\[\]\n]+)\]\((?=https?://)')
 _STRONG = re.compile(r'(?<!\\)\*\*([^\n]+?)\*\*')
 _SEPARATOR = re.compile(r':?-{3,}:?')
 _LABELS = re.compile(
@@ -21,17 +21,44 @@ _LABELS = re.compile(
     r'참가 대상 근거|개최지 근거|신청 주체|비용 구분|분류|접수 상태)\s*[:：]\s*(\S.*)$')
 
 
+def _map_links(text: str, replace) -> str:
+    """Keep the destination boundary, including balanced parentheses within it."""
+    if '](' not in text:
+        return text
+    # Match parentheses within each whitespace-free token in a single pass.
+    # Escaped punctuation inside a destination cannot close the Markdown link.
+    stack, closing = [], {}
+    for token in re.finditer(r'\\[!-~]|\s+|[()]', text):
+        if token[0] == '(':
+            stack.append(token.start())
+        elif token[0] == ')' and stack:
+            closing[stack.pop()] = token.start()
+        elif token[0][0].isspace():
+            stack.clear()
+    pieces = []
+    start = 0
+    for match in _LINK_START.finditer(text):
+        end = closing.get(match.end() - 1)
+        if match.start() < start or end is None:
+            continue
+        destination = text[match.end():end]
+        pieces.extend((text[start:match.start()], replace(match[1], destination)))
+        start = end + 1
+    pieces.append(text[start:])
+    return ''.join(pieces)
+
+
 def inline_text(text: str) -> str:
     """Only supported inline delimiters; don't normalize opaque URL characters."""
-    text = _LINK.sub(lambda m: m[1] + ' ' + m[2], text)
+    text = _map_links(text, lambda label, url: label + ' ' + url)
     text = re.sub(r'<(https?://[^\s<>]+)>', r'\1', text)
     text = _STRONG.sub(r'\1', text)
     text = re.sub(r'(?<![\\*])\*([^*\n]+)\*(?!\*)', r'\1', text)
     return re.sub(r'\\([|*\[\]\\])', r'\1', text)
 
 
-def strong_spans(text: str) -> list[str]:
-    return [inline_text(m[1]) for m in _STRONG.finditer(text)]
+def strong_spans(text: str, *, markdown: bool = False) -> list[str]:
+    return [m[1] if markdown else inline_text(m[1]) for m in _STRONG.finditer(text)]
 
 
 def _cells(line: str) -> tuple[str, ...]:
@@ -71,7 +98,11 @@ class ListItem:
     section: int
     indent: int
     number: int | None
-    text: str
+    markdown: str
+
+    @property
+    def text(self) -> str:
+        return inline_text(self.markdown)
 
 
 @dataclass(frozen=True)
@@ -132,7 +163,7 @@ def read_body(content: str) -> Body:
         match = _LIST.match(line)
         if match:
             value = inline_text(match[4])
-            items.append(ListItem(section, len(match[1]), int(match[3]) if match[3] else None, value))
+            items.append(ListItem(section, len(match[1]), int(match[3]) if match[3] else None, match[4]))
             plain.append(value)
         else:
             plain.append(inline_text(line))
@@ -142,6 +173,24 @@ def read_body(content: str) -> Body:
 
 def comparison_text(content: str) -> str:
     return read_body(content).text
+
+
+def link_targets(markdown: str, bare_url: re.Pattern) -> list[str]:
+    """Count actual destinations once, irrespective of their visible labels."""
+    if 'http' not in markdown:
+        return []
+    targets = []
+
+    def collect(label, destination):
+        targets.append(destination)
+        return ' '
+
+    for line in _map_links(markdown, collect).splitlines():
+        # Table delimiters are not part of bare URLs in cells.
+        parts = _cells(line) if line.lstrip().startswith('|') else (line,)
+        for part in parts:
+            targets.extend(bare_url.findall(inline_text(part)))
+    return targets
 
 
 def schedule_tables(content: str) -> tuple[Table, ...]:
@@ -169,5 +218,6 @@ def format_reviewed_block(text: str) -> str:
 
 def require_plain_summary(text: str) -> None:
     if (read_body(text).tables or read_body(text).items or strong_spans(text)
-            or _LINK.search(text) or re.search(r'(?m)^\s*#{1,6}\s|`[^`]+`', text)):
+            or _map_links(text, lambda label, url: '') != text
+            or re.search(r'(?m)^\s*#{1,6}\s|`[^`]+`', text)):
         raise ValidationError('plain_text', 'unsupported_markup')

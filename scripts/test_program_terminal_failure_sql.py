@@ -34,6 +34,7 @@ def verify(db):
     sql(PURPOSE.read_text(encoding='utf8'))
     sql(MIGRATION.read_text(encoding='utf8'))
     sql(MIGRATION.with_name('20261117114500_program_ai_failure_detail.sql').read_text(encoding='utf8'))
+    sql(MIGRATION.with_name('20261125073001_official_link_failure_detail.sql').read_text(encoding='utf8'))
     if sql("select to_regclass('machimoa_review.seoul_ai_correction_drafts') is null")=='t':
         sql(MIGRATION.with_name('20261104004126_seoul_ai_correction.sql').read_text(encoding='utf8'))
     if sql("select to_regclass('machimoa_review.seoul_ai_candidate_reviews') is null")=='t':
@@ -72,6 +73,13 @@ def verify(db):
     job, at, lease = c['jobId'], c['claimedAt'], c['leaseUntil']
     args = [job,rev,at,lease,'test',c['failurePolicy']['attempt'],'ai_schema_error']
     fail = 'fail_myseoul_ai_no_retry'
+    link_error = dict(stage='translation', code='ai_schema_error', rule='official_link',
+                      reason='missing', location={'field':'body'})
+    # Exercise the real terminal receipt, then roll back this synthetic case.
+    receipt = sql('begin; set local role service_role; select public.'+fail+'('+
+                  ','.join(map(literal,[*args, link_error]))+'); select public.admin_ai_queue_review_detail('+
+                  literal(job)+')->\'failureDetail\'; rollback;').splitlines()
+    assert receipt[0]=='failed' and json.loads(receipt[1])==link_error
     reject(lambda:rpc(fail,*args,role='anon'),'permission denied')
     reject(lambda:rpc(fail,*args[:4],'wrong',*args[5:]),'no_retry_attempt_conflict')
     reject(lambda:rpc('fail_seoul_ai_no_retry',*args),'no_retry_attempt_conflict')
