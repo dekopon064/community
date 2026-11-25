@@ -3,10 +3,21 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,writeFileSync,readFileSync,rmSync,existsSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {createRequire,registerHooks} from 'node:module';
+import {IncomingMessage} from 'node:http';
+import {Socket} from 'node:net';
 
 import {pathToFileURL} from 'node:url';
 import ts from 'typescript';
 const require=createRequire(import.meta.url);
+const {NodeNextRequest}=require('next/dist/server/base-http/node');
+const {NextRequestAdapter}=require('next/dist/server/web/spec-extension/adapters/next-request');
+function nextPost(url,headers,payload) {
+ const raw=new IncomingMessage(new Socket());
+ raw.url=String(url);raw.method='POST';raw.headers=headers;
+ if(payload?.length)raw.push(Buffer.from(payload));
+ raw.push(null);
+ return NextRequestAdapter.fromNodeNextRequest(new NodeNextRequest(raw),new AbortController().signal);
+}
 const {webpack}=require('next/dist/compiled/webpack/bundle5')();
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : 'playwright');
 const dir=mkdtempSync(join(resolve('.'),'suitability-ui-test-'));
@@ -31,19 +42,35 @@ try {
   state:'done',moved:false,reused:false,decision:{group,clause:group==='keep'?'K02':group==='check'?'확인 필요':'E01',
     quote:'합성 원문의 활동 문구',reason:'원문 활동을 기준으로 검토했습니다.',question:group==='check'?'프로그램에 지역 해설이 포함되나요?':'',note:''}}));
  let run=null,report=null,requestId,command,calls=0,moves=[],lose=false;
+ let skipItem=rows[1].id, failItem, interruptItem, loseBeforeSave;
+ const attempted=[];
  const output=()=>({busy:false,run});
  const deps={authorize:async()=>({userId:actor}),client:()=>({rpc:async(name,args)=>{
    if(name==='suitability_report') return {data:report,error:null};
    assert.equal(name,'suitability_exclude');assert.equal(args.p_actor,actor);assert.equal(args.p_run,report.id);
    moves.push(args.p_item);
    const row=rows.find(item=>item.id===args.p_item);
-   if(row===rows[1])return {data:'skipped',error:null};
+   if(row.id===skipItem)return {data:'skipped',error:null};
+   if(row.id===failItem)return {data:null,error:{code:'PT422'}};
    row.moved=true;return {data:'moved',error:null};
  }})};
  const denied=await suitabilityRequest(new Request(origin+'/api/admin/suitability'),{authorize:async()=>{throw new AdminAccessError('forbidden');},client:()=>assert.fail()});
  assert.equal(denied.status,403);
  const cross=await suitabilityRequest(new Request(origin+'/api/admin/suitability',{method:'POST',headers:{origin:'https://unrelated.invalid'}}),deps);
  assert.equal(cross.status,403);
+ const moveUrl=new URL('/api/admin/suitability',origin);
+ for(const name of ['run','item','request'])moveUrl.searchParams.set(name,crypto.randomUUID());
+ let writes=0;
+ const streamDeps={...deps,client:()=>({rpc:async()=>{writes++;return {data:'moved',error:null};}})};
+ for(const headers of [{origin},{origin,'content-length':'0'}]){
+   const incoming=nextPost(moveUrl,headers);
+   assert.ok(incoming.body);
+   assert.equal((await suitabilityRequest(incoming,streamDeps)).status,200,'empty Node POST must reach RPC');
+ }
+ for(const headers of [{origin},{origin,'content-length':'0'},{origin,'content-length':'1'}]){
+   assert.equal((await suitabilityRequest(nextPost(moveUrl,headers,' '),streamDeps)).status,422);
+ }
+ assert.equal(writes,2,'nonempty requests must never reach RPC');
  for(const [code,expected] of [['PT422','failed'],['PT409','skipped'],['08006','unknown']]){
    const url=new URL('/api/admin/suitability',origin);
    for(const name of ['run','item','request'])url.searchParams.set(name,crypto.randomUUID());
@@ -69,7 +96,14 @@ try {
     report={id:requestId,policy:'1.0',readAt:'2026-11-25T00:00:00Z',items:rows};return json(output());}
   }
   if(url.origin===origin && url.pathname==='/api/admin/suitability'){
-   const resp=await suitabilityRequest(new Request(req.url(),{method:req.method(),headers:{origin}}),deps);
+   let incoming=new Request(req.url());
+   if(req.method()==='POST') {
+    const item=url.searchParams.get('item');
+    attempted.push(item);
+    if(item===loseBeforeSave)return route.abort();
+    incoming=nextPost(req.url(),req.headers(),item===interruptItem?'x':req.postDataBuffer());
+   }
+   const resp=await suitabilityRequest(incoming,deps);
    if(lose && req.method()==='POST'){lose=false;return route.abort();}
    return route.fulfill({status:resp.status,body:await resp.text(),contentType:'application/json'});
   }
@@ -96,15 +130,64 @@ try {
  }
  assert.ok((await confirm.innerText()).includes(rows[0].title));assert.ok(!(await confirm.innerText()).includes(rows[2].title));
  await confirm.getByRole('button',{name:'확인하고 이동'}).click();
- await page.getByText(/상태·버전 변경으로 건너뜀/).waitFor();
+ const summary=page.getByRole('status').filter({hasText:'최근 이동 요청'});
+ await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 0건 · 상태·버전 변경으로 건너뜀 1건'}).waitFor();
  assert.deepEqual(moves,[rows[0].id,rows[1].id]);
  for(const i of [2,3])await page.getByRole('checkbox',{name:rows[i].title}).check();
  await page.getByRole('button',{name:'선택한 2건 휴지통으로 이동'}).click();
  lose=true;await page.getByRole('button',{name:'확인하고 이동'}).click();
  await page.waitForFunction(()=>document.body.textContent.split('이동 완료').length===3);
  assert.deepEqual(moves,[rows[0].id,rows[1].id,rows[2].id]);assert.equal(rows[3].moved,false);
+ await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 1건'}).waitFor();
+ const box=i=>page.getByRole('checkbox',{name:rows[i].title});
+ assert.equal(await box(2).isChecked(),false);
+ assert.equal(await box(3).isChecked(),true);
  await page.reload();
  await page.getByRole('heading',{name:'적합 제안 2건'}).waitFor();
  assert.equal(calls,1);assert.equal(await page.locator('input:checked').count(),0);
- console.log('PASS actual control click, authenticated report, three groups, empty selection, named confirmation, mixed outcomes, lost POST and reload');
+ async function resetSelection(){
+   for(const row of rows)row.moved=false;
+   skipItem=failItem=interruptItem=loseBeforeSave=undefined;
+   moves=[];attempted.length=0;
+   await page.reload();
+   for(const i of [0,1,2])await box(i).check();
+ }
+ async function confirmMove(n){
+   await page.getByRole('button',{name:'선택한 '+n+'건 휴지통으로 이동'}).click();
+   await confirm.getByRole('button',{name:'확인하고 이동'}).click();
+ }
+ const ids=rows.map(row=>row.id);
+ await resetSelection();
+ await confirmMove(3);
+ await summary.filter({hasText:'이동 성공 3건 · 실패 0건 · 미처리 0건'}).waitFor();
+ assert.deepEqual(moves,ids.slice(0,3));
+ assert.deepEqual(attempted,moves);
+ assert.equal(await page.locator('input:checked').count(),0);
+ assert.equal(rows[3].moved,false);
+
+ await resetSelection();interruptItem=ids[1];
+ await confirmMove(3);
+ await summary.filter({hasText:'이동 성공 1건 · 실패 1건 · 미처리 1건'}).waitFor();
+ assert.deepEqual(attempted,ids.slice(0,2));assert.deepEqual(moves,[ids[0]]);
+ for(const i of [1,2]){assert.ok(await box(i).isChecked());assert.ok(await box(i).isEnabled());}
+ assert.equal(await box(0).isChecked(),false);
+ await page.getByRole('button',{name:'점검 결과 다시 확인'}).click();
+ interruptItem=undefined;
+ await confirmMove(2);
+ await summary.filter({hasText:'이동 성공 2건 · 실패 0건 · 미처리 0건'}).waitFor();
+ assert.deepEqual(moves,ids.slice(0,3));assert.deepEqual(attempted,[ids[0],ids[1],ids[1],ids[2]]);
+
+ await resetSelection();failItem=ids[1];
+ await confirmMove(3);
+ await summary.filter({hasText:'이동 성공 2건 · 실패 1건 · 미처리 0건'}).waitFor();
+ assert.deepEqual(moves,ids.slice(0,3));assert.ok(await box(1).isChecked());assert.ok(await box(1).isEnabled());
+ assert.equal(await page.locator('input:checked').count(),1);
+
+ await resetSelection();loseBeforeSave=ids[1];
+ await confirmMove(3);
+ await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 1건 · 결과 불명 1건'}).waitFor();
+ assert.ok(await box(1).isDisabled());assert.ok(await box(2).isChecked());assert.ok(await box(2).isEnabled());
+ assert.deepEqual(attempted,ids.slice(0,2));assert.deepEqual(moves,[ids[0]]);
+ assert.equal(calls,1);
+ console.log('PASS empty and nonempty Node POST, fake auth, multi-select success, 422 stop and explicit retry, item-level failure, version skip, lost responses before/after save, counts and retained selections');
 } finally {if(browser)await browser.close();if(existsSync(dir))rmSync(dir,{recursive:true});}

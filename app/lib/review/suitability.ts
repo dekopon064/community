@@ -10,6 +10,24 @@ export type SuitabilityRow = {id:string;title:string;key:string;source:string;qu
   state:'waiting'|'unconfirmed'|'done';decision:SuitabilityDecision|null};
 export type SuitabilityReport = {id:string;policy:string;readAt:string;items:SuitabilityRow[]};
 
+async function requireEmptyBody(request: Request) {
+  const reader = request.body?.getReader();
+  if (!reader) return;
+  try {
+    // A bodyless POST can still arrive from Next's Node adapter as a stream.
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) return;
+      if (value.byteLength > 0) {
+        void reader.cancel().catch(() => {});
+        throw new ReviewFailure('invalid_input');
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function suitabilityRequest(request: Request, deps:{authorize:()=>Promise<{userId:string}>;client:()=>RpcClient}) {
   try {
     const {userId} = await deps.authorize();
@@ -24,8 +42,9 @@ export async function suitabilityRequest(request: Request, deps:{authorize:()=>P
     if (request.method !== 'POST' || !isSameOriginPost(request))
       return privateResponse(Response.json({code:'wrong_origin'},{status:403}));
     const item = query.get('item'), receipt = query.get('request');
-    if (!run || !item || !receipt || !jobUuid.test(item) || !jobUuid.test(receipt) || request.body)
+    if (!run || !item || !receipt || !jobUuid.test(item) || !jobUuid.test(receipt))
       throw new ReviewFailure('invalid_input');
+    await requireEmptyBody(request);
     const {data,error} = await deps.client().rpc('suitability_exclude',{p_run:run,p_item:item,p_request:receipt,p_actor:userId});
     if (error?.code==='PT404' || error?.code==='PT409')
       return privateResponse(Response.json({id:item,result:'skipped'}));

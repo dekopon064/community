@@ -6,8 +6,11 @@ import type {SuitabilityReport, SuitabilityRow} from '@/app/lib/review/suitabili
 import {primaryButton,secondaryButton} from './ReviewEditors';
 
 const groups = {exclude:'제외 권장',check:'확인 필요',keep:'적합 제안'} as const;
-const outcomes = {moved:'이동 완료',skipped:'상태·버전 변경으로 건너뜀',failed:'이동 실패',unknown:'결과 불명'} as const;
+const outcomes = {moved:'이동 완료',skipped:'상태·버전 변경으로 건너뜀',failed:'이동 실패',unknown:'결과 불명',unprocessed:'미처리'} as const;
 type Outcome = keyof typeof outcomes;
+function canSelect(row:SuitabilityRow, result?:Outcome) {
+  return row.state==='done' && !row.moved && (!result || result==='failed' || result==='unprocessed');
+}
 const endpoint = '/api/admin/suitability';
 async function readReport(id?:string,signal?:AbortSignal):Promise<SuitabilityReport|null> {
   const response = await fetch(endpoint+(id?'?run='+id:''),{cache:'no-store',credentials:'same-origin',signal});
@@ -23,6 +26,7 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
   const [confirm,setConfirm] = useState(false);
   const [saving,setSaving] = useState(false);
   const [results,setResults] = useState<Record<string,Outcome>>({});
+  const [lastBatch,setLastBatch] = useState<string[]>([]);
   const [notice,setNotice] = useState('');
   const [refresh,setRefresh] = useState(0);
   const submitting = useRef(false);
@@ -31,19 +35,29 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
   const active = run?.state==='running';
   useEffect(()=>{
     startPending.current=false;
-    setChecked([]); setConfirm(false); setResults({});
+    setChecked([]); setConfirm(false); setResults({}); setLastBatch([]);
   },[requestId]);
   useEffect(()=>{ if(!locked) startPending.current=false; },[locked]);
   useEffect(()=>{
     const controller = new AbortController();
     if (active) return;
     readReport(requestId,controller.signal).then(value=>{
-      if (!controller.signal.aborted) { setReport(value);setNotice(''); }
+      if (!controller.signal.aborted) {
+        setReport(value);setNotice('');
+        const moved = new Set(value?.items.filter(row=>row.moved).map(row=>row.id));
+        setChecked(old=>old.filter(id=>!moved.has(id)));
+      }
     }).catch(()=>{if(!controller.signal.aborted) setNotice('점검 결과를 읽지 못했습니다. 결과를 다시 확인해 주세요.');});
     return ()=>controller.abort();
   },[requestId,active,refresh]);
   const items = report?.items ?? [];
-  const selected = items.filter(row=>checked.includes(row.id) && row.state==='done' && !row.moved && !results[row.id]);
+  const selected = items.filter(row=>checked.includes(row.id) && canSelect(row,results[row.id]));
+  const counts = {moved:0,failed:0,unprocessed:0,skipped:0,unknown:0};
+  const movedIds = new Set(items.filter(row=>row.moved).map(row=>row.id));
+  for(const id of lastBatch) {
+    const outcome = results[id];
+    if(outcome) counts[outcome==='unknown' && movedIds.has(id) ? 'moved' : outcome]++;
+  }
   const busy = disabled || saving || active || !!(requestId && report?.id!==requestId);
   async function move() {
     if(!report || busy || submitting.current || !confirm || !selected.length) return;
@@ -66,16 +80,19 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
           break;
         }
       }
+      const batchIds = selected.map(row=>row.id);
+      for(const id of batchIds) updates[id] ??= 'unprocessed';
       setResults(old=>({...old,...updates}));
-      setChecked(old=>old.filter(id=>!updates[id]));
+      setLastBatch(batchIds);
+      setChecked(old=>old.filter(id=>updates[id]!=='moved' && updates[id]!=='skipped'));
       setRefresh(n=>n+1); // read-only reconciliation, including a lost POST response
     } finally {submitting.current=false;setSaving(false);}
   }
   function display(row:SuitabilityRow) {
     const result=row.moved?'moved':results[row.id];
     return <li key={row.id} className="space-y-1 border-b border-info-rule py-3">
-      <label className="flex items-baseline gap-2 font-semibold"><input type="checkbox" disabled={busy || confirm || !!result}
-        checked={checked.includes(row.id)} onChange={e=>setChecked(old=>e.target.checked?[...old,row.id]:old.filter(id=>id!==row.id))}/>{row.title}</label>
+      <label className="flex items-baseline gap-2 font-semibold"><input type="checkbox" disabled={busy || confirm || !canSelect(row,result)}
+        checked={!row.moved && checked.includes(row.id)} onChange={e=>setChecked(old=>e.target.checked?[...old,row.id]:old.filter(id=>id!==row.id))}/>{row.title}</label>
       <p className="text-sm text-info-muted">{workerSources[row.source]} · {row.key} · {row.queue==='facts'?'사람 사실 review':'AI 작업 대기'}{row.reused?' · 기존 판정':''}{result?' · '+outcomes[result]:''}</p>
       <p>{row.decision?.clause} · {row.decision?.reason}</p>
       {row.decision?.quote && <blockquote className="border-l-2 border-info-rule pl-3">{row.decision.quote}</blockquote>}
@@ -108,6 +125,9 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
       })}
       {items.some(row=>row.state!=='done') && <details><summary>판정 미확정 {items.filter(row=>row.state!=='done').length}건</summary>
         <ul>{items.filter(row=>row.state!=='done').map(row=><li key={row.id}>{row.title} · {row.state==='waiting'?'미처리':'응답·저장 확인 필요'}</li>)}</ul></details>}
+      {lastBatch.length>0 && <p role="status">최근 이동 요청 {lastBatch.length}건 · 이동 성공 {counts.moved}건 · 실패 {counts.failed}건 · 미처리 {counts.unprocessed}건
+        {counts.skipped>0 && ' · 상태·버전 변경으로 건너뜀 '+counts.skipped+'건'}
+        {counts.unknown>0 && ' · 결과 불명 '+counts.unknown+'건 (점검 결과 다시 확인)'}</p>}
       {items.some(row=>row.state==='done' && !row.moved) && <button type="button" className={secondaryButton} disabled={busy || confirm || !selected.length}
         onClick={()=>setConfirm(true)}>선택한 {selected.length}건 휴지통으로 이동</button>}
       {confirm && <div role="group" aria-label="선택한 콘텐츠 제외 확인"><p>아래 항목을 ‘서비스에 적합하지 않음’으로 제외합니다. AI 대기 작업도 함께 중지됩니다.</p>
