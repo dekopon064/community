@@ -209,6 +209,9 @@ def ready_queue_page(response,sources):
         if not isinstance(item,dict):raise ValueError('seoul_queue_response_invalid')
         if item.get('sourceName') not in sources:
             counts['other_source']+=1;continue
+        version=item.get('classificationVersion')
+        if version is not None and (type(version) is not int or version<1):
+            raise ValueError('invalid_classification_version')
         if (item.get('status')!='queued' or item.get('currentRevision') is not True
             or item.get('leaseState')!='none' or type(item.get('retryCount')) is not int
             or item['retryCount']!=0 or item.get('nextRetryAt') is not None):

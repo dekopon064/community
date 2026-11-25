@@ -140,4 +140,54 @@ try {
   await btn("처리 결과 다시 확인").click();assert.equal(writes,originalWrites+1);assert.equal(await selected().count(),1);
   assert.ok(authReads>0);assert.deepEqual(errors,[]);
   console.log("PASS unconfirmed result retained row/selection and count; repeated state check was read-only. Pagination matrix: 60 cases.");
+  if(process.env.CLASSIFICATION_BROWSER_TEST==="1") {
+    // Captured only from test_initial_classification_queue.py's network-none synthetic DB.
+    const f=JSON.parse(await readFile(path.join(testCache,"classification-queue-fixture.json"),"utf8"));
+    const tab=await browser.newPage({serviceWorkers:"block"});
+    tab.setDefaultTimeout(7000);
+    let saved=false, saves=0, navigations=0;
+    await tab.route("**/*",async route=>{
+      const req=route.request(),url=new URL(req.url());
+      const reply=json=>route.fulfill({json:{mode:"database",...json}});
+      if(url.origin!=="http://fixture.invalid")return route.abort();
+      if(url.pathname==="/"){navigations++;return route.fulfill({contentType:"text/html",body:'<meta charset=utf-8><div id="root"></div><script src="/app.js"></script>'});}
+      if(url.pathname==="/app.js")return route.fulfill({contentType:"text/javascript",body:bundle});
+      if(url.pathname==="/api/admin/review") {
+        const items=saved?[]:[{id:f.native.id,sourceName:"myseoul_program",title:f.job.title,status:"open",reasons:["category_unresolved"]}];
+        return reply({items,total:items.length,hasMore:false,offset:0});
+      }
+      if(url.pathname==="/api/admin/myseoul-review/"+f.native.id)return reply({item:saved?f.nativeSaved:f.native});
+      if(url.pathname==="/api/admin/review-classification/"+f.native.id) {
+        if(req.method()==="POST"){
+          const input=req.postDataJSON();
+          assert.deepEqual(input.filters,f.saved.filters);assert.deepEqual(input.facts,f.saved.facts);
+          assert.equal(input.version,f.classification.version);saved=true;saves++;
+        }
+        return reply({item:saved?f.saved:f.classification});
+      }
+      if(url.pathname==="/api/admin/ai-queue")return reply({items:saved?[f.job]:[],waitingTotal:Number(saved),
+        checkedAt:new Date().toISOString(),offset:0,held:[],observed:[],hasMore:false});
+      return route.abort();
+    });
+    await tab.goto("http://fixture.invalid/");
+    const sidebar=tab.locator("aside");
+    await sidebar.getByText("남은 1건",{exact:true}).waitFor();
+    await sidebar.getByRole("button",{name:new RegExp(f.job.title.replace(/[()]/g,"."))}).click();
+    await tab.locator("#classification-category").selectOption("program");
+    for(const [field,value] of [["delivery","onsite"],["topic","culture_experience"],["audience","other"],["location","specific"]]){
+      const selector=tab.locator("#classification-filter-"+field+" select").first();
+      if(await selector.count())await selector.selectOption(value);
+    }
+    await tab.locator("#classification-filter-location select").nth(1).selectOption("11");
+    await tab.getByRole("button",{name:"분류·필수값 저장·재판정"}).click();
+    await sidebar.getByText("남은 0건",{exact:true}).waitFor();
+    assert.equal(await sidebar.locator("li").count(),0);
+    await tab.getByRole("button",{name:"AI 작업 대기",exact:true}).click();
+    const ai=tab.getByRole("region",{name:"AI 작업 대기",exact:true});
+    await ai.getByText("실행 가능한 AI 작업 · 남은 1건").waitFor();
+    assert.equal(await ai.getByRole("heading",{name:f.job.title,exact:true}).count(),1);
+    assert.equal(navigations,1);assert.equal(saves,1);
+    await tab.close();
+    console.log("PASS initial classification in the same tab: facts 1→0, executable AI 0→1, one save, no reload.");
+  }
 } finally {await browser.close();}
