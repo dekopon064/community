@@ -9,12 +9,15 @@ import AiQueueReview from './AiQueueReview';
 import type {AiReview} from '@/app/lib/review/ai-review';
 const sources={youthcenter_policy:"온통청년 정책",youthcenter_content:"온통청년 콘텐츠",seoul_reservation:"서울 공공서비스예약",myseoul_program:"마이서울플러스"};
 function time(value:string){return new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"short"}).format(new Date(value));}
-export default function AiQueuePanel({active,onBusy,onReview,execution}:{active:boolean;onBusy:(blocked:boolean)=>void;onReview:(item:AiReview)=>void;execution?:ReactNode}){
+export default function AiQueuePanel({active,onBusy,onReview,execution,movedSourceIds}:{active:boolean;onBusy:(blocked:boolean)=>void;onReview:(item:AiReview)=>void;execution?:ReactNode;movedSourceIds?:string[]}){
  const [selected,setSelected]=useState<string|null>(null),[detailBlocked,setDetailBlocked]=useState(false);
  const detailBusy=useCallback((blocked:boolean)=>{setDetailBlocked(blocked);onBusy(blocked);},[onBusy]);
  const [snapshot,setSnapshot]=useState<AiSnapshot|null>(null),[offset,setOffset]=useState(0);
  const [loading,setLoading]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const [mode,setMode]=useState("");
+ const [waitingTotal,setWaitingTotal]=useState<number|null>(null);
+ const selectedSource=useRef<string|null>(null);
+ const handledMoves=useRef<string[]|undefined>(undefined);
  const observation=useRef<Observation>({watched:new Map(),announced:new Set()});
  const flight=useRef<AbortController|null>(null),sequence=useRef(0);
  const load=useCallback(async(next:number)=>{
@@ -22,14 +25,15 @@ export default function AiQueuePanel({active,onBusy,onReview,execution}:{active:
   setLoading(true);setError("");setNotice("");
   try{
    const ids=[...observation.current.watched.keys()];
-   const response=await fetch(`/api/admin/ai-queue?offset=${next}${ids.length?"&watch="+ids.join(","):""}`,{cache:"no-store",credentials:"same-origin",signal:controller.signal});
+   const response=await fetch(`/api/admin/ai-queue?offset=${next}&includeTotal=1${ids.length?"&watch="+ids.join(","):""}`,{cache:"no-store",credentials:"same-origin",signal:controller.signal});
    const data=await response.json().catch(()=>null);
    if(!response.ok)throw new Error(data?.code??"unavailable");
    if(!["database","local-fixture"].includes(data?.mode))throw new Error("unavailable");
    const value=aiSnapshot(data);
    if(controller.signal.aborted||request!==sequence.current)return;
    if(value.observed.length!==ids.length||value.observed.some(j=>!ids.includes(j.jobId)))throw new Error("unavailable");
-   setNotice(observeAi(observation.current,value));setSnapshot(value);setOffset(next);setMode(data.mode);
+   if(!Number.isSafeInteger(data.waitingTotal)||data.waitingTotal<0||!Number.isSafeInteger(data.offset))throw new Error("unavailable");
+   setNotice(observeAi(observation.current,value));setSnapshot(value);setOffset(data.offset);setWaitingTotal(data.waitingTotal);setMode(data.mode);
   }catch(e){if(!controller.signal.aborted&&request===sequence.current){
    const code=e instanceof Error?e.message:"unavailable";
    if(["signed_out","forbidden"].includes(code)){observation.current={watched:new Map(),announced:new Set()};setSnapshot(null);setSelected(null);}
@@ -41,6 +45,17 @@ export default function AiQueuePanel({active,onBusy,onReview,execution}:{active:
   const currentFlight=flight;
   return()=>{if(timer!==null)clearTimeout(timer);currentFlight.current?.abort();};
  },[active,load]);
+ useEffect(()=>{
+  if(!movedSourceIds?.length || handledMoves.current===movedSourceIds) return;
+  handledMoves.current=movedSourceIds;
+  const moved=new Set(movedSourceIds);
+  if(selectedSource.current && moved.has(selectedSource.current)) {
+    selectedSource.current=null;setSelected(null);
+  }
+  setSnapshot(old=>old && {...old,items:old.items.filter(job=>!moved.has(job.sourceItemId)),held:old.held?.filter(job=>!moved.has(job.sourceItemId))});
+  setWaitingTotal(null);
+  if(active) void load(offset);
+ },[movedSourceIds,active,offset,load]);
  const waiting=snapshot?.items.filter(job=>job.status==='queued')??[];
  const activity=[...(snapshot?.items.filter(job=>job.status!=='queued')??[]),...(snapshot?.held??[])];
  return <section hidden={!active} aria-label="AI 작업 대기" aria-busy={loading} className="mt-5">
@@ -49,6 +64,7 @@ export default function AiQueuePanel({active,onBusy,onReview,execution}:{active:
    <button type="button" className={secondaryButton} disabled={loading||detailBlocked} onClick={()=>void load(offset)}>{loading?"확인 중…":"새로고침"}</button>
   </div>
   {execution}
+  {snapshot && <p>실행 가능한 AI 작업 · {waitingTotal===null ? (error ? '남은 건수 확인 필요' : '남은 건수 확인 중') : `남은 ${waitingTotal}건`}</p>}
   <p className="mt-3 text-sm leading-6 text-info-muted">{snapshot?`갱신 기준: ${time(snapshot.checkedAt)} (한국 시간)`:"수동으로 최신 상태를 확인합니다."} 화면에서 확인한 작업의 완료만 안내합니다.</p>
   {mode==="local-fixture"&&<p className="mt-3 text-sm text-info-status">로컬 시험 데이터 · 실제 운영 상태가 아닙니다.</p>}
   {error&&<div role="alert" className="my-5 border-y border-info-rule py-4 leading-7"><p className="text-info-status">AI 작업 목록을 불러오지 못했습니다. {failureText[error]??failureText.unavailable}</p>{snapshot&&<p className="mt-2 text-info-muted">아래는 마지막으로 확인한 상태입니다. 새로고침으로 다시 확인해 주세요.</p>}</div>}
@@ -58,7 +74,7 @@ export default function AiQueuePanel({active,onBusy,onReview,execution}:{active:
   {snapshot&&[{label:'실행 가능한 대기 항목',jobs:waiting},{label:'처리·실패·재검토 상태',jobs:activity}].map(group=>group.jobs.length>0&&<section key={group.label} aria-label={group.label} className="mt-6">
    <h3 className="font-semibold">{group.label}</h3>
    <ul className="mt-3 divide-y divide-info-rule border-y border-info-rule">{group.jobs.map(job=><li key={job.jobId} className="grid gap-3 py-5 sm:grid-cols-[minmax(0,1fr)_16rem]">
-   <div className="min-w-0"><h4 className="break-keep font-semibold leading-7">{job.title}</h4><p className="mt-1 text-sm leading-6 text-info-muted">{sources[job.sourceName]}</p><button type="button" className={`${secondaryButton} mt-3`} disabled={detailBlocked||loading} aria-expanded={selected===job.jobId} onClick={()=>setSelected(job.jobId)}>원문·확인값 보기</button></div>
+   <div className="min-w-0"><h4 className="break-keep font-semibold leading-7">{job.title}</h4><p className="mt-1 text-sm leading-6 text-info-muted">{sources[job.sourceName]}</p><button type="button" className={`${secondaryButton} mt-3`} disabled={detailBlocked||loading} aria-expanded={selected===job.jobId} onClick={()=>{selectedSource.current=job.sourceItemId;setSelected(job.jobId);}}>원문·확인값 보기</button></div>
    <div className="min-w-0"><p className="font-semibold text-info-status">{job.status==='cancelled'?'재검토 중 · AI 대기 보류':aiStateText(job)}</p>
     {(job.status==="failed"||job.status==="queued"&&(job.retryCount>0||job.nextRetryAt))&&<p className="mt-1 break-words text-sm leading-6 text-info-body">{aiFailureText(job)}</p>}
     {job.status==="queued"&&job.nextRetryAt&&<p className="mt-1 text-sm leading-6 text-info-muted">다시 시도할 수 있는 시각: {time(job.nextRetryAt)} · 실행 시각은 보장되지 않습니다.</p>}

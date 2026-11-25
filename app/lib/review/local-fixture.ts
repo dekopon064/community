@@ -18,7 +18,13 @@ export class LocalReviewStore implements ReviewStore {
   private blockedPublications = new Set<string>();
   constructor() { this.items = new Map(sampleItems().map((item) => [item.id, item])); }
   async list(kind: ReviewKind, offset = 0, scope: ReviewListScope = "pending") {
-    return [...this.items.values()].filter((item) => item.kind === kind && (scope === "published" ? item.kind === "candidates" && item.status === "published" : item.kind !== "candidates" || (item.status === "pending" || (item.status === "published" && item.source.name === "myseoul_program" && item.programInfo?.inputChanged && !item.programInfo.changeReviewed)))).slice(offset, offset + 25).map((item) => ({ id: item.id, title: item.kind === "facts" ? item.source.title : item.content.titleKo, sourceName: item.source.name, status: item.status, reasons: item.kind === "facts" ? [...item.reasons] : [] }));
+    const pending = [...this.items.values()].filter(item => {
+      if(item.kind!==kind) return false;
+      if(scope==='published') return item.kind==='candidates' && item.status==='published';
+      if(item.kind==='facts') return item.status==='open';
+      return item.status==='pending' || (item.status==='published' && item.source.name==='myseoul_program' && item.programInfo?.inputChanged && !item.programInfo.changeReviewed);
+    });
+    return pending.slice(offset, offset + 25).map((item) => ({ id: item.id, title: item.kind === "facts" ? item.source.title : item.content.titleKo, sourceName: item.source.name, status: item.status, reasons: item.kind === "facts" ? [...item.reasons] : [] }));
   }
   async get(kind: ReviewKind, id: string, scope: ReviewListScope = "pending") {
     const item = this.items.get(id);

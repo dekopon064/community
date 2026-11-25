@@ -20,7 +20,7 @@ async function readReport(id?:string,signal?:AbortSignal):Promise<SuitabilityRep
   return report;
 }
 
-export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boolean;disabled:boolean;run?:WorkerRun;start:()=>void}) {
+export default function SuitabilityPanel({locked,disabled,run,start,onMoved}:{locked:boolean;disabled:boolean;run?:WorkerRun;start:()=>void;onMoved?:(rows:SuitabilityRow[])=>void}) {
   const [report,setReport] = useState<SuitabilityReport|null>(null);
   const [checked,setChecked] = useState<string[]>([]);
   const [confirm,setConfirm] = useState(false);
@@ -30,11 +30,14 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
   const [notice,setNotice] = useState('');
   const [refresh,setRefresh] = useState(0);
   const submitting = useRef(false);
+  const notified = useRef(new Set<string>());
+  const moveRun = useRef<string|null>(null);
   const startPending = useRef(false);
   const requestId = run?.requestId;
   const active = run?.state==='running';
   useEffect(()=>{
     startPending.current=false;
+    notified.current.clear();
     setChecked([]); setConfirm(false); setResults({}); setLastBatch([]);
   },[requestId]);
   useEffect(()=>{ if(!locked) startPending.current=false; },[locked]);
@@ -50,6 +53,14 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
     }).catch(()=>{if(!controller.signal.aborted) setNotice('점검 결과를 읽지 못했습니다. 결과를 다시 확인해 주세요.');});
     return ()=>controller.abort();
   },[requestId,active,refresh]);
+  useEffect(()=>{
+    if(!report || moveRun.current!==report.id || (requestId && requestId!==report.id)) return;
+    const confirmed = report.items.filter(row=>!notified.current.has(row.id) &&
+      (results[row.id]==='moved' || (results[row.id]==='unknown' && row.moved)));
+    if(!confirmed.length) return;
+    for(const row of confirmed) notified.current.add(row.id);
+    onMoved?.(confirmed);
+  },[report,requestId,results,onMoved]);
   const reportItems = report?.items ?? [];
   const movedIds = new Set(reportItems.filter(row=>row.moved || results[row.id]==='moved').map(row=>row.id));
   const items = reportItems.filter(row=>!movedIds.has(row.id));
@@ -62,6 +73,7 @@ export default function SuitabilityPanel({locked,disabled,run,start}:{locked:boo
   const busy = disabled || saving || active || !!(requestId && report?.id!==requestId);
   async function move() {
     if(!report || busy || submitting.current || !confirm || !selected.length) return;
+    moveRun.current=report.id;
     submitting.current=true; setSaving(true); setConfirm(false);
     const updates:Record<string,Outcome>={};
     try {

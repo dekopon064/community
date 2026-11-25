@@ -84,6 +84,7 @@ try {
     if(u.origin!==origin) {await route.abort();return;}
     if(u.pathname==="/"){await route.fulfill({contentType:"text/html",body:'<html><body><div id="root"></div><script src="/bundle.js"></script></body></html>'});return;}
     if(u.pathname==="/bundle.js"){await route.fulfill({contentType:"text/javascript; charset=utf-8",body:bundle});return;}
+    if(u.pathname==="/api/admin/suitability" && req.method()==="GET"){await route.fulfill({json:{report:null}});return;}
     if(u.pathname!=="/api/admin/review" && !/^\/api\/admin\/review\/candidates\/[\da-f-]+$/.test(u.pathname)){await route.fulfill({status:404,json:{code:"not_found"}});return;}
     const request=new Request(req.url(),{method:req.method(),headers:{Origin:origin,"Content-Type":"application/json"},...(req.method()==="POST"?{body:req.postData()}:{})});
     const response=u.pathname==="/api/admin/review"?await listReviews(request,deps):await reviewDetail(request,"candidates",u.pathname.split("/").at(-1),deps);
