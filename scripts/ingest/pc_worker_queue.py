@@ -33,6 +33,7 @@ def frozen_queue_targets(adapter,*,sources,progress=lambda counts:None):
                 if response['hasMore'] and not response['items']:raise ValueError()
                 for item in response['items']:
                     row={key:item[key] for key in FIELDS}
+                    row['classificationVersion']=item.get('classificationVersion')
                     job=str(UUID(row['jobId']));UUID(row['sourceItemId'])
                     if (job in jobs or not re.fullmatch('[a-f0-9]{64}',row['revision'])
                         or not isinstance(row['sourceName'],str) or not re.fullmatch('[a-z_]{1,40}',row['sourceName'])
@@ -47,7 +48,8 @@ def frozen_queue_targets(adapter,*,sources,progress=lambda counts:None):
                 for item in eligible:
                     key=(item['sourceName'],str(UUID(item['sourceItemId'])),item['revision'])
                     if key not in seen:
-                        seen.add(key);targets.append({**{key:item[key] for key in FIELDS}, 'title':item.get('title')})
+                        seen.add(key);targets.append({**{key:item[key] for key in FIELDS}, 'title':item.get('title'),
+                            'classificationVersion':item.get('classificationVersion')})
             except (ValueError,TypeError,KeyError,AttributeError):
                 raise QueueSnapshotError('queue_snapshot_invalid') from None
             progress({'snapshot_read_pages':reads})

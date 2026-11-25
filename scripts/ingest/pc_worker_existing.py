@@ -120,6 +120,12 @@ class ExistingWorkers:
         def process(item):
             run,summarize=workers[SOURCES[item['sourceName']]['ai']]
             try:
+                if item.get('classificationVersion') is not None:
+                    from ingest.reclassification_ai import process_reclassified_job
+                    return process_reclassified_job(adapter,source_item_id=item['sourceItemId'],revision=item['revision'],
+                        classification_version=item['classificationVersion'],queued_job_id=item['jobId'],
+                        summarize_ko=getattr(provider,summarize),translate_ja=provider.translate_ja,
+                        worker_id='pc-ai-'+uuid4().hex,no_retry=True)
                 return run(adapter,source_item_id=item['sourceItemId'],revision=item['revision'],
                     summarize_ko=getattr(provider,summarize),translate_ja=provider.translate_ja,worker_id='pc-ai-'+uuid4().hex,
                     no_retry=True)

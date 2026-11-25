@@ -74,8 +74,9 @@ export default function ReviewWorkspace() {
   const [error, setError] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
-  const programResult = useCallback((next: { id: string; status: string; source: { title: string; name?: string }; result: { reasons: string[] } }) => {
+  const programResult = useCallback((next: { id: string; status: string; aiStatus?: string; source: { title: string; name?: string }; result: { reasons: string[] } }) => {
     if (next.status==='resolved' || next.status==='excluded') { setFactsTotal(null);setReload(n=>n+1); }
+    if (next.status==='resolved' && next.aiStatus==='queued') setNotice(`${next.source.title} · AI 작업 대기에 등록됐습니다.`);
     setList(old => old.flatMap(entry => entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, title: next.source.title, status: next.status, reasons: next.status === "open" ? next.result.reasons : [] } : entry]));
     if (next.status === "excluded") { setProgramId(null); setMyseoulId(null); setNotice("제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다."); }
   }, []);
