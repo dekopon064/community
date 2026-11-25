@@ -14,7 +14,7 @@ import unicodedata
 
 from ingest.ai_errors import ValidationError, validation_location
 from ingest.body_sections import normalize_schedule_heading
-from ingest.body_markdown import read_body, inline_text, comparison_text, strong_spans, is_weekday_matrix
+from ingest.body_markdown import read_body, inline_text, comparison_text, strong_spans, is_weekday_matrix, link_targets
 
 _HEADERS = {
     "한 줄 요약": "要約", "대상": "対象", "일정 안내": "日程案内",
@@ -303,12 +303,14 @@ def _advisory(report, **location):
         report(error)
 
 
+def _validate_links(korean: str, japanese: str) -> None:
+    required = Counter(link_targets(korean, _URL))
+    if required and required - Counter(link_targets(japanese, _URL)):
+        raise ValidationError('official_link', 'missing')
+
+
 def _validate_field(korean: str, japanese: str, *, known_years: frozenset = frozenset(), report=None, field=None) -> None:
     korean, japanese = comparison_text(korean), comparison_text(japanese)
-    # URLs are opaque. Do not NFKC-normalize their path, query or identifiers.
-    with _advisory(report, field=field):
-        if Counter(_URL.findall(korean)) - Counter(_URL.findall(japanese)):
-            raise ValidationError('official_link', 'missing')
     ko, ja = _normal(korean), _normal(japanese)
     with _advisory(report, field=field):
         _require_present('fee_amount', _amounts(ko, japanese=False), _amounts(ja, japanese=True))
@@ -412,6 +414,7 @@ def _explicit_source_cell(text: str) -> str:
 
 
 def _validate_cell(korean: str, japanese: str, *, known_years: frozenset = frozenset()) -> None:
+    _validate_links(korean, japanese)
     raw_ko, raw_ja = inline_text(korean), inline_text(japanese)
     # Check opaque URLs before NFKC/source notation normalization.
     known_years = known_years or _date_year_context(raw_ko)
@@ -478,6 +481,7 @@ def _validate_markdown(korean: str, japanese: str, *, report=None, seoul_grouped
         grouped = seoul_grouped and is_weekday_matrix(source.headers, grouped=True) and tuple(map(inline_text, source.headers[1:])) == ("평일", "주말")
         for column, (source_header, target_header) in enumerate(zip(source.headers, target.headers), 1):
             with _advisory(report, field='body', table=table, row=0, column=column):
+                _validate_links(source_header, target_header)
                 _validate_role_label(source_header, target_header)
                 if grouped and column > 1:
                     valid = {'平日'} if column == 2 else {'週末', '土日', '土・日'}
@@ -497,8 +501,8 @@ def _validate_markdown(korean: str, japanese: str, *, report=None, seoul_grouped
         with _advisory(report, field='body', item=index):
             if (source.section, source.indent, source.number) != (target.section, target.indent, target.number):
                 raise ValidationError('list_item_shape', 'mismatch')
-            _validate_cell(source.text, target.text, known_years=known_years)
-    source_bold, target_bold = strong_spans(korean), strong_spans(japanese)
+            _validate_cell(source.markdown, target.markdown, known_years=known_years)
+    source_bold, target_bold = strong_spans(korean, markdown=True), strong_spans(japanese, markdown=True)
     with _advisory(report, field='body'):
         if source_bold and not target_bold:
             raise ValidationError('emphasis', 'missing')
@@ -558,10 +562,14 @@ def validate_translation_fidelity(title_ko: str, content_ko: str, title_ja: str,
     content_ko = normalize_schedule_heading(content_ko, 'ko')
     content_ja = normalize_schedule_heading(content_ja, 'ja')
     with _advisory(report, field='title'):
+        _validate_links(title_ko, title_ja)
+    with _advisory(report, field='title'):
         _validate_field(title_ko, title_ja, known_years=_date_year_context(title_ko), report=report, field='title')
     with _advisory(report, field='body'):
         # Structured cells are checked before the body-wide inventory.
         _validate_markdown(content_ko, content_ja, report=report, seoul_grouped=seoul_grouped)
+    with _advisory(report, field='body'):
+        _validate_links(content_ko, content_ja)
     with _advisory(report, field='body'):
         _validate_field(content_ko, content_ja, known_years=_date_year_context(content_ko), report=report, field='body')
     expected = [_HEADERS[h] for h in re.findall(r"(?m)^\s*\[([^\]\n]+)\]", content_ko) if h in _HEADERS]
