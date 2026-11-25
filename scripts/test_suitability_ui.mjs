@@ -25,9 +25,10 @@ let browser;
 try {
  const loader=join(dir,'loader.cjs'),entry=join(dir,'entry.cjs');
  writeFileSync(loader,'const ts=require('+JSON.stringify(require.resolve('typescript'))+');module.exports=function(src){return ts.transpileModule(src,{fileName:this.resourcePath,compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText}');
- writeFileSync(entry,`const React=require('react');const {createRoot}=require('react-dom/client');const P=require('@/app/components/admin/PcWorkerPanel');createRoot(document.getElementById('root')).render(React.createElement(P.PcWorkerProvider,null,React.createElement(P.default)));`);
+ writeFileSync(entry,`const React=require('react');const {createRoot}=require('react-dom/client');const Workspace=require('@/app/components/admin/ReviewWorkspace').default;createRoot(document.getElementById('root')).render(React.createElement(Workspace));`);
  await new Promise((ok,fail)=>webpack({mode:'development',entry,devtool:false,output:{path:dir,filename:'app.js'},
-  resolve:{modules:[resolve('node_modules'),'node_modules'],extensions:['.tsx','.ts','.js','.json'],alias:{'@':resolve('.')}},
+  plugins:[new webpack.DefinePlugin({'process.env':JSON.stringify({NODE_ENV:'development'})})],
+  resolve:{modules:[resolve('node_modules'),'node_modules'],extensions:['.tsx','.ts','.js','.mjs','.json'],alias:{'@':resolve('.')}},
   module:{rules:[{test:/\.tsx?$/,use:loader},{test:/\.css$/,type:'asset/source'}]}
  },(err,stats)=>err||stats?.hasErrors()?fail(err||Error(stats.toString({all:false,errors:true}))):ok()));
  registerHooks({resolve(name,ctx,next){try{return next(name,ctx);}catch(error){if(name.startsWith('.')&&!/\.[a-z]+$/i.test(name))return next(name+'.ts',ctx);throw error;}},
@@ -44,17 +45,40 @@ try {
  let run=null,report=null,requestId,command,calls=0,moves=[],lose=false;
  let skipItem=rows[1].id, failItem, interruptItem, loseBeforeSave;
  const attempted=[];
+ let moveGate;
  const output=()=>({busy:false,run});
  const deps={authorize:async()=>({userId:actor}),client:()=>({rpc:async(name,args)=>{
    if(name==='suitability_report') return {data:report,error:null};
    assert.equal(name,'suitability_exclude');assert.equal(args.p_actor,actor);assert.equal(args.p_run,report.id);
    moves.push(args.p_item);
+   if(moveGate)await moveGate;
    const row=rows.find(item=>item.id===args.p_item);
    if(row.id===skipItem)return {data:'skipped',error:null};
    if(row.id===failItem)return {data:null,error:{code:'PT422'}};
    row.moved=true;return {data:'moved',error:null};
  }})};
  const denied=await suitabilityRequest(new Request(origin+'/api/admin/suitability'),{authorize:async()=>{throw new AdminAccessError('forbidden');},client:()=>assert.fail()});
+ const {listReviews,reviewDetail}=await import('../app/lib/review/handlers.ts');
+ const {LocalReviewStore}=await import('../app/lib/review/local-fixture.ts');
+ const {DatabaseReviewStore}=await import('../app/lib/review/database-store.ts');
+ const {DatabaseAiQueueStore}=await import('../app/lib/review/ai-queue.ts');
+ const {readAiQueue}=await import('../app/lib/review/ai-handlers.ts');
+ const fixture=new LocalReviewStore();
+ const [draft]=await fixture.list('facts');
+ const factsDeps={authorize:deps.authorize,store:()=>new DatabaseReviewStore({rpc:async(name,args)=>{
+   assert.equal(name,'admin_review_list');
+   const facts=[draft,...rows.filter(r=>r.queue==='facts'&&!r.moved).map(r=>({id:r.id,sourceName:r.source,title:r.title,status:'open',reasons:[]}))];
+   return {data:facts.slice(args.p_offset,args.p_offset+25),error:null};
+ }})};
+ const jobs=rows.map(r=>({jobId:crypto.randomUUID(),sourceItemId:r.id,title:r.title,sourceName:r.source,revision:'a'.repeat(64),currentRevision:true,
+   status:'queued',completedAt:null,retryCount:0,nextRetryAt:null,leaseState:'none',errorCode:null,resultState:null}));
+ const extraJobs=Array.from({length:25},(_,i)=>({...jobs[1],jobId:crypto.randomUUID(),sourceItemId:crypto.randomUUID(),title:'다른 대기 항목 '+i}));
+ const aiDeps={authorize:deps.authorize,store:()=>new DatabaseAiQueueStore({rpc:async(name,args)=>{
+   assert.equal(name,'admin_review_ai_queue');
+   const current=[...jobs.filter((j,i)=>rows[i].queue==='ai'&&!rows[i].moved),...extraJobs];
+   return {data:{checkedAt:new Date().toISOString(),items:current.slice(args.p_offset,args.p_offset+25),hasMore:current.length>args.p_offset+25,
+     observed:args.p_watch.map(id=>current.find(j=>j.jobId===id)??{jobId:id,status:'missing'})},error:null};
+ }})};
  assert.equal(denied.status,403);
  const cross=await suitabilityRequest(new Request(origin+'/api/admin/suitability',{method:'POST',headers:{origin:'https://unrelated.invalid'}}),deps);
  assert.equal(cross.status,403);
@@ -83,6 +107,13 @@ try {
  await page.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());
   const json=data=>route.fulfill({json:data});
+  const respond=async promise=>{const response=await promise;return route.fulfill({status:response.status,json:await response.json()});};
+  if(url.origin===origin && url.pathname.startsWith('/api/admin/review/facts/')){
+    assert.equal(req.method(),'GET');
+    return respond(reviewDetail(new Request(url),'facts',draft.id,{authorize:deps.authorize,store:()=>fixture}));
+  }
+  if(url.origin===origin && url.pathname==='/api/admin/review')return respond(listReviews(new Request(url),factsDeps));
+  if(url.origin===origin && url.pathname==='/api/admin/ai-queue')return respond(readAiQueue(new Request(url),aiDeps));
   if(url.origin===origin && url.pathname==='/')return route.fulfill({contentType:'text/html',body:'<meta charset=utf-8><title>로컬 합성 시험</title><div id=root></div><script src=/app.js></script>'});
   if(url.origin===origin && url.pathname==='/app.js')return route.fulfill({path:join(dir,'app.js'),contentType:'text/javascript'});
   if(url.origin===origin && url.pathname==='/api/admin/pc-worker'){
@@ -167,7 +198,7 @@ try {
  assert.equal(await page.locator('input:checked').count(),0);
  assert.equal(rows[3].moved,false);
  assert.equal(await page.getByRole('heading',{name:/제외 권장/}).count(),0);
- assert.equal(await page.getByRole('checkbox').filter({visible:true}).count(),1);
+ assert.equal(await page.getByRole('region',{name:'콘텐츠 적합성 점검'}).getByRole('checkbox').count(),1);
  await box(3).check();
  await confirmMove(1);
  await page.getByText('남은 점검 항목이 없습니다.').waitFor();
@@ -197,6 +228,47 @@ try {
  await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 1건 · 결과 불명 1건'}).waitFor();
  assert.ok(await box(1).isDisabled());assert.ok(await box(2).isChecked());assert.ok(await box(2).isEnabled());
  assert.deepEqual(attempted,ids.slice(0,2));assert.deepEqual(moves,[ids[0]]);
+ const aside=page.getByRole('complementary',{name:'검토 목록'});
+ await aside.getByText('남은 2건',{exact:true}).waitFor();
+ assert.equal(await aside.getByText(rows[0].title,{exact:true}).count(),0);
+ assert.equal(await aside.getByText(rows[2].title,{exact:true}).count(),1);
+ await page.getByRole('button',{name:'AI 작업 대기',exact:true}).click();
+ const ai=page.getByRole('region',{name:'AI 작업 대기',exact:true});
+ await ai.getByText('실행 가능한 AI 작업 · 남은 27건').waitFor();
+ await ai.getByRole('heading',{name:rows[1].title}).waitFor();
+ // The write outcome was unknown. Only a later read confirms it.
+ rows[1].moved=true;
+ await page.getByRole('button',{name:'점검 결과 다시 확인'}).click();
+ await ai.getByText('실행 가능한 AI 작업 · 남은 26건').waitFor();
+ assert.equal(await ai.getByRole('heading',{name:rows[1].title}).count(),0);
+ assert.equal(await ai.getByRole('heading',{name:rows[3].title}).count(),1);
+ assert.deepEqual(attempted,ids.slice(0,2));
+ await resetSelection();
+ await aside.getByText(draft.title,{exact:true}).click();
+ const note=page.locator('#review-note');
+ await note.waitFor();
+ let finishMove;
+ moveGate=new Promise(resolve=>{finishMove=resolve;});
+ await confirmMove(3);
+ await note.fill('작성 중인 다른 항목 메모');
+ finishMove();moveGate=null;
+ await aside.getByText('남은 1건',{exact:true}).waitFor();
+ assert.equal(await note.inputValue(),'작성 중인 다른 항목 메모');
+ assert.equal(await aside.locator('button[aria-current="true"]').count(),1);
+ assert.equal(await aside.getByText(rows[0].title,{exact:true}).count(),0);
+ assert.equal(await aside.getByText(rows[2].title,{exact:true}).count(),0);
+ await page.getByRole('button',{name:'수정 취소',exact:true}).click();
+ await page.getByRole('button',{name:'AI 작업 대기',exact:true}).click();
+ await ai.getByText('실행 가능한 AI 작업 · 남은 26건').waitFor();
+ await ai.getByRole('button',{name:'다음 목록'}).click();
+ await ai.getByRole('heading',{name:'다른 대기 항목 24',exact:true}).waitFor();
+ assert.equal(await ai.getByRole('button',{name:'이전 목록'}).isEnabled(),true);
+ await box(3).check();
+ await confirmMove(1);
+ await ai.getByText('실행 가능한 AI 작업 · 남은 25건').waitFor();
+ assert.equal(await ai.getByRole('button',{name:'이전 목록'}).isEnabled(),false);
+ assert.equal(await ai.getByRole('heading',{name:rows[3].title}).count(),0);
+ assert.deepEqual(moves,ids);
  assert.equal(calls,1);
- console.log('PASS empty and nonempty Node POST, fake auth, multi-select success, 422 stop and explicit retry, item-level failure, version skip, lost responses before/after save, counts and retained selections');
+ console.log('PASS suitability trash regressions, same-tab facts and AI queues, full waiting totals across pages, confirmed-only updates, lost-response reconciliation, pagination and unrelated unsaved edits');
 } finally {if(browser)await browser.close();if(existsSync(dir))rmSync(dir,{recursive:true});}

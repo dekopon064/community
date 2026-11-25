@@ -20,6 +20,7 @@ import { myseoulGuidance } from "@/app/lib/review/myseoul-contract";
 import AiQueuePanel from "./AiQueuePanel";
 import PcWorkerPanel,{PcWorkerProvider,PcAiRunPanel} from './PcWorkerPanel';
 import type {AiReview} from '@/app/lib/review/ai-review';
+import type {SuitabilityRow} from '@/app/lib/review/suitability';
 import TrashPanel from "./TrashPanel";
 import { quickReasons } from "@/app/lib/review/trash";
 import type { QuickReason } from "@/app/lib/review/trash";
@@ -74,6 +75,7 @@ export default function ReviewWorkspace() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
   const programResult = useCallback((next: { id: string; status: string; source: { title: string; name?: string }; result: { reasons: string[] } }) => {
+    if (next.status==='resolved' || next.status==='excluded') { setFactsTotal(null);setReload(n=>n+1); }
     setList(old => old.flatMap(entry => entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, title: next.source.title, status: next.status, reasons: next.status === "open" ? next.result.reasons : [] } : entry]));
     if (next.status === "excluded") { setProgramId(null); setMyseoulId(null); setNotice("제외했습니다. 제외 시각부터 72시간 이내에 휴지통에서 복구할 수 있습니다."); }
   }, []);
@@ -84,6 +86,8 @@ export default function ReviewWorkspace() {
   const [mode, setMode] = useState<"database" | "local-fixture" | null>(null);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [factsTotal,setFactsTotal] = useState<number|null>(null);
+  const [aiMoved,setAiMoved] = useState<string[]>([]);
   const [candidateTotal, setCandidateTotal] = useState<number | null>(null);
   const [nextIndex, setNextIndex] = useState<number | null>(null);
   const listGeneration = useRef(0);
@@ -118,18 +122,37 @@ export default function ReviewWorkspace() {
     const controller = new AbortController();
     const generation = ++listGeneration.current;
     const current = () => !controller.signal.aborted && generation === listGeneration.current;
-    const scope = kind === "published" ? "&status=published" : kind === "candidates" ? "&includeTotal=1" : "";
+    const scope = kind === "published" ? "&status=published" : "&includeTotal=1";
     call(`/api/admin/review?kind=${kind === "published" ? "candidates" : kind}&offset=${offset}${scope}`, undefined, controller.signal).then((data) => {
       if (!current()) return;
-      if (kind === "candidates") {
+      if (kind !== "published") {
         if (!Number.isSafeInteger(data.total) || data.total < 0 || !Number.isSafeInteger(data.offset)) throw new RequestFailure("unavailable");
-        setCandidateTotal(data.total);
+        if(kind==='facts') setFactsTotal(data.total);
+        else setCandidateTotal(data.total);
         setOffset(data.offset);
       }
       setList(data.items); setMode(data.mode); setHasMore(data.hasMore); setError(""); setLoading(false);
     }).catch((e) => { if (current()) { setError(e instanceof RequestFailure ? e.code : "unavailable"); setLoading(false); } });
     return () => controller.abort();
   }, [kind, reload, offset]);
+
+  function suitabilityMoved(rows:SuitabilityRow[]) {
+    const movedAi = rows.filter(row=>row.queue==='ai').map(row=>row.id);
+    if(movedAi.length) setAiMoved(movedAi);
+    if(kind!=='facts') return;
+    const movedFacts = new Set(rows.filter(row=>row.queue==='facts').map(row=>row.id));
+    if(!movedFacts.size) return;
+    ++listGeneration.current;
+    setList(old=>old.filter(entry=>!movedFacts.has(entry.id)));
+    setFactsTotal(null);
+    setReload(n=>n+1);
+    const selectedId = programId ?? myseoulId ?? item?.id;
+    if(selectedId && movedFacts.has(selectedId)) {
+      setProgramId(null);setMyseoulId(null);setItem(null);setFacts(null);
+      setNote('');setChangeNote('');setConfirmation(null);setErrors({});
+      setNotice('선택한 항목을 휴지통으로 이동했습니다.');
+    }
+  }
 
   // Move focus with the task, especially when the mobile detail is below the list.
   useEffect(() => { if (item && !silentSave.current) focusTask(detailHeading.current); }, [item]);
@@ -222,6 +245,7 @@ export default function ReviewWorkspace() {
         return;
       }
       accept(next); setChangeNote("");
+      if (next.kind==='facts' && (next.status==='resolved' || next.status==='excluded')) { setFactsTotal(null);setReload(n=>n+1); }
       setList((old) => old.flatMap((entry) => next.kind === "facts" && entry.id === next.id && ["resolved", "excluded"].includes(next.status) ? [] : [entry.id === next.id ? { ...entry, status: next.status, title: next.kind === "candidates" ? next.content.titleKo : next.source.title, reasons: next.kind === "facts" ? next.reasons : [] } : entry]));
       const result = command.action === "save_facts" && next.kind === "facts" ?
         next.status === "excluded" ? "사실 저장 후 대상 부적격으로 판정되었습니다. AI는 진행하지 않습니다." : `사실을 저장했습니다. 남은 확인 사유 ${next.reasons.length}개. ${aiStatusText[next.aiStatus]} 저장 요청에서 AI를 실행하지 않았습니다.` :
@@ -255,7 +279,7 @@ export default function ReviewWorkspace() {
   const source = item ? sourceLink(item.source.url) : null;
 
   return <PcWorkerProvider><div className="mt-8">
-    <PcWorkerPanel disabled={busy || dirty || Boolean(confirmation)} />
+    <PcWorkerPanel disabled={busy || dirty || Boolean(confirmation)} onSuitabilityMoved={suitabilityMoved} />
     <nav aria-label="검토 단계" className="flex flex-wrap gap-2 border-b border-info-rule pb-4">
       <Link href="/ko/admin/living" className={secondaryButton} aria-disabled={busy||dirty||Boolean(confirmation)} onClick={event=>{if(busy||dirty||confirmation)event.preventDefault();}}>생활 글 작성</Link>
       <button type="button" aria-current={kind === "facts" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("facts")} className={kind === "facts" ? primaryButton : secondaryButton}>사람 사실 review</button>
@@ -265,7 +289,7 @@ export default function ReviewWorkspace() {
       <button type="button" aria-current={kind === "trash" ? "page" : undefined} disabled={busy || dirty || Boolean(confirmation)} onClick={() => switchKind("trash")} className={kind === "trash" ? primaryButton : secondaryButton}>휴지통</button>
     </nav>
     <TrashPanel active={kind === "trash"} onBusy={trashBusy} onRestored={restored} />
-    <AiQueuePanel active={kind === "ai"} onBusy={setAiBlocked} onReview={openAiRecheck} execution={<PcAiRunPanel disabled={busy || dirty || Boolean(confirmation)} onReviewCandidates={()=>switchKind("candidates")}/>}/>
+    <AiQueuePanel active={kind === "ai"} movedSourceIds={aiMoved} onBusy={setAiBlocked} onReview={openAiRecheck} execution={<PcAiRunPanel disabled={busy || dirty || Boolean(confirmation)} onReviewCandidates={()=>switchKind("candidates")}/>}/>
     <div hidden={kind === "ai" || kind === "trash"}>
     <p className="my-5 max-w-3xl leading-7 text-info-body">{kind === "facts" ? "원문에서 사실을 확인하고 부족한 판단을 입력하세요. 사실 검토를 통과하면 AI 대기 여부를 확인할 수 있습니다." : publishedMode ? "게시된 글의 한국어·일본어 상세 본문을 수정합니다. ‘공개 본문 저장’은 현재 공개 글에 직접 반영되며, 수정 사유와 전후 이력을 남깁니다." : publicChange ? "공개된 콘텐츠의 원문 변경을 확인합니다. ‘공개 내용 수정·변경 확인’은 현재 공개 글에 직접 반영됩니다." : "AI가 작성한 두 언어의 내용을 확인하세요. 수정 저장은 비공개이며, 최종 공개는 ‘승인하고 게시’로 처리합니다."}</p>
     {loading ? <p className="border-y border-info-rule py-8 text-info-muted" role="status">검토 목록을 불러오는 중입니다.</p> : mode === "local-fixture" && (!error || list.length > 0) ? <p className="mb-6 border-y border-info-rule py-3 text-sm leading-6 text-info-status">로컬 시험 데이터 · 실제 저장·게시 아님 · 서버 재시작 시 시험 내용이 초기화됩니다.</p> : null}
@@ -290,6 +314,7 @@ export default function ReviewWorkspace() {
     {!loading && <div className="grid gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <aside aria-label="검토 목록" className="min-w-0">
         <h2 className="mb-3 text-lg font-bold">{kind === "facts" ? "사실 확인 항목" : publishedMode ? "게시된 글" : "결과 후보"}
+          {kind === "facts" && <span className="ml-2 text-sm font-normal">{factsTotal===null ? (error ? "남은 건수 확인 필요" : "남은 건수 확인 중") : `남은 ${factsTotal}건`}</span>}
           {kind === "candidates" && <span className="ml-2 text-sm font-normal">{candidateTotal === null ? (error ? "남은 건수 확인 필요" : "남은 건수 확인 중") : `남은 ${candidateTotal}건`}</span>}
         </h2>
         {!list.length && !error && (kind !== "candidates" || candidateTotal === 0) && <p className="py-6 leading-7 text-info-muted">현재 검토할 항목이 없습니다. 새 항목이 준비되면 이 목록에서 확인할 수 있습니다.</p>}

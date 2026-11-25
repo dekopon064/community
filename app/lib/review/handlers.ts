@@ -35,7 +35,7 @@ export async function listReviews(request: Request, deps: Dependencies) {
     if (!/^\d{1,6}$/.test(rawOffset)) throw new ReviewFailure("invalid_input");
     const scope = reviewScope(request, kind);
     const store = deps.store();
-    if (kind === "candidates" && scope === "pending" && new URL(request.url).searchParams.get("includeTotal") === "1") {
+    if (scope === "pending" && new URL(request.url).searchParams.get("includeTotal") === "1") {
       const page = await candidateQueuePage(offset => store.list(kind, offset, scope), Number(rawOffset));
       return privateResponse(Response.json({ mode: store.mode, ...page }));
     }
