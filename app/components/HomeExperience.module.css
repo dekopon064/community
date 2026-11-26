@@ -50,6 +50,8 @@
 .featuredCard { width: 100%; min-height: 280px; padding: 20px 28px; border-radius: 16px; background: var(--home-card-main,#E8E8F3); box-shadow: var(--shadow-premium-sm); }
 .cardGrid { display: grid; grid-template-columns: minmax(0,1fr) 210px; grid-template-rows: auto 1fr auto auto; column-gap: 24px; row-gap: 12px; height: 100%; align-content: start; }
 .cardGrid h3 { font-size: 27px; font-weight: 650; line-height: 1.5; letter-spacing: -.025em; overflow-wrap: anywhere; text-wrap: pretty; }
+.cardHeading {grid-column:1;grid-row:1;min-width:0;}
+.cardHeading p {font-size:13px;color:var(--color-info-body);margin-bottom:4px;}
 .titleContext { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 500; line-height: 1.7; letter-spacing: 0; }
 .poster { grid-column: 2; grid-row: 1 / 5; display: flex; align-items: center; justify-content: center; min-width: 0; }
 .poster img { max-height: 248px; width: 100%; height: auto; object-fit: contain; }

@@ -138,7 +138,7 @@ export function programTiming(item: PublicCurationItem, now: number): ProgramTim
   const end = deadline ? endpointBoundary(deadline,true) : null;
   return {state,deadline,deadlineKind:kind,group:state==='closed'?2:end!==null?0:1,order:end===null?Infinity:state==='closed'?-end:end};
 }
-function occurrences(item: PublicCurationItem): FilterOccurrence[] {
+export function occurrences(item: PublicCurationItem): FilterOccurrence[] {
   const data = metadata(item);
   if (data) return data.schedule.status === 'known' ? data.schedule.value.occurrences : [];
   const start = day(item.event_start_on), end = day(item.event_end_on);

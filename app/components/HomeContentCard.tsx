@@ -15,11 +15,12 @@ export default function HomeContentCard({ item, locale, featured = false, layout
   const colors = homeCardColors(item.tone, !!image || item.toneManual === true);
   const words = homeWords(locale);
   const parts = item.title.match(/^(\([^)]*\)|（[^）]*）|\[[^\]]*\])([\s\S]+)$/);
+  const heading = <h3>{parts ? <><span className={styles.titleContext}>{parts[1]}</span><span>{parts[2]}</span></> : item.title}</h3>;
   return <Link feedback="card" href={`/info/${item.slug}`} className={`${styles.contentCard} ${featured ? styles.featuredCard : layout === 'living' ? styles.livingCard : styles.listCard}`}
     data-image={image ? 'true' : 'false'} data-tone={featured ? colors.tone : undefined}
     style={featured ? colors.style as CSSProperties : undefined} draggable={false}>
     <article className={styles.cardGrid}>
-      <h3>{parts ? <><span className={styles.titleContext}>{parts[1]}</span><span>{parts[2]}</span></> : item.title}</h3>
+      {featured && item.cultureContext ? <div className={styles.cardHeading}><p>{item.cultureContext}</p>{heading}</div> : heading}
       {image && <div className={styles.poster}><Image src={image} alt="" width={280} height={320} unoptimized
         draggable={false} referrerPolicy="no-referrer" onError={() => setFailed(image)} /></div>}
       <p className={styles.summary}>{item.summary}</p>

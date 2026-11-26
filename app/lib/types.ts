@@ -4,6 +4,7 @@ import type { UserCategory } from "@/app/lib/userCategories";
 // Supabase 테이블 행(row)에 대응하는 도메인 타입
 
 export interface Curation {
+  program_outing?: unknown;
   content_filters?: unknown;
   id: string;
   slug: string;
@@ -31,6 +32,7 @@ export interface Curation {
 }
 
 export interface LocalizedCuration {
+  programOuting?: unknown;
   contentFilters?: ContentFilters | null;
   id: string;
   slug: string;

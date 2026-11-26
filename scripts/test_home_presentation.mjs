@@ -91,7 +91,7 @@ check('manual palette survives missing image in both main and neighbouring card'
 check('the page retains one public fetch, structured selection and explicit section inputs', () => {
   const page = fs.readFileSync(path.join(root,'app/[locale]/page.tsx'),'utf8');
   assert.equal((page.match(/fetchLocalizedCurations\(locale\)/g)||[]).length,1);
-  assert(page.includes('force-dynamic')); assert(page.includes('selectHomeContent(rows, now, pins)'));
+  assert(page.includes('force-dynamic')); assert(page.includes('selectHomeContent(rows, now, pins, isSeoulCulture)'));
   assert(page.includes('sections={sections}')); assert(!page.includes('SKETCH_DATA'));
 });
 const approved = {

@@ -36,7 +36,8 @@ function topic(item: LocalizedCuration) {
   } catch { return null; }
 }
 
-export function selectHomeContent(rows: readonly LocalizedCuration[], now: number, pins: readonly HomePin[] = []): HomeSelection {
+export function selectHomeContent(rows: readonly LocalizedCuration[], now: number, pins: readonly HomePin[] = [],
+  featuredEligible: (item: LocalizedCuration) => boolean = () => true): HomeSelection {
   const week = homeWeek(now), ids = new Set<string>(), slugs = new Set<string>();
   const unique = [...rows].sort(latest).filter(item => {
     if (ids.has(item.id) || slugs.has(item.slug)) return false;
@@ -49,7 +50,7 @@ export function selectHomeContent(rows: readonly LocalizedCuration[], now: numbe
   const deadline = programs.filter(({ timing }) => timing.deadlineKind === 'fixed' && timing.deadline
     && endpointBoundary(timing.deadline) >= week.start && endpointBoundary(timing.deadline) < week.end)
     .sort((a, b) => endpointBoundary(a.timing.deadline!, true) - endpointBoundary(b.timing.deadline!, true) || latest(a.item, b.item));
-  const eligible = [...programs.map(x => x.item), ...events.map(x => x.item)].sort(latest);
+  const eligible = [...programs.map(x => x.item), ...events.map(x => x.item)].filter(featuredEligible).sort(latest);
   const validPins = pins.length <= 2 && new Set(pins.map(x => x.id)).size === pins.length
     && new Set(pins.map(x => x.position)).size === pins.length && pins.every(x => x.position === 1 || x.position === 2);
   const pinned = validPins ? [...pins].sort((a, b) => a.position - b.position)

@@ -77,6 +77,7 @@ export function localizeCuration(
   let contentFilters = null;
   if (row.content_filters != null) { try { contentFilters = parseContentFilters(row.content_filters); } catch { /* Keep legacy visibility; unusable metadata is not a filter value. */ } }
   return {
+    programOuting: row.program_outing ?? null,
     contentFilters,
     id: row.id,
     slug: row.slug,
@@ -99,7 +100,7 @@ export function localizeCuration(
 }
 
 // Existing published fields only; wildcard reads would silently expose new columns.
-export const publicCurationColumns = 'id,slug,category,user_category,title_ko,title_ja,summary_ko,summary_ja,content_ko,content_ja,source,source_item_id,source_url,source_image_url,application_deadline_kind,application_deadline_on,event_start_on,event_end_on,created_at,updated_at,content_filters';
+export const publicCurationColumns = 'id,slug,category,user_category,title_ko,title_ja,summary_ko,summary_ja,content_ko,content_ja,source,source_item_id,source_url,source_image_url,application_deadline_kind,application_deadline_on,event_start_on,event_end_on,created_at,updated_at,content_filters,program_outing';
 async function fetchCurationRows(category?: UserCategory): Promise<Curation[]> {
   let query = supabase
     .from("curations")

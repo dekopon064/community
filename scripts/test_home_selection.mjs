@@ -46,6 +46,7 @@ registerHooks({
   },
 });
 const { selectHomeContent: select, homeWeek, homeLimits } = await import('../app/lib/homeSelection.ts');
+const { isSeoulCulture, weeklyOutings } = await import('../app/lib/homeEditions.ts');
 const { emptyContentFilters } = await import('../app/lib/contentFilters.ts');
 const { localizeCuration } = await import('../app/lib/curations.ts');
 const { default: Home } = await import('../app/[locale]/page.tsx');
@@ -56,6 +57,7 @@ let passed = 0;
 async function test(name, run) { await run(); passed++; console.log('PASS', name); }
 function row(id, category = 'program', patch = {}) {
   const metadata = emptyContentFilters(category);
+  if (category === 'program' || category === 'event') metadata.location = known({scope:'specific', venues:[{province:'11',district:null,facility:'',address:''}]});
   if (category === 'program') Object.assign(metadata, { topic: known('culture_experience'), application: known({ deadlineKind: 'fixed', start: endpoint('2026-10-01'), end: endpoint('2026-11-01'), sourceStatus: 'open' }) });
   if (category === 'event') Object.assign(metadata, { topic: known('culture_arts'), schedule: known({ kind: 'continuous', recurrence: null, occurrences: [{ start: endpoint('2026-10-25'), end: endpoint('2026-10-25') }] }) });
   return { id, slug: id, title: id, summary: '合成 요약', content: 'PRIVATE_BODY', category: '', userCategory: category,
@@ -204,13 +206,13 @@ await test('actual route localizes public sections, bounds one color read and le
   const data = [culture, learn, events, closed].map(raw).concat(incomplete);
   for (const locale of ['ko', 'ja']) {
     const result = await route(data, locale, now);
-    assert.deepEqual(idList(result.props.items), ['culture', 'event', 'learn']);
-    assert.deepEqual(Object.fromEntries(Object.entries(result.props.sections).map(([key, rows]) => [key, idList(rows)])), { living: [], deadline: ['culture'], experiences: ['culture'], learning: ['learn'], events: ['event'] });
-    assert.equal(result.props.sections.deadline[0].period, locale === 'ko' ? '접수 마감 D-1' : '申込締切まであと1日');
+    assert.deepEqual(idList(result.props.items), ['culture', 'event']);
+    assert.deepEqual(Object.fromEntries(Object.entries(result.props.sections).map(([key, rows]) => [key, idList(rows)])), { living: [], learning: ['learn'] });
+    assert.equal(result.props.items[0].period, locale === 'ko' ? '접수 마감 D-1' : '申込締切まであと1日');
     assert(!JSON.stringify(result.props).includes('PRIVATE_'));
     assert(queries.some(x => x[0] === 'eq' && x[1] === 'is_published' && x[2] === true));
     assert.equal(queries.filter(x => x[0] === 'from').length, 1);
-    assert.equal(rpcCalls.filter(x=>x.name==='public_home_featured_pins').length,1); assert.equal(rpcCalls.filter(x=>x.name==='public_home_card_colors')[0].args.p_ids.length,3);
+    assert.equal(rpcCalls.filter(x=>x.name==='public_home_featured_pins').length,1); assert.equal(rpcCalls.filter(x=>x.name==='public_home_card_colors')[0].args.p_ids.length,2);
     assert(result.props.items.every(x => x.tone === 'purple' && x.toneManual));
     const html = renderToStaticMarkup(result);
     for (const label of [locale === 'ko' ? '생활 안내' : '暮らしのガイド', 'culture', 'learn', 'event']) assert(html.includes(label));
@@ -236,7 +238,7 @@ await test('ko/ja route updates latest living guides through the existing public
       const html=renderToStaticMarkup(result);
       assert.equal((html.match(/class="contentCard livingCard/g)||[]).length,expected.length);
       assert(html.includes('href="/info/category/living"'));
-      assert(html.includes(locale==='ko'?'생활 더 보기':'暮らしをもっと見る'));
+      assert(html.includes(locale==='ko'?'생활 더 보기':'暮らしのガイド一覧'));
       assert(!html.includes('guide-incomplete')&&!html.includes('PRIVATE_')&&!html.includes('최신 게시순'));
       if(!expected.length)assert(html.includes(locale==='ko'?'아직 등록된 생활 안내가 없어요.':'暮らしのガイドはまだありません。'));
     }
@@ -254,6 +256,151 @@ await test('actual route preserves empty/one/two/six carousel states and no writ
   }
 });
 
+await test('weekly uses public sessions, not applications; KST week boundaries and separate sessions', () => {
+  const thursday = Date.parse('2026-11-26T09:00:00+09:00');
+  const exhibition = event('exhibition', [['2026-11-24','2026-12-06']]);
+  const tour = event('tour', [['2026-11-21','2026-11-21'],['2026-11-28','2026-11-28']]);
+  const docent = event('docent', [['2026-12-03','2026-12-03']]);
+  const missing = row('unknown', 'event', {contentFilters:null});
+  const stale = [row('application'), missing, docent];
+  const week = (rows,time=thursday) => weeklyOutings(rows,time,'ja').items;
+  assert.deepEqual(week(stale),[]);
+  assert.deepEqual(week([...stale,exhibition]).map(x=>x.date),['24–29']);
+  assert.deepEqual(week([...stale,tour,exhibition]).map(x=>x.slug),['exhibition','tour']);
+  assert.equal(week([tour],Date.parse('2026-11-29T00:00:00+09:00')).length,0);
+  assert.equal(week([docent],Date.parse('2026-11-29T23:59:59+09:00')).length,0);
+  assert.equal(week([docent],Date.parse('2026-11-30T00:00:00+09:00')).length,1);
+});
+await test('published programs join the weekly events only while a confirmed session can be attended', async () => {
+  const time=Date.parse('2026-11-26T09:00:00+09:00');
+  const entry=(date)=>({officialBooking:true,start:endpoint(date+'T11:00:00+09:00','minute'),end:endpoint(date+'T13:00:00+09:00','minute')});
+  const program=app('session',{start:endpoint('2026-11-23'),end:endpoint('2026-11-29')});
+  const booked = entry('2026-11-28');
+  program.programOuting={sessions:[{...booked,officialBooking:false}]};
+  const rowsAt=(rows,t=time)=>weeklyOutings(rows,t,'ko').items;
+  const eventOnly=event('event',[['2026-11-27','2026-11-27']]);
+  for(const locale of ['ko','ja']){
+    const run=async(items)=>(await route(items.map(item=>({...raw(item),program_outing:item.programOuting})),locale,time)).props.weekly.items;
+    assert.deepEqual((await run([eventOnly])).map(x=>x.slug),['event']);
+    const both=await run([eventOnly,program]);assert.deepEqual(both.map(x=>x.slug),['event','session']);
+    assert.equal(both[1].summary,'');
+    for(const officialBooking of [true,undefined,null,'false']) {
+      const restricted={...program,programOuting:{sessions:[{...booked,officialBooking}]}};
+      assert.deepEqual((await run([restricted,eventOnly])).map(x=>x.slug),['event']);
+      assert.equal(isSeoulCulture(restricted),true);
+    }
+    assert.equal(both[0].summary,(await run([eventOnly]))[0].summary);
+  }
+  assert.deepEqual(rowsAt([row('deadline'),{...program,programOuting:{sessions:[entry('2026-12-03')]}}]),[]);
+  assert.deepEqual(rowsAt([program],Date.parse('2026-11-28T13:01:00+09:00')),[]);
+  for(const appPatch of [{sourceStatus:'closed'},{end:endpoint('2026-11-25')},{start:null}]){
+    assert.deepEqual(rowsAt([app('closed',appPatch,{programOuting:{sessions:[booked]}})]),[]);
+  }
+  assert.deepEqual(rowsAt([program,program,{...program,id:'alias'},eventOnly]).map(x=>x.slug),['event','session']);
+});
+await test('walk-in exhibition uses its open days, independent of booked commentary and its deadline', () => {
+  const time=Date.parse('2026-11-26T09:00:00+09:00'), end=Date.parse('2026-11-29T23:59:59+09:00');
+  const viewing={subject:'exhibition',from:'2026-11-24',through:'2026-12-06',weekdays:[0,2,3,4,5,6],exceptions:['2026-11-26','2026-11-27'],reservationNotRequired:true};
+  const guide={officialBooking:true,start:endpoint('2026-12-03'),end:endpoint('2026-12-03')};
+  const show=(value,t,locale='ko')=>weeklyOutings([row('lake','program',{programOuting:{viewing:value,sessions:[guide,{...guide,start:endpoint('2026-12-05'),end:endpoint('2026-12-05')}]},application_deadline_kind:'closed'})],t,locale).items;
+  for(const locale of ['ko','ja']){
+    const [visit]=show(viewing,time,locale);assert.equal(visit.date,'28–29');assert.equal(visit.summary,locale==='ja'?'展示の一般観覧':'전시 일반 관람');
+    assert.doesNotMatch(visit.summary,/작가|解説|잔여석/);
+  }
+  for(const [locale,titles,label] of [
+    ['ko',['작가 해설 사전예약','공예 체험 예약','미술 수업 신청'],'전시 일반 관람'],
+    ['ja',['作家による解説の予約','工芸体験の予約','美術講座の申込'],'展示の一般観覧']
+  ]){
+    for(const title of [...titles,label,"〈Lake〉 "+label]){
+      const early={...guide,start:endpoint('2026-11-26'),end:endpoint('2026-11-26')};
+      const mixed=row('mixed','program',{title,programOuting:{viewing,sessions:[early,guide]}});
+      const [result]=weeklyOutings([mixed,mixed],time,locale).items;
+      assert.deepEqual([result.date,result.title,result.summary],['28–29',titles.includes(title)?label:title,titles.includes(title)?(locale==='ko'?'글 제목 · ':'記事名：')+title:'']);
+    }
+  }
+  const custom={...viewing,subject:'other',labelKo:'Garden 공개 관람',labelJa:'Gardenの一般見学'};
+  assert.equal(show(custom,time,'ja')[0].summary,'Gardenの一般見学');
+  assert.equal(show(viewing,end)[0].date,'29');
+  assert.equal(show(viewing,end+1000)[0].date,'1–6');
+  assert.deepEqual(show({...viewing,exceptions:[...viewing.exceptions,'2026-11-28','2026-11-29']},time),[]);
+  assert.deepEqual(show({...viewing,reservationNotRequired:false},time),[]);
+  assert.deepEqual(show(null,time),[]);
+});
+await test('viewing cards show only remaining open dates and retain the original linked article', () => {
+  const at = date => Date.parse(date + 'T12:00:00+09:00');
+  for (const locale of ['ko','ja']) {
+    const ja = locale === 'ja';
+    const activity = ja ? '展示の一般観覧' : '전시 일반 관람';
+    const work = ja ? '〈流れる湖のように〉' : '〈흐르는 호수처럼〉';
+    const booking = {start:endpoint('2026-12-03'),end:endpoint('2026-12-03'),officialBooking:true};
+    const card = (title, today, overrides={}) => {
+      const viewing = {subject:'exhibition',from:'2026-11-24',through:'2026-12-02',
+        weekdays:[0,1,2,3,4,5,6],exceptions:[],reservationNotRequired:true,...overrides};
+      return weeklyOutings([row('gallery','program',{title,programOuting:{viewing,sessions:[booking]}})],at(today),locale).items[0];
+    };
+    const clear = card(work,'2026-11-26');
+    assert.deepEqual([clear.title,clear.summary,clear.date,clear.details],[work,activity,'26–29','']);
+    const named = work + ' ' + activity;
+    assert.deepEqual([card(named,'2026-11-26').title,card(named,'2026-11-26').summary],[named,'']);
+    const mixed = ja ? '作家の解説と工芸体験の予約' : '작가 해설 및 공예 체험 예약';
+    const split = card(mixed,'2026-11-26',{exceptions:['2026-11-27']});
+    assert.deepEqual([split.slug,split.title,split.summary,split.details],
+      ['gallery',activity,(ja?'記事名：':'글 제목 · ')+mixed,ja?'26日、28〜29日':'26일, 28–29일']);
+    assert.equal(card(mixed,'2026-11-26',{weekdays:[4,6,0]}).details,split.details);
+    const single=card(work,'2026-11-26',{weekdays:[6]});
+    assert.deepEqual([single.date,single.dayLabel],['28',ja?'土曜日':'토요일']);
+    const crossMonth=card(work,'2026-11-30');
+    assert.equal(crossMonth.details,ja?'11月30日〜12月2日':'11월 30일–12월 2일');
+    assert.equal(card(work,'2026-11-30',{exceptions:['2026-12-01']}).details,ja?'11月30日、12月2日':'11월 30일, 12월 2일');
+    assert.equal(card(work,'2026-11-29').date,'29');
+  }
+});
+await test('the preserved docent article titles lead with verified general viewing even without session data', async () => {
+  const viewing = {subject:'exhibition', reservationNotRequired:true, from:'2026-11-24', through:'2026-12-06',
+    weekdays:[0,2,3,4,5,6], exceptions:[]};
+  const article = {...raw(row('seoul-8a74492370eb51fff86f81e2c0282418')), title_ko:'2026 더 임팩트 청년예술인 공모전시 [흐르는 호수처럼] 미술전시해설 도슨트 프로그램', title_ja:'2026 ザ・インパクト 若手芸術家公募展［流れる湖のように］美術展解説ドーセントプログラム', program_outing:{viewing}};
+  const now = Date.parse('2026-11-26T18:00:00+09:00');
+  const cards = [];
+  for (const locale of ['ko','ja']) {
+    const home = await route([article],locale,now);
+    const {items} = home.props.weekly;
+    assert.equal(items.length,1);
+    const {slug,title,summary,date} = items[0];
+    assert.equal(slug,article.slug);
+    assert.equal(date,'26–29');
+    cards.push([title,summary]);
+    const workTitle = locale === 'ko' ? '〈흐르는 호수처럼〉' : '〈流れる湖のように〉';
+    const simple = await route([{...article,['title_'+locale]:workTitle}],locale,now);
+    assert.equal(simple.props.weekly.items[0].title,workTitle);
+    const noViewing = await route([{...article,program_outing:{}}],locale,now);
+    assert.equal(noViewing.props.weekly.items.length,0);
+  }
+  assert.deepEqual(cards,[
+    ['전시 일반 관람','글 제목 · ' + article.title_ko],
+    ['展示の一般観覧','記事名：' + article.title_ja]
+  ]);
+});
+await test('settlement links follow stable public slugs and omit missing translations', async () => {
+  const slugs = ['living-458e3b16-fa16-4d00-a6e9-b0beb143d41b','living-d24cd543-e5d6-4de9-a26c-09a0f9b1ec6b','living-1b47f436-f08f-4584-948a-d08fccb2a088'];
+  const guides = slugs.map(slug=>raw(row(slug,'living',{contentFilters:null})));
+  const ja = await route([...guides].reverse(),'ja',now);
+  assert.deepEqual(ja.props.settlement.map(x=>x.slug),slugs);
+  assert.deepEqual(ja.props.settlement.map(x=>x.label),['空港からの移動','スマホの通信','外国人登録']);
+  const partial = await route([guides[0],{...guides[1],content_ja:''}],'ja',now);
+  assert.deepEqual(partial.props.settlement.map(x=>x.slug),[slugs[0]]);
+  const empty = await route([],'ja',now);
+  assert.equal(empty.props.settlement.length,0);
+  assert.equal((renderToStaticMarkup(empty).match(/href="\/info\/category\/living"/g)||[]).length,2);
+  assert.equal((await route(guides,'ko',now)).props.settlement.length,0);
+});
+await test('Seoul cultural selection admits confirmed foreigner programs and excludes other regions', async () => {
+  const seoul = row('seoul');seoul.contentFilters.foreignerProgram=known('foreigner');
+  const other = row('other');other.contentFilters.location.value.venues[0].province='41';
+  for (const locale of ['ko','ja']) {
+    const {props} = await route([raw(other),raw(seoul)],locale,now);
+    assert.deepEqual(idList(props.items),['seoul']);
+  }
+});
 const snapshotArg = process.argv.indexOf('--snapshot');
 await test('pins lead the same six-item selection, preserve lower sections and skip expired/missing pins',()=>{
  const rows=Array.from({length:9},(_,i)=>row(String(i)));const original=JSON.stringify(rows),automatic=select(rows,now);
@@ -289,9 +436,9 @@ if (snapshotArg >= 0) await test('preserved actual public projection flows throu
   const outputs = [];
   for (const locale of ['ko', 'ja']) {
     const result = await route(rows, locale, time);
-    const selection = select(rows.map(x => localizeCuration(x, locale)).filter(Boolean), time);
+    const selection = select(rows.map(x => localizeCuration(x, locale)).filter(Boolean), time, [], isSeoulCulture);
     assert.deepEqual(idList(result.props.items), idList(selection.featured));
-    for (const key of Object.keys(selection.sections)) assert.deepEqual(idList(result.props.sections[key]), idList(selection.sections[key]));
+    for (const key of Object.keys(result.props.sections)) assert.deepEqual(idList(result.props.sections[key]), idList(selection.sections[key]));
     outputs.push(result.props);
   }
   assert.deepEqual(idList(outputs[0].items), idList(outputs[1].items));
