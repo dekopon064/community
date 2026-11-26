@@ -1,3 +1,4 @@
+import { parseViewing } from '../programOutings';
 import { sourceImageUrl } from "../sourceImages";
 import { ReviewFailure } from "./contracts";
 import type { CandidateContent, Facts, ReviewCommand, ReviewKind } from "./contracts";
@@ -61,7 +62,9 @@ export function validateCommand(kind: ReviewKind, value: unknown): ReviewCommand
     return { ...preconditions, action: "save_facts", facts: validateFacts(v.facts), ...(v.confirmRestored === true ? { confirmRestored: true as const } : {}) };
   }
   if (kind === "candidates" && v.action === "save_candidate") {
-    exact(v, ["action", "revision", "version", "content", ...(Object.hasOwn(v, "imageSelection") ? ["imageSelection"] : [])]);
+    exact(v, ["action", "revision", "version", "content", ...(Object.hasOwn(v,"viewing") ? ["viewing"] : []), ...(Object.hasOwn(v, "imageSelection") ? ["imageSelection"] : [])]);
+    let viewing;
+    try { viewing = v.viewing == null ? null : parseViewing(v.viewing); } catch { throw new ReviewFailure('invalid_input', {viewing:'관람 기간·운영 요일·제외일을 확인해 주세요.'}); }
     let imageSelection;
     if (Object.hasOwn(v, "imageSelection")) {
       const i = object(v.imageSelection); exact(i, ["mode", "url"]);
@@ -70,7 +73,7 @@ export function validateCommand(kind: ReviewKind, value: unknown): ReviewCommand
         throw new ReviewFailure("invalid_input", { imageUrl: "사용 가능한 HTTPS 이미지 URL을 입력해 주세요." });
       imageSelection = { mode: i.mode as "source" | "override" | "none", url: i.mode === "override" ? sourceImageUrl(i.url) : null };
     }
-    return { ...preconditions, action: "save_candidate", content: validateContent(v.content), ...(imageSelection ? { imageSelection } : {}) };
+    return { ...preconditions, action: "save_candidate", content: validateContent(v.content), ...(Object.hasOwn(v,'viewing') ? {viewing} : {}), ...(imageSelection ? { imageSelection } : {}) };
   }
   if (kind === "candidates" && v.action === "review_change") {
     const edited = v.disposition === "edited";

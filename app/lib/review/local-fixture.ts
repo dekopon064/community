@@ -60,6 +60,7 @@ export class LocalReviewStore implements ReviewStore {
     } else if (item.kind === "facts" && command.action === "exclude") {
       item.status = "excluded"; item.aiStatus = "cancelled"; item.reasons = ["manual_non_target"];
     } else if (item.kind === "candidates" && command.action === "save_candidate") {
+      if ('viewing' in command) { if (item.category !== 'program') throw new ReviewFailure('invalid_input'); item.viewing = structuredClone(command.viewing); }
       item.content = structuredClone(command.content);
     } else if (item.kind === "candidates" && command.action === "save_published_body") {
       if (item.content.contentKo === command.contentKo && item.content.contentJa === command.contentJa) throw new ReviewFailure("invalid_input");

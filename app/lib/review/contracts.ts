@@ -1,3 +1,4 @@
+import type { Viewing } from '../programOutings';
 import type { FilterInfo, CandidateFilterInfo } from './content-filter-store';
 export type ReviewKind = "facts" | "candidates";
 export type ReviewListScope = "pending" | "published";
@@ -43,6 +44,7 @@ export type CandidateItem = BaseItem & {
   status: "pending" | "published" | "rejected" | "superseded";
   category: Category; period: string;
   publishedAt: string | null; publishedId: string | null; publishedSlug?: string | null;
+  viewing?: Viewing | null;
   image?: CandidateImage;
   publishedBodyVersion?: string;
   // Recomputed from the immutable generation snapshot and SAVED candidate.
@@ -56,7 +58,7 @@ export type Preconditions = { revision: string; version: string };
 export type ReviewCommand =
   | (Preconditions & { action: "save_facts"; facts: Facts; confirmRestored?: true })
   | (Preconditions & { action: "exclude"; note: string })
-  | (Preconditions & { action: "save_candidate"; content: CandidateContent; imageSelection?: CandidateImageSelection })
+  | (Preconditions & { action: "save_candidate"; content: CandidateContent; imageSelection?: CandidateImageSelection; viewing?: Viewing | null })
   | (Preconditions & { action: "review_change"; disposition: "no_impact" | "edited"; note: string; content?: CandidateContent })
   | (Preconditions & { action: "save_published_body"; publicVersion: string; contentKo: string; contentJa: string; note: string })
   | (Preconditions & { action: "publish" })

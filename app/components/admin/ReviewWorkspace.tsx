@@ -1,5 +1,7 @@
 "use client";
 
+import ProgramViewingEditor from './ProgramViewingEditor';
+import { sameViewing, type Viewing } from '../../lib/programOutings';
 import { CandidateSource, CandidateRegistration, CandidateFilterAlert, RegistrationLink } from './CandidateReviewContext';
 import { candidateSourceName } from '@/app/lib/review/candidate-display';
 import FilterReviewPanel from './FilterReviewPanel';
@@ -65,6 +67,7 @@ export default function ReviewWorkspace() {
   const [aiBlocked,setAiBlocked]=useState(false);
   const [facts, setFacts] = useState<Facts | null>(null);
   const [imageSelection, setImageSelection] = useState<CandidateImageSelection | null>(null);
+  const [viewing,setViewing] = useState<Viewing | null>(null);
   const [content, setContent] = useState<CandidateContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [filterBlocked, setFilterBlocked] = useState(false);
@@ -108,7 +111,9 @@ export default function ReviewWorkspace() {
   const imageDirty = Boolean(imageEditable && imageSelection && item?.kind === "candidates" && (item.image?.mode !== imageSelection.mode || item.image?.url !== imageSelection.url));
   const invalidImage = imageEditable && imageSelection ? candidateImageError(imageSelection) : "";
   const contentDirty = Boolean(item && (item.kind === "facts" ? JSON.stringify(item.facts) !== JSON.stringify(facts) : JSON.stringify(item.content) !== JSON.stringify(content)));
-  const fieldsDirty = contentDirty || imageDirty;
+  const viewingEditable = kind === 'candidates' && item?.kind === 'candidates' && item.category === 'program' && item.status === 'pending';
+  const viewingDirty = viewingEditable && !sameViewing(viewing,item.viewing);
+  const fieldsDirty = contentDirty || imageDirty || viewingDirty;
   const dirty = programBlocked || fieldsDirty || Boolean(note) || Boolean(changeNote);
   const publishedMode = kind === "published";
   const detailKind = publishedMode ? "candidates" : kind;
@@ -161,6 +166,7 @@ export default function ReviewWorkspace() {
   useEffect(() => { if (confirmation) focusTask(confirmationBox.current); }, [confirmation]);
 
   function accept(next: ReviewItem) {
+    setViewing(next.kind === 'candidates' ? next.viewing ?? null : null);
     setItem(next); setFacts(next.kind === "facts" ? next.facts : null); setContent(next.kind === "candidates" ? next.content : null);
     setImageSelection(next.kind === "candidates" && next.image ? { mode: next.image.mode, url: next.image.url } : null);
     setNote(""); setChangeNote(""); setConfirmation(null); setErrors({});
@@ -210,6 +216,7 @@ export default function ReviewWorkspace() {
   async function checkCandidateResult(command: CandidateAction) {
     if (!item || item.kind !== "candidates") return;
     if (command.action === "save_candidate" && (JSON.stringify(content) !== JSON.stringify(command.content) ||
+        ("viewing" in command && !sameViewing(viewing,command.viewing)) ||
         (command.imageSelection && (imageSelection?.mode !== command.imageSelection.mode || imageSelection?.url !== command.imageSelection.url)))) return false;
     if (command.action !== "save_candidate" && (fieldsDirty || (command.action === "reject" && note !== command.note))) return false;
     const data = await call(`/api/admin/review/candidates/${item.id}`);
@@ -218,6 +225,7 @@ export default function ReviewWorkspace() {
         next.revision !== command.revision || next.status !== candidateResultStatus(command.action)) return false;
     if (command.action === "save_candidate") {
       if (Object.entries(command.content).some(([key, value]) => next.content[key as keyof CandidateContent] !== value.trim())) return false;
+      if ('viewing' in command && !sameViewing(next.viewing,command.viewing)) return false;
       const image = command.imageSelection;
       if (image && (next.image?.mode !== image.mode || next.image?.url !== image.url)) return false;
     }
@@ -364,11 +372,11 @@ export default function ReviewWorkspace() {
             <label htmlFor="change-review-note" className="mt-4 block font-semibold">최신 원문 대조·처리 근거</label>
             <textarea id="change-review-note" className={fieldClass} rows={3} maxLength={4000} disabled={busy || Boolean(confirmation)} value={changeNote} onChange={e => setChangeNote(e.target.value)} />
             <p className="mt-2 text-sm leading-6 text-info-muted">수정한 경우 아래 한국어·일본어 편집값을 함께 저장합니다.{publicChange && " 현재 공개 글에 직접 반영됩니다."}</p>
-            <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || imageDirty || Boolean(confirmation) || !changeNote.trim()} onClick={() => void submit({ ...preconditions(), action: "review_change", disposition: contentDirty ? "edited" : "no_impact", note: changeNote, ...(contentDirty && content ? { content } : {}) })}>{busy ? "처리 중…" : fieldsDirty ? publicChange ? "공개 내용 수정·변경 확인" : "수정 저장·변경 확인" : "내용 영향 없음·변경 확인"}</button>
+            <button type="button" className={`${secondaryButton} mt-4`} disabled={busy || imageDirty || viewingDirty || Boolean(confirmation) || !changeNote.trim()} onClick={() => void submit({ ...preconditions(), action: "review_change", disposition: contentDirty ? "edited" : "no_impact", note: changeNote, ...(contentDirty && content ? { content } : {}) })}>{busy ? "처리 중…" : fieldsDirty ? publicChange ? "공개 내용 수정·변경 확인" : "수정 저장·변경 확인" : "내용 영향 없음·변경 확인"}</button>
           </section>}
           {item.kind === 'facts' && item.filterInfo && !processed && !classificationActive && <FilterReviewPanel key={item.filterInfo.filterVersion} id={item.id} version={item.version} info={item.filterInfo} disabled={operationBusy || fieldsDirty || Boolean(note) || Boolean(confirmation)} onBlocked={setFilterBlocked} onSaved={async () => { const data = await call(`/api/admin/review/facts/${item.id}`); setItem(data.item); setReload(n => n + 1); setNotice('탐색 정보를 확인·저장했습니다.'); }}/>}
           {item.kind === 'candidates' && <CandidateFilterAlert item={item}/>}
-          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation || publicChange || publishedMode) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content && !invalidImage) void submit({ ...preconditions(), action: "save_candidate", content, ...(imageEditable && imageSelection ? { imageSelection } : {}) }); }}>
+          <form onSubmit={(event) => { event.preventDefault(); if (!item || busy || processed || confirmation || publicChange || publishedMode) return; if (item.kind === "facts" && facts) void submit({ ...preconditions(), action: "save_facts", facts, ...(item.restoredReviewPending ? { confirmRestored: true } : {}) }); else if (content && !invalidImage) void submit({ ...preconditions(), action: "save_candidate", content, ...(viewingDirty ? {viewing} : {}), ...(imageEditable && imageSelection ? { imageSelection } : {}) }); }}>
             {publishedMode && <div className="my-6 border-y border-info-rule py-5">
               <p className="leading-7 text-info-body">제목·요약·이미지·분류·필터·게시 시각은 유지하고 상세 본문만 저장합니다.</p>
               {!publishedEditable && <p role="status" className="mt-3 leading-7 text-info-status">본문 수정에 필요한 최신 공개 상태를 확인하지 못했거나 원문·사실 변경이 있습니다. 원문 변경이 있는 글은 기존 원문 변경 검토 경로에서 수정해 주세요.</p>}
@@ -380,6 +388,8 @@ export default function ReviewWorkspace() {
             {imageEditable && item.kind === "candidates" && item.image && imageSelection && <CandidateImageEditor key={item.id + item.version + ":image"} saved={item.image} value={imageSelection} onChange={setImageSelection} disabled={locked} error={errors.imageUrl} title={content?.titleKo ?? item.content.titleKo} />}
             {item.kind === "candidates" && item.status === "pending" && !item.publishedId && !item.image && <p className="my-6 leading-7 text-info-status">이미지 편집 정보를 불러오지 못했습니다. 현재 이미지 선택은 유지됩니다. 서버 연결을 확인한 뒤 다시 불러와 주세요.</p>}
             {item.kind === "facts" && facts && !classificationActive ? <FactsEditor value={facts} onChange={setFacts} errors={errors} disabled={locked} editableFields={item.editableFields} reasons={item.reasons} sourceUrl={item.source.url} /> : content && <CandidateEditor key={item.id+item.version} value={content} onChange={setContent} errors={errors} disabled={locked} formattedBody bodyOnly={publishedMode} />}
+            {viewingEditable && <ProgramViewingEditor value={viewing} onChange={setViewing} disabled={locked}/>}
+            {errors.viewing && <p role="alert">{errors.viewing}</p>}
             {fieldsDirty && <p className="mt-6 leading-7 text-info-status">{publishedMode ? "아직 저장하지 않은 본문 변경이 있습니다. 다른 항목으로 이동하려면 저장하거나 수정을 취소해 주세요." : "아직 저장하지 않은 변경이 있습니다. 다른 항목으로 이동하거나 게시하려면 저장하거나 수정을 취소해 주세요."}</p>}
             {!processed && !publishedMode && <div className="my-7 flex flex-wrap gap-3">
               <button type="submit" disabled={publicChange || busy || Boolean(invalidImage) || Boolean(confirmation) || (!fieldsDirty && !(item.kind === "facts" && item.restoredReviewPending) && !(item.kind === "candidates" && item.filterInfo?.changed))} className={primaryButton}>{busy ? "처리 중…" : item.kind === "facts" ? "사실 저장·재평가" : "수정 저장"}</button>

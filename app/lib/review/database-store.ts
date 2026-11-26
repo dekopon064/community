@@ -47,10 +47,23 @@ export class DatabaseReviewStore implements ReviewStore {
     const args: Record<string, unknown> = { p_id: id, p_revision: command.revision, p_version: command.version, p_actor: actor };
     const names = { save_facts: "admin_review_save_facts", exclude: "admin_review_exclude", save_candidate: "admin_review_save_candidate", review_change: "admin_myseoul_review_change", publish: "admin_review_publish", reject: "admin_review_reject", save_published_body: "admin_review_save_published_body" };
     if (command.action === "save_facts") args.p_facts = command.facts;
-    if (command.action === "save_candidate") { args.p_content = command.content; if (command.imageSelection) args.p_image = command.imageSelection; }
+    let procedure: string = names[command.action];
+    if (command.action === "save_candidate") {
+      args.p_content = command.content;
+      if (command.imageSelection) {
+        procedure = "admin_review_save_candidate_image";
+        args.p_image = command.imageSelection;
+      }
+      if ("viewing" in command) {
+        procedure = "admin_review_save_candidate_viewing";
+        args.p_viewing = command.viewing;
+        args.p_image = command.imageSelection ?? null;
+      }
+    }
+    if (command.action === "save_facts" && command.confirmRestored) procedure = "admin_review_save_restored";
     if (command.action === "review_change") { args.p_disposition = command.disposition; args.p_content = command.content ?? null; }
     if (command.action === "save_published_body") { args.p_public_version = command.publicVersion; args.p_body = { contentKo: command.contentKo, contentJa: command.contentJa }; }
     if ("note" in command) args.p_note = command.note;
-    return this.item(await this.invoke(command.action === "save_candidate" && command.imageSelection ? "admin_review_save_candidate_image" : command.action === "save_facts" && command.confirmRestored ? "admin_review_save_restored" : names[command.action], args), kind, id);
+    return this.item(await this.invoke(procedure, args), kind, id);
   }
 }
