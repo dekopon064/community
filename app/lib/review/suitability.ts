@@ -6,7 +6,7 @@ import { jobUuid } from './ai-queue';
 import type { RpcClient } from './database-store';
 
 export type SuitabilityDecision = {group:'exclude'|'check'|'keep';clause:string;quote:string;reason:string;question:string;note:string};
-export type SuitabilityRow = {id:string;title:string;key:string;source:string;queue:'facts'|'ai';currentStage:'facts'|'ai'|'processing'|'candidate'|'unknown';moved:boolean;reused:boolean;
+export type SuitabilityRow = {id:string;title:string;key:string;source:string;queue:'facts'|'ai';currentStage:'facts'|'ai'|'processing'|'candidate'|'excluded'|'unknown';moved:boolean;reused:boolean;
   state:'waiting'|'unconfirmed'|'done';decision:SuitabilityDecision|null};
 export type SuitabilityReport = {id:string;policy:string;readAt:string;items:SuitabilityRow[]};
 

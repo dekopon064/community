@@ -25,7 +25,8 @@ try {
   facts boolean,ai boolean,body text);
  create table processing_jobs(id uuid,source_item_id uuid,revision_hash text,processing_stage text,status text,claim_lease_until timestamptz);
  create table ingest_review_decisions(source_item_id uuid,revision_hash text,revoked_at timestamptz,review_type text,decision text,reviewer text,reason_codes text[]);
- create table admin_exclusion_episodes(source_item_id uuid,restored_at timestamptz);
+ create table admin_exclusion_episodes(source_item_id uuid,restored_at timestamptz,
+  revision_hash text default repeat('a',64),note text);
  create table curation_candidates(source text,source_item_id text,source_revision_hash text);
  create function canonical_source_id(text) returns text language sql immutable as $$select $1$$;
  create function ai_queue_executable(uuid) returns boolean language sql stable as $$
@@ -45,9 +46,9 @@ try {
  select jsonb_build_object('status',j.status,'canExclude',j.status='queued','version',s.version,'review',public.admin_program_detail(s.id))
  from machimoa_review.processing_jobs j join machimoa_review.source_items s on s.id=j.source_item_id where j.id=$1 $$;
  create function public.admin_review_exclude_reason(uuid,text,text,text,text,uuid,uuid) returns jsonb language plpgsql as $$
- begin update machimoa_review.source_items set facts=false where id=$1 and facts and revision_hash=$2 and version=$3 and $4='service_not_suitable';
+ begin update machimoa_review.source_items set facts=false where id=$1 and facts and revision_hash=$2 and version=$3 and $4 in ('service_not_suitable','custom');
  if not found then raise sqlstate 'PT409';end if;
- insert into machimoa_review.admin_exclusion_episodes values($1,null);
+ insert into machimoa_review.admin_exclusion_episodes values($1,null,$2,$5);
  return jsonb_build_object('episodeId',gen_random_uuid(),'item',jsonb_build_object('id',$1));end $$;
  create function public.admin_ai_queue_exclude(uuid,text,text,uuid,text,uuid) returns jsonb language plpgsql as $$
  declare sid uuid; begin update machimoa_review.processing_jobs j set status='cancelled' from machimoa_review.source_items s
@@ -125,6 +126,30 @@ try {
  assert.equal(currentStage,'candidate');assert.deepEqual(history,before);
  assert.equal((await report(second)).items.find(r=>r.id===id(12)).reused,true);
  assert.equal((await report(first)).items.find(r=>r.id===id(4)).currentStage,'unknown');
+ const itemRow=async n=>(await report(first)).items.find(r=>r.id===id(n));
+ const prior=await itemRow(6);
+ await scalar("select public.admin_review_exclude_reason($1,$2,$3,'custom','중복',$4,$5)",[id(6),rev,hash,actor,run()]);
+ assert.equal((await itemRow(6)).currentStage,'unknown');
+ await db.exec(readFileSync(new URL('../supabase/migrations/20261126142306_suitability_active_exclusion_stage.sql',import.meta.url),'utf8'));
+ assert.deepEqual(await itemRow(6),{...prior,currentStage:'excluded'});
+ assert.equal((await itemRow(12)).currentStage,'candidate');
+ assert.equal((await itemRow(1)).currentStage,'excluded');
+ assert.equal((await itemRow(1)).moved,true);
+ await db.query("insert into machimoa_review.admin_exclusion_episodes values($1,null,'other revision','다른 원문')",[id(10)]);
+ assert.equal((await itemRow(10)).currentStage,'facts');
+ await db.query("update machimoa_review.source_items set revision_hash='changed' where id=$1",[id(6)]);
+ assert.equal((await itemRow(6)).currentStage,'unknown');
+ await db.query("update machimoa_review.source_items set revision_hash=$1 where id=$2",[rev,id(6)]);
+ await db.query('update machimoa_review.admin_exclusion_episodes set restored_at=now() where source_item_id in ($1,$2)',[id(1),id(6)]);
+ await db.query('update machimoa_review.source_items set facts=true where id in ($1,$2)',[id(1),id(6)]);
+ assert.deepEqual(await itemRow(6),prior);
+ assert.equal((await itemRow(1)).currentStage,'facts');
+ assert.equal((await itemRow(1)).moved,true);
+ assert.equal(await scalar('select note from machimoa_review.admin_exclusion_episodes where source_item_id=$1 and restored_at is not null',[id(6)]),'중복');
+ await db.query('update machimoa_review.source_items set facts=false,ai=true where id=$1',[id(6)]);
+ await db.query("insert into machimoa_review.processing_jobs values($1,$2,$3,'ai_enrichment','queued')",[job(6),id(6),rev]);
+ assert.equal((await itemRow(6)).currentStage,'ai');
+ console.log('PASS existing custom exclusion and restoration to facts/AI, mismatched revision, retained decision, note and bulk receipt');
  for(const role of ['anon','authenticated'])assert.equal(await scalar("select has_function_privilege($1,'public.suitability_report(uuid)','execute')",[role]),false);
  console.log('PASS historical report: facts -> AI -> processing -> unconfirmed -> matching candidate; history, identity, revision and privileges');
  console.log('PASS multi-page snapshot, source identity, pending claim, reuse, new policy, selected trash, conflict, active job, permissions');

@@ -6,7 +6,7 @@ import type {SuitabilityReport, SuitabilityRow} from '@/app/lib/review/suitabili
 import {primaryButton,secondaryButton} from './ReviewEditors';
 
 const groups = {exclude:'제외 권장',check:'확인 필요',keep:'적합 제안'} as const;
-const stages = {facts:'사람 사실 review',ai:'AI 작업 대기',processing:'AI 처리 중',unknown:'현재 단계 확인 필요',candidate:'후보 생성 확인'} as const;
+const stages = {facts:'사람 사실 review',ai:'AI 작업 대기',processing:'AI 처리 중',unknown:'현재 단계 확인 필요',candidate:'후보 생성 확인',excluded:'제외 확인'} as const;
 const outcomes = {moved:'이동 완료',skipped:'상태·버전 변경으로 건너뜀',failed:'이동 실패',unknown:'결과 불명',unprocessed:'미처리'} as const;
 type Outcome = keyof typeof outcomes;
 function canSelect(row:SuitabilityRow, result?:Outcome) {
@@ -34,20 +34,22 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved,revi
   const notified = useRef(new Set<string>());
   const moveRun = useRef<string|null>(null);
   const startPending = useRef(false);
+  const loadedRun = useRef<string | undefined>(undefined);
   const requestId = run?.requestId;
   const active = run?.state==='running';
   const aiRequest = aiRun?.requestId, aiState = aiRun?.state, created = aiRun?.counts.completed;
-  useEffect(()=>{
-    startPending.current=false;
-    notified.current.clear();
-    setChecked([]); setConfirm(false); setResults({}); setLastBatch([]);
-  },[report?.id]);
   useEffect(()=>{ if(!locked) startPending.current=false; },[locked]);
   useEffect(()=>{
     const controller = new AbortController();
     if (active) return;
     readReport(requestId,controller.signal).then(value=>{
       if (!controller.signal.aborted) {
+        if (loadedRun.current!==value?.id) {
+          loadedRun.current=value?.id;
+          startPending.current=false;
+          notified.current.clear();
+          setChecked([]); setConfirm(false); setResults({}); setLastBatch([]);
+        }
         setReport(value);setNotice('');
         const selectable = new Set(value?.items.filter(row=>canSelect(row)).map(row=>row.id));
         setChecked(old=>old.filter(id=>selectable.has(id)));
@@ -65,7 +67,11 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved,revi
   },[report,requestId,results,onMoved]);
   const reportItems = report?.items ?? [];
   const movedIds = new Set(reportItems.filter(row=>row.moved || results[row.id]==='moved').map(row=>row.id));
-  const items = reportItems.filter(row=>!movedIds.has(row.id) && row.currentStage!=='candidate');
+  const items = reportItems.filter(row=>{
+    // A confirmed batch response can arrive before its receipt is read back.
+    const awaitingReceipt = results[row.id]==='moved' && !row.moved;
+    return !awaitingReceipt && row.currentStage!=='excluded' && row.currentStage!=='candidate';
+  });
   const selected = items.filter(row=>checked.includes(row.id) && canSelect(row,results[row.id]));
   const counts = {moved:0,failed:0,unprocessed:0,skipped:0,unknown:0};
   for(const id of lastBatch) {
@@ -104,7 +110,7 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved,revi
     } finally {submitting.current=false;setSaving(false);}
   }
   function display(row:SuitabilityRow) {
-    const result=row.moved?'moved':results[row.id];
+    const result=row.moved ? undefined : results[row.id];
     return <li key={row.id} className="space-y-1 border-b border-info-rule py-3">
       <label className="flex items-baseline gap-2 font-semibold"><input type="checkbox" disabled={busy || confirm || !canSelect(row,result)}
         checked={!row.moved && checked.includes(row.id)} onChange={e=>setChecked(old=>e.target.checked?[...old,row.id]:old.filter(id=>id!==row.id))}/>{row.title}</label>
