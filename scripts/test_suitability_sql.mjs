@@ -23,11 +23,14 @@ try {
  set search_path=machimoa_review,public;
  create table source_items(id uuid primary key,source_id text,external_key text,revision_hash text,version text,
   facts boolean,ai boolean,body text);
- create table processing_jobs(id uuid,source_item_id uuid,revision_hash text,processing_stage text,status text);
+ create table processing_jobs(id uuid,source_item_id uuid,revision_hash text,processing_stage text,status text,claim_lease_until timestamptz);
  create table ingest_review_decisions(source_item_id uuid,revision_hash text,revoked_at timestamptz,review_type text,decision text,reviewer text,reason_codes text[]);
  create table admin_exclusion_episodes(source_item_id uuid,restored_at timestamptz);
  create table curation_candidates(source text,source_item_id text,source_revision_hash text);
  create function canonical_source_id(text) returns text language sql immutable as $$select $1$$;
+ create function ai_queue_executable(uuid) returns boolean language sql stable as $$
+ select exists(select from machimoa_review.processing_jobs j join machimoa_review.source_items s on s.id=j.source_item_id
+ where j.id=$1 and s.ai and j.status='queued' and s.revision_hash=j.revision_hash) $$;
  create function public.admin_review_list(text,int,int) returns jsonb language sql stable as $$
  select coalesce(jsonb_agg(to_jsonb(p)),'[]') from(select id,source_id "sourceName" from machimoa_review.source_items where facts order by id offset $2 limit $3)p $$;
  create function public.admin_review_ai_queue(int,int,uuid[]) returns jsonb language sql stable as $$
@@ -98,5 +101,31 @@ try {
  assert.equal((await claim(changed)).id,id(4));
  const third=run();await freeze(third,'c'.repeat(64));assert.ok(await claim(third));
  for(const role of ['anon','authenticated'])assert.equal(await scalar("select has_function_privilege($1,'public.suitability_exclude(uuid,uuid,uuid,uuid)','execute')",[role]),false);
+ // The report already exists when the new reader is installed.
+ const before=(await report(first)).items.find(row=>row.id===id(12));
+ await db.exec(readFileSync(new URL('../supabase/migrations/20261126060135_suitability_current_stage.sql',import.meta.url),'utf8'));
+ const stage=async()=> (await report(first)).items.find(row=>row.id===id(12));
+ assert.equal((await stage()).currentStage,'facts');
+ await db.query('update machimoa_review.source_items set facts=false,ai=true where id=$1',[id(12)]);
+ await db.query("insert into machimoa_review.processing_jobs values($1,$2,$3,'ai_enrichment','queued')",[job(12),id(12),rev]);
+ assert.equal((await stage()).currentStage,'ai');
+ await db.query("update machimoa_review.processing_jobs set status='claimed',claim_lease_until=now()-interval '1 hour' where id=$1",[job(12)]);
+ assert.equal((await stage()).currentStage,'unknown');
+ await db.query("update machimoa_review.processing_jobs set claim_lease_until=now()+interval '1 hour' where id=$1",[job(12)]);
+ for(const [status,expected] of [['claimed','processing'],['completed','unknown']]){
+  await db.query('update machimoa_review.processing_jobs set status=$1 where id=$2',[status,job(12)]);
+  assert.equal((await stage()).currentStage,expected);
+ }
+ for(const [source,key,revision] of [['seoul_reservation','key12',rev],['myseoul_program','key11',rev],['myseoul_program','key12','old']]){
+  await db.query('insert into machimoa_review.curation_candidates values($1,$2,$3)',[source,key,revision]);
+  assert.equal((await stage()).currentStage,'unknown');
+ }
+ await db.query('insert into machimoa_review.curation_candidates values($1,$2,$3)',['myseoul_program','key12',rev]);
+ const {currentStage,...history}=await stage();
+ assert.equal(currentStage,'candidate');assert.deepEqual(history,before);
+ assert.equal((await report(second)).items.find(r=>r.id===id(12)).reused,true);
+ assert.equal((await report(first)).items.find(r=>r.id===id(4)).currentStage,'unknown');
+ for(const role of ['anon','authenticated'])assert.equal(await scalar("select has_function_privilege($1,'public.suitability_report(uuid)','execute')",[role]),false);
+ console.log('PASS historical report: facts -> AI -> processing -> unconfirmed -> matching candidate; history, identity, revision and privileges');
  console.log('PASS multi-page snapshot, source identity, pending claim, reuse, new policy, selected trash, conflict, active job, permissions');
 } finally { await db.close(); }

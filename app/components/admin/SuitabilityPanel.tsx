@@ -6,10 +6,11 @@ import type {SuitabilityReport, SuitabilityRow} from '@/app/lib/review/suitabili
 import {primaryButton,secondaryButton} from './ReviewEditors';
 
 const groups = {exclude:'제외 권장',check:'확인 필요',keep:'적합 제안'} as const;
+const stages = {facts:'사람 사실 review',ai:'AI 작업 대기',processing:'AI 처리 중',unknown:'현재 단계 확인 필요',candidate:'후보 생성 확인'} as const;
 const outcomes = {moved:'이동 완료',skipped:'상태·버전 변경으로 건너뜀',failed:'이동 실패',unknown:'결과 불명',unprocessed:'미처리'} as const;
 type Outcome = keyof typeof outcomes;
 function canSelect(row:SuitabilityRow, result?:Outcome) {
-  return row.state==='done' && !row.moved && (!result || result==='failed' || result==='unprocessed');
+  return (row.currentStage==='ai' || row.currentStage==='facts') && row.state==='done' && !row.moved && (!result || result==='failed' || result==='unprocessed');
 }
 const endpoint = '/api/admin/suitability';
 async function readReport(id?:string,signal?:AbortSignal):Promise<SuitabilityReport|null> {
@@ -20,7 +21,7 @@ async function readReport(id?:string,signal?:AbortSignal):Promise<SuitabilityRep
   return report;
 }
 
-export default function SuitabilityPanel({locked,disabled,run,start,onMoved}:{locked:boolean;disabled:boolean;run?:WorkerRun;start:()=>void;onMoved?:(rows:SuitabilityRow[])=>void}) {
+export default function SuitabilityPanel({locked,disabled,run,start,onMoved,reviewRevision,aiRun}:{reviewRevision?:number;aiRun?:WorkerRun;locked:boolean;disabled:boolean;run?:WorkerRun;start:()=>void;onMoved?:(rows:SuitabilityRow[])=>void}) {
   const [report,setReport] = useState<SuitabilityReport|null>(null);
   const [checked,setChecked] = useState<string[]>([]);
   const [confirm,setConfirm] = useState(false);
@@ -35,11 +36,12 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved}:{lo
   const startPending = useRef(false);
   const requestId = run?.requestId;
   const active = run?.state==='running';
+  const aiRequest = aiRun?.requestId, aiState = aiRun?.state, created = aiRun?.counts.completed;
   useEffect(()=>{
     startPending.current=false;
     notified.current.clear();
     setChecked([]); setConfirm(false); setResults({}); setLastBatch([]);
-  },[requestId]);
+  },[report?.id]);
   useEffect(()=>{ if(!locked) startPending.current=false; },[locked]);
   useEffect(()=>{
     const controller = new AbortController();
@@ -47,12 +49,12 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved}:{lo
     readReport(requestId,controller.signal).then(value=>{
       if (!controller.signal.aborted) {
         setReport(value);setNotice('');
-        const moved = new Set(value?.items.filter(row=>row.moved).map(row=>row.id));
-        setChecked(old=>old.filter(id=>!moved.has(id)));
+        const selectable = new Set(value?.items.filter(row=>canSelect(row)).map(row=>row.id));
+        setChecked(old=>old.filter(id=>selectable.has(id)));
       }
     }).catch(()=>{if(!controller.signal.aborted) setNotice('점검 결과를 읽지 못했습니다. 결과를 다시 확인해 주세요.');});
     return ()=>controller.abort();
-  },[requestId,active,refresh]);
+  },[requestId,active,refresh,reviewRevision,aiRequest,aiState,created]);
   useEffect(()=>{
     if(!report || moveRun.current!==report.id || (requestId && requestId!==report.id)) return;
     const confirmed = report.items.filter(row=>!notified.current.has(row.id) &&
@@ -63,7 +65,7 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved}:{lo
   },[report,requestId,results,onMoved]);
   const reportItems = report?.items ?? [];
   const movedIds = new Set(reportItems.filter(row=>row.moved || results[row.id]==='moved').map(row=>row.id));
-  const items = reportItems.filter(row=>!movedIds.has(row.id));
+  const items = reportItems.filter(row=>!movedIds.has(row.id) && row.currentStage!=='candidate');
   const selected = items.filter(row=>checked.includes(row.id) && canSelect(row,results[row.id]));
   const counts = {moved:0,failed:0,unprocessed:0,skipped:0,unknown:0};
   for(const id of lastBatch) {
@@ -106,7 +108,7 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved}:{lo
     return <li key={row.id} className="space-y-1 border-b border-info-rule py-3">
       <label className="flex items-baseline gap-2 font-semibold"><input type="checkbox" disabled={busy || confirm || !canSelect(row,result)}
         checked={!row.moved && checked.includes(row.id)} onChange={e=>setChecked(old=>e.target.checked?[...old,row.id]:old.filter(id=>id!==row.id))}/>{row.title}</label>
-      <p className="text-sm text-info-muted">{workerSources[row.source]} · {row.key} · {row.queue==='facts'?'사람 사실 review':'AI 작업 대기'}{row.reused?' · 기존 판정':''}{result?' · '+outcomes[result]:''}</p>
+      <p className="text-sm text-info-muted">{workerSources[row.source]} · {row.key} · {stages[row.currentStage] ?? stages.unknown}{row.reused?' · 기존 판정':''}{result?' · '+outcomes[result]:''}</p>
       <p>{row.decision?.clause} · {row.decision?.reason}</p>
       {row.decision?.quote && <blockquote className="border-l-2 border-info-rule pl-3">{row.decision.quote}</blockquote>}
       {row.decision?.question && <p>확인할 점　{row.decision.question}</p>}
@@ -125,7 +127,7 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved}:{lo
     {run?.state==='auth_required' && <p role="status">PC 실행기의 Pro 계정 연결을 확인해 주세요. 호출 전 항목은 미판정으로 남습니다.</p>}
     {notice && <p role="alert">{notice}</p>}
     {report && !active && (!requestId || report.id===requestId) && <>
-      <p>확정 지침 {report.policy} · 조회 {new Date(report.readAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} (한국시간)</p>
+      <p>확정 지침 {report.policy} · 지침 조회 {new Date(report.readAt).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} (한국시간)</p>
       {items.length>0 && <p>{Object.entries(workerSources).map(([source,label])=>{
         const rows=items.filter(row=>row.source===source);
         return rows.length ? label+' '+rows.length+'건 (기존 판정 '+rows.filter(row=>row.reused).length+'건)' : '';
@@ -146,7 +148,7 @@ export default function SuitabilityPanel({locked,disabled,run,start,onMoved}:{lo
       {confirm && <div role="group" aria-label="선택한 콘텐츠 제외 확인"><p>아래 항목을 ‘서비스에 적합하지 않음’으로 제외합니다. AI 대기 작업도 함께 중지됩니다.</p>
         <ul>{selected.map(row=><li key={row.id}>{row.title}</li>)}</ul>
         <button type="button" className={secondaryButton} onClick={()=>setConfirm(false)}>취소</button>
-        <button type="button" className={primaryButton} disabled={busy} onClick={()=>void move()}>확인하고 이동</button></div>}
+        <button type="button" className={primaryButton} disabled={busy || !selected.length} onClick={()=>void move()}>확인하고 이동</button></div>}
     </>}
   </section>;
 }

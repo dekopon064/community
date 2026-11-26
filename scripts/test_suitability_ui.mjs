@@ -39,7 +39,7 @@ try {
  const origin='http://localhost:31979',instance=crypto.randomUUID(),challenge=crypto.randomUUID(),actor=crypto.randomUUID();
  const catalog=JSON.parse(readFileSync('app/lib/pc-worker/sources.json')).map(s=>[s.id,s.collector,s.ai].join(':')).join('|');
  const rows=['exclude','check','keep','keep'].map((group,i)=>({id:crypto.randomUUID(),source:i%2?'myseoul_program':'seoul_reservation',
-  key:'TEST-'+i,queue:i%2?'ai':'facts',title:['합성 장식품 만들기','합성 공원 안내','합성 성곽 해설','합성 생활 수선'][i],
+  key:'TEST-'+i,currentStage:i%2?'ai':'facts',queue:i%2?'ai':'facts',title:['합성 장식품 만들기','합성 공원 안내','합성 성곽 해설','합성 생활 수선'][i],
   state:'done',moved:false,reused:false,decision:{group,clause:group==='keep'?'K02':group==='check'?'확인 필요':'E01',
     quote:'합성 원문의 활동 문구',reason:'원문 활동을 기준으로 검토했습니다.',question:group==='check'?'프로그램에 지역 해설이 포함되나요?':'',note:''}}));
  let run=null,report=null,requestId,command,calls=0,moves=[],lose=false;
@@ -109,6 +109,14 @@ try {
   const json=data=>route.fulfill({json:data});
   const respond=async promise=>{const response=await promise;return route.fulfill({status:response.status,json:await response.json()});};
   if(url.origin===origin && url.pathname.startsWith('/api/admin/review/facts/')){
+    if(req.method()==='POST'){
+      const command=req.postDataJSON(); assert.equal(command.action,'save_facts');
+      const saved=await fixture.execute('facts',draft.id,command,actor);
+      assert.equal(saved.aiStatus,'queued');
+      const row=rows.find(row=>row.id===draft.id);assert.ok(row);
+      row.currentStage='ai';
+      return json({mode:'local-fixture',item:saved});
+    }
     assert.equal(req.method(),'GET');
     return respond(reviewDetail(new Request(url),'facts',draft.id,{authorize:deps.authorize,store:()=>fixture}));
   }
@@ -122,6 +130,11 @@ try {
    if(url.pathname==='/hello')return json({instance,challenge,schema:'machimoa-pc-worker-v3',catalog,project:'a'.repeat(20)});
    if(url.pathname==='/connect')return json({token:'a'.repeat(40),instance});
    if(url.pathname==='/status')return json(output());
+   if(url.pathname==='/run' && command.kind==='ai'){
+    rows[2].currentStage='candidate';
+    run={requestId,command,state:'completed',code:'completed',counts:{completed:1,selected:1}};
+    return json(output());
+   }
    if(url.pathname==='/run'){assert.deepEqual(command,{kind:'suitability',source:'all',limit:'all'});calls++;
     run={requestId,command,state:'completed',code:'completed',counts:{classified:4}};
     report={id:requestId,policy:'1.0',readAt:'2026-11-25T00:00:00Z',items:rows};return json(output());}
@@ -270,5 +283,36 @@ try {
  assert.equal(await ai.getByRole('heading',{name:rows[3].title}).count(),0);
  assert.deepEqual(moves,ids);
  assert.equal(calls,1);
+ // Shared facts-save callback and real worker controls with synthetic replies only.
+ // Attach the generic editable fixture to the frozen report after the earlier trash cases.
+ rows[2].id=draft.id; rows[2].title=draft.title;
+ await resetSelection();
+ const region=page.getByRole('region',{name:'콘텐츠 적합성 점검'});
+ const workshop=region.getByRole('listitem').filter({has:box(2)});
+ await workshop.getByText(/사람 사실 review/).waitFor();
+ await aside.getByText(draft.title,{exact:true}).first().click();
+ await page.locator('#scope').selectOption('nationwide');
+ await page.locator('#foreignEligibility').selectOption('eligible');
+ await page.locator('#deadlineKind').selectOption('none');
+ await page.getByRole('button',{name:'사실 저장·재평가'}).click();
+ await workshop.getByText(/AI 작업 대기/).waitFor();
+ assert.equal(await box(2).isChecked(),true);
+ await region.getByRole('heading',{name:'적합 제안 2건'}).waitFor();
+ await page.getByRole('button',{name:'AI 작업 대기',exact:true}).click();
+ await page.getByRole('button',{name:'PC 연결',exact:true}).click();
+ await page.getByRole('button',{name:'AI 실행',exact:true}).click();
+ await region.getByRole('heading',{name:'적합 제안 1건'}).waitFor();
+ assert.equal(await box(2).count(),0);assert.ok(await box(0).isChecked());
+ rows[1].currentStage='unknown';
+ await region.getByRole('button',{name:'점검 결과 다시 확인'}).click();
+ await region.getByText(/TEST-1 · 현재 단계 확인 필요/).waitFor();
+ assert.equal(await box(1).isEnabled(),false);
+ rows[1].currentStage='candidate';
+ await region.getByRole('button',{name:'점검 결과 다시 확인'}).click();
+ await box(1).waitFor({state:'detached'});
+ assert.equal(await region.getByRole('checkbox').count(),2);
+ assert.equal(await region.getByRole('heading',{name:/확인 필요/}).count(),0);
+ assert.equal(calls,1);assert.equal(moves.length,0);
+ console.log('PASS same-tab fact save and worker completion, group counts, unrelated selection, manual refresh and unconfirmed state');
  console.log('PASS suitability trash regressions, same-tab facts and AI queues, full waiting totals across pages, confirmed-only updates, lost-response reconciliation, pagination and unrelated unsaved edits');
 } finally {if(browser)await browser.close();if(existsSync(dir))rmSync(dir,{recursive:true});}
