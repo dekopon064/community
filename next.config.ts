@@ -16,6 +16,8 @@ const withSerwist = withSerwistInit({
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Keep public article canonicals in the initial <head>, even on a slow lookup.
+  htmlLimitedBots: /.*/,
   // Serwist가 webpack 설정을 주입하므로, Turbopack(dev 기본) 충돌 경고를 없애기 위한 빈 설정
   turbopack: {},
 };
