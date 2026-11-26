@@ -5,6 +5,7 @@ import {resolve,join} from 'node:path';
 import {createRequire,registerHooks} from 'node:module';
 import {IncomingMessage} from 'node:http';
 import {Socket} from 'node:net';
+import {execFileSync} from 'node:child_process';
 
 import {pathToFileURL} from 'node:url';
 import ts from 'typescript';
@@ -55,7 +56,7 @@ try {
    const row=rows.find(item=>item.id===args.p_item);
    if(row.id===skipItem)return {data:'skipped',error:null};
    if(row.id===failItem)return {data:null,error:{code:'PT422'}};
-   row.moved=true;return {data:'moved',error:null};
+   row.moved=true;row.currentStage='excluded';return {data:'moved',error:null};
  }})};
  const denied=await suitabilityRequest(new Request(origin+'/api/admin/suitability'),{authorize:async()=>{throw new AdminAccessError('forbidden');},client:()=>assert.fail()});
  const {listReviews,reviewDetail}=await import('../app/lib/review/handlers.ts');
@@ -67,7 +68,7 @@ try {
  const [draft]=await fixture.list('facts');
  const factsDeps={authorize:deps.authorize,store:()=>new DatabaseReviewStore({rpc:async(name,args)=>{
    assert.equal(name,'admin_review_list');
-   const facts=[draft,...rows.filter(r=>r.queue==='facts'&&!r.moved).map(r=>({id:r.id,sourceName:r.source,title:r.title,status:'open',reasons:[]}))];
+   const facts=[draft,...rows.filter(r=>r.queue==='facts'&&!r.moved && r.currentStage!=='excluded').map(r=>({id:r.id,sourceName:r.source,title:r.title,status:'open',reasons:[]}))];
    return {data:facts.slice(args.p_offset,args.p_offset+25),error:null};
  }})};
  const jobs=rows.map(r=>({jobId:crypto.randomUUID(),sourceItemId:r.id,title:r.title,sourceName:r.source,revision:'a'.repeat(64),currentRevision:true,
@@ -192,7 +193,7 @@ try {
  assert.equal(await box(2).count(),0);
  assert.equal(calls,1);assert.equal(await page.locator('input:checked').count(),0);
  async function resetSelection(){
-   for(const row of rows)row.moved=false;
+   for(const row of rows){row.moved=false;row.currentStage=row.queue;}
    skipItem=failItem=interruptItem=loseBeforeSave=undefined;
    moves=[];attempted.length=0;
    await page.reload();
@@ -217,6 +218,12 @@ try {
  await page.getByText('남은 점검 항목이 없습니다.').waitFor();
  await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 0건'}).waitFor();
  assert.deepEqual(moves,ids);
+ // A historical batch receipt still counts as success after restoration.
+ rows[3].currentStage='ai';
+ await page.getByRole('button',{name:'점검 결과 다시 확인'}).click();
+ await page.getByRole('heading',{name:'적합 제안 1건'}).waitFor();
+ await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 0건'}).waitFor();
+ assert.equal(rows[3].moved,true);
 
  await resetSelection();interruptItem=ids[1];
  await confirmMove(3);
@@ -240,6 +247,11 @@ try {
  await confirmMove(3);
  await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 1건 · 결과 불명 1건'}).waitFor();
  assert.ok(await box(1).isDisabled());assert.ok(await box(2).isChecked());assert.ok(await box(2).isEnabled());
+ // An independent exclusion after a lost batch reply must not credit the batch.
+ rows[1].currentStage='excluded';
+ await page.getByRole('button',{name:'점검 결과 다시 확인'}).click();
+ await box(1).waitFor({state:'detached'});
+ await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 1건 · 결과 불명 1건'}).waitFor();
  assert.deepEqual(attempted,ids.slice(0,2));assert.deepEqual(moves,[ids[0]]);
  const aside=page.getByRole('complementary',{name:'검토 목록'});
  await aside.getByText('남은 2건',{exact:true}).waitFor();
@@ -313,6 +325,68 @@ try {
  assert.equal(await region.getByRole('checkbox').count(),2);
  assert.equal(await region.getByRole('heading',{name:/확인 필요/}).count(),0);
  assert.equal(calls,1);assert.equal(moves.length,0);
+ // Exercise the native MySeoul custom exclusion and trash restore in the same tab.
+ const title='[서울글로벌센터] 나를 위한 크리스마스 힐링 워크숍 참여자 모집';
+ const keep={...rows[2].decision,group:'keep',clause:'K05'};
+ const six=Array.from({length:6},(_,i)=>({...rows[2],id:crypto.randomUUID(),
+   key:'WORKSHOP-'+i,source:i===5?'seoul_reservation':'myseoul_program',title:i<2?title:'다른 공고 '+i,
+   decision:keep,currentStage:'facts',queue:'facts',moved:false}));
+ rows.splice(0,rows.length,...six);
+ const target=six[0];
+ const sample=JSON.parse(execFileSync(process.env.MACHIMOA_TEST_PYTHON || 'python',['-X','utf8','scripts/test_myseoul_db.py','--fixtures'],{encoding:'utf8'})).fixtures[0];
+ const facts=sample.item.myseoul_facts;
+ const detail={id:target.id,revision:facts.source_revision,version:'b'.repeat(64),schema:facts.schema_version,
+   profile:'myseoul-program-v1-local',factsVersion:1,source:{name:target.source,title,url:facts.official_url,body:facts.description},
+   facts,observedFacts:facts,result:sample.expected,status:'open',aiStatus:'blocked',editableFields:[],history:[]};
+ const excludedAt=Date.now();
+ const episode={id:crypto.randomUUID(),sourceItemId:target.id,revision:detail.revision,version:detail.version,
+   sourceName:target.source,title,reasonCode:'custom',note:'중복',excludedAt:new Date(excludedAt).toISOString(),
+   expiresAt:new Date(excludedAt+72*3600000).toISOString(),canRestore:true,blockReason:null};
+ let exclusionReply='conflict';
+ await page.route('**/api/admin/myseoul-review/'+target.id,route=>route.fulfill({json:{mode:'database',item:detail}}));
+ await page.route('**/api/admin/review-trash*',async route=>{
+   if(route.request().method()==='GET')return route.fulfill({json:{mode:'database',serverNow:new Date().toISOString(),hasMore:false,items:target.currentStage==='excluded'?[episode]:[]}});
+   const cmd=route.request().postDataJSON();
+   if(cmd.action==='restore'){
+     assert.equal(cmd.episodeId,episode.id);target.currentStage='facts';detail.status='open';
+     return route.fulfill({json:{mode:'database',sourceItemId:target.id,episodeId:episode.id,item:detail}});
+   }
+   assert.deepEqual([cmd.action,cmd.id,cmd.reasonCode,cmd.note],['exclude',target.id,'custom','중복']);
+   if(exclusionReply==='conflict')return route.fulfill({status:409,json:{code:'conflict'}});
+   if(exclusionReply==='lost')return route.abort();
+   target.currentStage='excluded';detail.status='excluded';
+   return route.fulfill({json:{mode:'database',episodeId:episode.id,item:detail}});
+ });
+ await page.reload();
+ const keepCount=n=>region.getByRole('heading',{name:'적합 제안 '+n+'건',exact:true});
+ const reportRow=key=>region.getByRole('listitem').filter({hasText:key});
+ await keepCount(6).waitFor();
+ await aside.getByText(title,{exact:true}).first().click();
+ await page.getByLabel('기타 제외 사유',{exact:true}).fill('중복');
+ async function excludeCustom(){
+   await page.getByRole('button',{name:'사유를 남기고 제외'}).click();
+   const accept=page.getByRole('button',{name:'확인하고 제외'});await accept.click();await accept.waitFor({state:'detached'});
+ }
+ for(const reply of ['conflict','lost']){
+   exclusionReply=reply;await excludeCustom();
+   await region.getByRole('button',{name:'점검 결과 다시 확인'}).click();
+   await keepCount(6).waitFor();assert.equal(await reportRow(target.key).count(),1);
+ }
+ exclusionReply='success';await excludeCustom();
+ await keepCount(5).waitFor();
+ const reloadReport=()=>Promise.all([page.waitForResponse(r=>r.url().includes('/api/admin/suitability')&&r.request().method()==='GET'),region.getByRole('button',{name:'점검 결과 다시 확인'}).click()]);
+ await reloadReport();await keepCount(5).waitFor();
+ assert.equal(await reportRow(target.key).count(),0);
+ assert.equal(await reportRow(six[1].key).getByRole('checkbox').isEnabled(),true);
+ await region.getByText(/My서울\+ 4건/).waitFor();
+ assert.equal(await summary.count(),0);
+ await page.getByRole('button',{name:'휴지통',exact:true}).click();
+ await page.getByRole('button',{name:title+' 복구'}).click();
+ await keepCount(6).waitFor();
+ await reportRow(target.key).getByText(/K05/).waitFor();
+ assert.equal(await reportRow(target.key).getByRole('checkbox').isEnabled(),true);
+ assert.equal(moves.length,0);assert.equal(calls,1);
+ console.log('PASS six suggestions: custom exclusion, same-title sibling, 6 -> 5 -> 5 -> 6, failed/lost exclude, no bulk success');
  console.log('PASS same-tab fact save and worker completion, group counts, unrelated selection, manual refresh and unconfirmed state');
  console.log('PASS suitability trash regressions, same-tab facts and AI queues, full waiting totals across pages, confirmed-only updates, lost-response reconciliation, pagination and unrelated unsaved edits');
 } finally {if(browser)await browser.close();if(existsSync(dir))rmSync(dir,{recursive:true});}
