@@ -37,7 +37,7 @@ export function PcWorkerProvider({children}:{children:ReactNode}){
   return <WorkerContext.Provider value={{view,runs,connect:()=>void client.current?.connect(),refresh:()=>void client.current?.refresh(),run:command=>void client.current?.run(command)}}>{children}</WorkerContext.Provider>;
 }
 function locked(view:PcWorkerView,disabled:boolean){return disabled||view.sending||view.busy||view.unknown||view.connection!=='ready';}
-export default function PcWorkerPanel({disabled=false,onSuitabilityMoved}:{disabled?:boolean;onSuitabilityMoved?:(rows:SuitabilityRow[])=>void}){
+export default function PcWorkerPanel({disabled=false,reviewRevision,onSuitabilityMoved}:{disabled?:boolean;reviewRevision?:number;onSuitabilityMoved?:(rows:SuitabilityRow[])=>void}){
   const {view,runs,connect,refresh,run}=useWorker();const [source,setSource]=useState('all');
   return <div className="mb-6 border-y border-info-rule py-4">
     <section aria-label="PC 연결" className="space-y-3">
@@ -57,7 +57,7 @@ export default function PcWorkerPanel({disabled=false,onSuitabilityMoved}:{disab
       {disabled&&<p className="text-sm text-info-status">편집·저장 중인 내용을 먼저 정리해 주세요.</p>}
       <RunResult kind="collect"/>
     </section>
-    <SuitabilityPanel locked={locked(view,disabled)} disabled={disabled || view.busy || view.sending || view.unknown} run={runs.suitability} onMoved={onSuitabilityMoved}
+    <SuitabilityPanel locked={locked(view,disabled)} disabled={disabled || view.busy || view.sending || view.unknown} run={runs.suitability} reviewRevision={reviewRevision} aiRun={runs.ai} onMoved={onSuitabilityMoved}
       start={()=>run({source:"all",kind:"suitability",limit:"all"})}/>
   </div>;
 }

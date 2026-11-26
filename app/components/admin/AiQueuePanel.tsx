@@ -9,7 +9,7 @@ import AiQueueReview from './AiQueueReview';
 import type {AiReview} from '@/app/lib/review/ai-review';
 const sources={youthcenter_policy:"온통청년 정책",youthcenter_content:"온통청년 콘텐츠",seoul_reservation:"서울 공공서비스예약",myseoul_program:"마이서울플러스"};
 function time(value:string){return new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",dateStyle:"medium",timeStyle:"short"}).format(new Date(value));}
-export default function AiQueuePanel({active,onBusy,onReview,execution,movedSourceIds}:{active:boolean;onBusy:(blocked:boolean)=>void;onReview:(item:AiReview)=>void;execution?:ReactNode;movedSourceIds?:string[]}){
+export default function AiQueuePanel({active,onBusy,onReview,onChanged,execution,movedSourceIds}:{active:boolean;onChanged?:()=>void;onBusy:(blocked:boolean)=>void;onReview:(item:AiReview)=>void;execution?:ReactNode;movedSourceIds?:string[]}){
  const [selected,setSelected]=useState<string|null>(null),[detailBlocked,setDetailBlocked]=useState(false);
  const detailBusy=useCallback((blocked:boolean)=>{setDetailBlocked(blocked);onBusy(blocked);},[onBusy]);
  const [snapshot,setSnapshot]=useState<AiSnapshot|null>(null),[offset,setOffset]=useState(0);
@@ -82,6 +82,6 @@ export default function AiQueuePanel({active,onBusy,onReview,execution,movedSour
    </div>
   </li>)}</ul></section>)}
   {snapshot&&<div className="mt-5 flex flex-wrap gap-3"><button className={secondaryButton} disabled={loading||detailBlocked||offset===0} onClick={()=>void load(Math.max(0,offset-25))}>이전 목록</button><button className={secondaryButton} disabled={loading||detailBlocked||!snapshot.hasMore} onClick={()=>void load(offset+25)}>다음 목록</button></div>}
-  {selected&&active&&<AiQueueReview key={selected} jobId={selected} onClose={()=>{setSelected(null);document.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')?.focus();}} onBusy={detailBusy} onChanged={()=>void load(offset)} onReview={onReview}/>}
+  {selected&&active&&<AiQueueReview key={selected} jobId={selected} onClose={()=>{setSelected(null);document.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')?.focus();}} onBusy={detailBusy} onChanged={()=>{void load(offset);onChanged?.();}} onReview={onReview}/>}
  </section>;
 }
