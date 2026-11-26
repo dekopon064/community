@@ -15,6 +15,7 @@ import SavedCount from "@/app/components/auth/SavedCount";
 import ContentComments from "@/app/components/ContentComments";
 import { getCurationPeriodPresentation, matchingDeadlineEndpoint, todayKst } from "@/app/lib/applicationDeadlineDisplay";
 import { fetchLocalizedCurationBySlug } from "@/app/lib/curations";
+import { publicArticleUrl } from "@/app/lib/publicUrls";
 import { isUserCategory } from "@/app/lib/userCategories";
 import LivingImageGallery from '@/app/components/LivingImageGallery';
 import { publicLivingGallery } from '@/app/lib/living/public-gallery';
@@ -30,8 +31,8 @@ const getPublicArticle = cache(async (id: string, locale: string) => {
 
 export async function generateMetadata({ params }: PageProps<"/[locale]/info/[id]">): Promise<Metadata> {
   const { id, locale } = await params;
-  const { title, summary } = await getPublicArticle(id, locale);
-  return { title, description: summary };
+  const { title, summary, slug } = await getPublicArticle(id, locale);
+  return { title, description: summary, alternates: { canonical: publicArticleUrl(locale, slug) } };
 }
 
 export default async function InfoDetailPage({ params }: PageProps<"/[locale]/info/[id]">) {
