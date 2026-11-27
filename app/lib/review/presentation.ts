@@ -11,6 +11,16 @@ export function homeColorNotice(outcome: unknown): string {
   }
 }
 const reasons: Record<string, { title: string; help: string }> = {
+  portal_facts_review: {title:'문화·체험 행사 정보를 확인해 주세요',help:'서울문화포털의 수집 정보입니다. 이번 연결은 사실 검토까지이며, AI 처리로 자동 전환하지 않습니다.'},
+  portal_duplicate_suspected: {title:'기존 콘텐츠와 중복일 수 있습니다',help:'아래 비교 대상을 확인하세요. 축제 전체와 개별 예약, 다른 연도·회차는 같은 콘텐츠로 합치지 않습니다.'},
+  portal_information_conflict: {title:'원문 정보가 서로 다릅니다',help:'아래 각 출처의 값을 비교해 주세요. 임의로 하나를 선택하지 않았습니다.'},
+  portal_missing_information: {title:'필요한 정보가 없습니다',help:'아래 누락된 항목을 공식 상세 페이지에서 확인해 주세요.'},
+  portal_scope_unconfirmed: {title:'문화·체험 행사에 해당하는지 확인해 주세요',help:'제목만으로 포함·제외하지 않았습니다. 실제 프로그램 내용을 확인해 주세요.'},
+  portal_booking_unknown: {title:'신청 방법을 확인해 주세요',help:'무료라는 이유로 예약이 필요 없다고 판단하지 않습니다.'},
+  portal_program_conditions: {title:'세부 프로그램별 조건을 확인해 주세요',help:'일정·대상·예약 조건이 프로그램마다 다를 수 있습니다.'},
+  portal_eligibility_unknown: {title:'한국 거주 외국인도 참여 가능한지 확인해 주세요',help:'방한 관광객이라는 표현만으로 국내 거주자의 참여 여부를 결정하지 않았습니다.'},
+  portal_image_evidence: {title:'이미지의 안내를 확인해 주세요',help:'대체텍스트를 보존했으며 실제 포스터 이미지와 대조한 결과는 아닙니다.'},
+  portal_source_changed: {title:'수집 후 원문이 변경되었습니다',help:'새 관측 기록을 남기고 기존 판단·후보·버전은 유지했습니다.'},
   ai_recheck_requested: {title:"AI 대기를 보류하고 원문·확인값을 다시 확인해 주세요",help:"필요한 항목을 수정한 뒤 AI 작업 대기에서 최신 값을 확인하고 재검토를 완료해 주세요."},
   restored_review_pending: { title: "복구한 사실을 다시 확인해 주세요", help: "기존 사실과 근거를 확인한 뒤 사실 저장·재평가를 눌러 주세요. 수정할 내용이 없어도 검토를 완료할 수 있습니다." },
   product_type_unknown: { title: "정보 성격을 확인해 주세요", help: "원문을 읽고 행사·프로그램, 정책 참고자료, 생활 안내 중 하나를 선택해 주세요." },

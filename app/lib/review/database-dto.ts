@@ -35,7 +35,15 @@ export function databaseItem(data: unknown, kind: ReviewKind, id: string): Revie
     };
     const editableFields = strings(v.editableFields);
     if (editableFields.some((key) => !Object.hasOwn(facts, key)) || typeof v.excludeAllowed !== "boolean") throw new ReviewFailure("unavailable");
-    return { ...base, kind, facts, filterInfo: filterInfo(v.filterInfo, base.revision), editableFields: editableFields as (keyof Facts)[], excludeAllowed: v.excludeAllowed,
+    let collectionReview;
+    if (base.source.name === 'seoul_culture_portal') {
+      const r=object(v.collectionReview);
+      if (!Array.isArray(r.issues)||r.issues.length>100||!Array.isArray(r.matches)||r.matches.length>100||!/^[a-f0-9]{64}$/.test(string(r.observedRevision))) throw new ReviewFailure('unavailable');
+      collectionReview={outcome:choice(r.outcome,['new_review','change_review','duplicate_skipped','scope_excluded']),observedRevision:string(r.observedRevision),
+        issues:r.issues.map(value=>{const i=object(value);return{code:string(i.code),field:string(i.field),evidence:strings(i.evidence)};}),
+        matches:r.matches.map(value=>{const m=object(value);if(!/^[a-f0-9-]{36}$/.test(string(m.id)))throw new ReviewFailure('unavailable');return{id:string(m.id),title:string(m.title),source:string(m.source),kind:choice(m.kind,['same_official_identity','possible_overlap'])};})};
+    }
+    return { ...base, kind, facts, ...(collectionReview?{collectionReview}:{}), filterInfo: filterInfo(v.filterInfo, base.revision), editableFields: editableFields as (keyof Facts)[], excludeAllowed: v.excludeAllowed,
       restoredReviewPending: v.restoredReviewPending === true,
       status: choice(v.status, ["open", "resolved", "excluded"]), reasons: strings(v.reasons), aiStatus: choice(v.aiStatus, ["blocked", "queued", "claimed", "completed", "failed", "cancelled"]) };
   }

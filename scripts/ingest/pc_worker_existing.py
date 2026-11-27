@@ -15,7 +15,7 @@ COUNT_KEYS = frozenset({'scanned','target','existing_skipped','new_saved','revie
     'completed','unavailable_skipped','state_skipped','state_unknown','unprocessed','other_source','eligible',
     'inserted','updated','unchanged','excluded','created','skipped','total','duplicates','review','ai',
     'discovered','new','known','closed_skipped','processed','pending_remaining','carried_selected','list_pages',
-    'processed_items','held','confirmed_failed','chunks_total','chunks_done','snapshot_read_pages'})
+    'processed_items','held','confirmed_failed','changes_recorded','ended_skipped','chunks_total','chunks_done','snapshot_read_pages'})
 
 
 def outcome(value):
@@ -62,7 +62,7 @@ class ExistingWorkers:
                     'seoul_program_v1': (process_seoul_program_job, 'summarize_program_ko'),
                     'myseoul_program_v1': (process_myseoul_job, 'summarize_myseoul_ko'),
                 }
-                if any(source['ai'] not in workers for source in SOURCES.values()):
+                if any(source['ai'] != 'review_only' and source['ai'] not in workers for source in SOURCES.values()):
                     return dict(state='failed',code='contract_unavailable',counts={})
                 adapter,provider,close=(self.ai_context or self._ai_context)()
                 try:
@@ -83,7 +83,7 @@ class ExistingWorkers:
 
     def _collect_selected(self,selected):
         sources=collection_sources(selected)
-        if any(SOURCES[source]['collector'] not in {'seoul_culture_v1','myseoul_v1'} for source in sources):
+        if any(SOURCES[source]['collector'] not in {'seoul_culture_v1','myseoul_v1','culture_portal_v1'} for source in sources):
             return dict(state='failed',code='contract_unavailable',counts={})
         rows=[];counts=dict(selected_sources=len(sources),completed_sources=0,unprocessed_sources=len(sources))
         for source in sources:
@@ -99,8 +99,9 @@ class ExistingWorkers:
     def _ai_all(self,adapter,provider,limit,workers):
         from ingest.seoul_workflow import bounded_queue_targets,process_ready_targets,QUEUE_PAGE_SIZE
         from ingest.pc_worker_queue import frozen_queue_targets
-        if limit=='all':targets,counts=frozen_queue_targets(adapter,sources=tuple(SOURCES),progress=self.progress)
-        else:targets,counts=bounded_queue_targets(adapter,max_jobs=limit,queue_pages=1,source=tuple(SOURCES))
+        ai_sources = tuple(key for key, source in SOURCES.items() if source['ai'] in workers)
+        if limit=='all':targets,counts=frozen_queue_targets(adapter,sources=ai_sources,progress=self.progress)
+        else:targets,counts=bounded_queue_targets(adapter,max_jobs=limit,queue_pages=1,source=ai_sources)
         counts.update(items=[],held=0,batch_stopped=False,stop_reason=None,processed_items=0,confirmed_failed=0,
             chunks_total=(len(targets)+QUEUE_PAGE_SIZE-1)//QUEUE_PAGE_SIZE,chunks_done=0)
         def confirmed_failures(part):
@@ -181,6 +182,9 @@ class ExistingWorkers:
             return json.loads(lines[-1]) if lines else None
         if collector=='myseoul_v1':
             from run_myseoul_collect import execute_collection
+            return execute_collection(SimpleNamespace(project_ref=self.project))
+        if collector=='culture_portal_v1':
+            from run_culture_portal_collect import execute_collection
             return execute_collection(SimpleNamespace(project_ref=self.project))
         raise ValueError('unsupported_collector')
 

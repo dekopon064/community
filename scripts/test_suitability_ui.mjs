@@ -66,9 +66,11 @@ try {
  const {readAiQueue}=await import('../app/lib/review/ai-handlers.ts');
  const fixture=new LocalReviewStore();
  const [draft]=await fixture.list('facts');
+ const festival=JSON.parse(readFileSync(new URL('./fixtures/culture_portal/admin-synthetic.json',import.meta.url),'utf8'));
+ const festivalRow={id:festival.id,sourceName:festival.source.name,title:festival.source.title,status:'open',reasons:festival.reasons};
  const factsDeps={authorize:deps.authorize,store:()=>new DatabaseReviewStore({rpc:async(name,args)=>{
    assert.equal(name,'admin_review_list');
-   const facts=[draft,...rows.filter(r=>r.queue==='facts'&&!r.moved && r.currentStage!=='excluded').map(r=>({id:r.id,sourceName:r.source,title:r.title,status:'open',reasons:[]}))];
+   const facts=[draft,festivalRow,...rows.filter(r=>r.queue==='facts'&&!r.moved && r.currentStage!=='excluded').map(r=>({id:r.id,sourceName:r.source,title:r.title,status:'open',reasons:[]}))];
    return {data:facts.slice(args.p_offset,args.p_offset+25),error:null};
  }})};
  const jobs=rows.map(r=>({jobId:crypto.randomUUID(),sourceItemId:r.id,title:r.title,sourceName:r.source,revision:'a'.repeat(64),currentRevision:true,
@@ -119,6 +121,10 @@ try {
       return json({mode:'local-fixture',item:saved});
     }
     assert.equal(req.method(),'GET');
+    if(url.pathname.endsWith('/'+festival.id)){
+      return respond(reviewDetail(new Request(url),'facts',festival.id,{authorize:deps.authorize,
+        store:()=>new DatabaseReviewStore({rpc:async(name)=>{assert.equal(name,'admin_review_detail');return {data:festival,error:null};}})}));
+    }
     return respond(reviewDetail(new Request(url),'facts',draft.id,{authorize:deps.authorize,store:()=>fixture}));
   }
   if(url.origin===origin && url.pathname==='/api/admin/review')return respond(listReviews(new Request(url),factsDeps));
@@ -254,7 +260,11 @@ try {
  await summary.filter({hasText:'이동 성공 1건 · 실패 0건 · 미처리 1건 · 결과 불명 1건'}).waitFor();
  assert.deepEqual(attempted,ids.slice(0,2));assert.deepEqual(moves,[ids[0]]);
  const aside=page.getByRole('complementary',{name:'검토 목록'});
- await aside.getByText('남은 2건',{exact:true}).waitFor();
+ await aside.getByText('남은 3건',{exact:true}).waitFor();
+ const festivalButton=aside.getByRole('button').filter({hasText:festivalRow.title});
+ assert.equal(await festivalButton.count(),1);
+ await festivalButton.click();
+ await page.getByRole('heading',{name:'서울문화포털 수집 검토'}).waitFor();
  assert.equal(await aside.getByText(rows[0].title,{exact:true}).count(),0);
  assert.equal(await aside.getByText(rows[2].title,{exact:true}).count(),1);
  await page.getByRole('button',{name:'AI 작업 대기',exact:true}).click();
@@ -277,7 +287,7 @@ try {
  await confirmMove(3);
  await note.fill('작성 중인 다른 항목 메모');
  finishMove();moveGate=null;
- await aside.getByText('남은 1건',{exact:true}).waitFor();
+ await aside.getByText('남은 2건',{exact:true}).waitFor();
  assert.equal(await note.inputValue(),'작성 중인 다른 항목 메모');
  assert.equal(await aside.locator('button[aria-current="true"]').count(),1);
  assert.equal(await aside.getByText(rows[0].title,{exact:true}).count(),0);

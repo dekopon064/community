@@ -33,6 +33,7 @@ import { canEditPublishedBody, publishedBodyCommand } from "@/app/lib/review/pub
 import { reviewDetailPath } from "@/app/lib/review/program-ui";
 import PublishedHomeColor from './PublishedHomeColor';
 import PublishedHomeFeatured from './PublishedHomeFeatured';
+import CulturePortalReview from './CulturePortalReview';
 
 class RequestFailure extends Error {
   code: string; fields: Record<string, string>;
@@ -331,7 +332,7 @@ export default function ReviewWorkspace() {
           {list.map((entry) => <li key={entry.id}><button disabled={busy || (kind === "candidates" && candidateTotal === null) || dirty || Boolean(confirmation)} aria-current={(item?.id ?? myseoulId ?? programId) === entry.id ? "true" : undefined} className={`w-full px-3 py-5 text-left hover:bg-info-surface disabled:cursor-not-allowed disabled:opacity-60 ${(item?.id ?? myseoulId ?? programId) === entry.id ? "bg-info-surface" : ""}`} onClick={() => select(entry.id)}>
             <span className="block text-sm text-info-status">{statusText[entry.status] ?? "상태 확인 필요"}</span>
             <span className="mt-2 block break-keep font-semibold leading-6">{entry.title}</span>
-            <span className="mt-2 block text-sm text-info-muted">{entry.sourceName === "myseoul_program" ? "마이서울플러스" : entry.sourceName === "seoul_reservation" ? "서울 공공서비스예약" : entry.sourceName}</span>
+            <span className="mt-2 block text-sm text-info-muted">{entry.sourceName === "myseoul_program" ? "마이서울플러스" : entry.sourceName === "seoul_reservation" ? "서울 공공서비스예약" : entry.sourceName === "seoul_culture_portal" ? "서울문화포털" : entry.sourceName}</span>
             {entry.reasons.length > 0 && <span className="mt-2 block text-sm leading-6 text-info-body">{entry.sourceName === "myseoul_program" ? myseoulGuidance(entry.reasons[0]) : entry.sourceName === "seoul_reservation" ? programReasonText[entry.reasons[0]] ?? "원문에서 추가 사실을 확인해 주세요." : reasonText(entry.reasons[0]).title}{entry.reasons.length > 1 ? ` 외 ${entry.reasons.length - 1}개` : ""}</span>}
           </button></li>)}
         </ul>
@@ -348,6 +349,7 @@ export default function ReviewWorkspace() {
             <h2 ref={detailHeading} tabIndex={-1} className="mt-2 scroll-mt-36 break-keep text-2xl font-bold leading-snug">{item.kind === "facts" ? item.source.title : item.content.titleKo}</h2>
             <p className="mt-3 text-sm leading-6 text-info-muted">{item.kind === "candidates" ? `${candidateSourceName(item.source.name)} · ${item.category ? categories[item.category] : "분류 확인 필요"}` : item.source.name}</p>
           </header>
+          {item.kind==='facts'&&item.collectionReview&&<CulturePortalReview review={item.collectionReview}/>}
           {publishedMode&&item.kind==='candidates'&&item.status==='published'&&item.publishedId&&<PublishedHomeColor key={item.id+item.version} id={item.id} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||locationBusy||featuredBlocked||fieldsDirty||Boolean(note)||Boolean(confirmation)} onBlocked={setColorBlocked}/>}
           {publishedMode&&item.kind==='candidates'&&item.status==='published'&&item.publishedId&&<PublishedHomeFeatured key={'featured'+item.id+item.version} id={item.id} disabled={operationBusy||filterBlocked||classificationBlocked||aiBlocked||locationBusy||colorBlocked||fieldsDirty||Boolean(note)||Boolean(confirmation)} onBlocked={setFeaturedBlocked}/>}
           {(!publishedMode&&(item.kind==='facts'||item.kind==='candidates'&&item.status==='published'))&&<ClassificationPanel key={item.id+item.version} id={item.id} disabled={operationBusy||fieldsDirty||Boolean(confirmation)} onBlocked={setClassificationBlocked} onActive={setClassificationActive} onSaved={async()=>{const data=await call(`/api/admin/review/${item.kind}/${item.id}`);accept(data.item);setReload(n=>n+1);}}/>}

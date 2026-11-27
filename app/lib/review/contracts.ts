@@ -30,6 +30,7 @@ type BaseItem = {
   history: History[];
 };
 export type FactsItem = BaseItem & {
+  collectionReview?: { outcome: string; observedRevision: string; issues: {code:string;field:string;evidence:string[]}[]; matches: {id:string;title:string;source:string;kind:string}[] };
   filterInfo?: FilterInfo;
   kind: "facts"; facts: Facts; reasons: string[];
   editableFields?: (keyof Facts)[];

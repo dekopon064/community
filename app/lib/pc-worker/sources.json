@@ -12,5 +12,12 @@
     "collector": "myseoul_v1",
     "ai": "myseoul_program_v1",
     "collectionHint": "목록 최대 2페이지·상세 최대 10건, 신규 발견과 상세 처리 수 구분"
+  },
+  {
+    "id": "seoul_culture_portal",
+    "label": "서울문화포털",
+    "collector": "culture_portal_v1",
+    "ai": "review_only",
+    "collectionHint": "종료되지 않은 축제 전체 목록 확인 후 20건씩 연속 처리, 문화·체험 검토용 수집 (AI 자동 연결 없음)"
   }
 ]

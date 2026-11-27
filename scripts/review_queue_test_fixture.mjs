@@ -13,7 +13,8 @@ export async function reviewDatabase(){
  const root=new URL('../supabase/migrations/',import.meta.url);
  const files=(await readdir(root)).filter(n=>n.endsWith('.sql')&&(n>='20260827022301'&&n<'20260903'||n>='20260913'&&n<='20261001000001_seoul_program_ai.sql')).sort();
  for(const n of files){
-  try{await db.exec(await readFile(new URL(n,root),'utf8'));}catch(e){throw new Error(`Fixture migration ${n}: ${e.code} ${e.message}`);}
+  // PostgreSQL retains function-body line endings. Later migrations inspect the LF-formatted definitions from Git.
+  try{await db.exec((await readFile(new URL(n,root),'utf8')).replaceAll('\r\n','\n'));}catch(e){throw new Error(`Fixture migration ${n}: ${e.code} ${e.message}`);}
   if(n.startsWith('20260827022301'))await db.exec(`insert into machimoa_review.curation_candidates(source,source_item_id,source_revision_hash,slug,title,summary,content,raw_payload,ai_status) select 'youthcenter','baseline-'||n,repeat('a',64),'baseline-'||n,'제목','요약','본문','{}','success' from generate_series(1,4) n;`);
  }
  const baseline=await query(`select n.nspname,p.proname,pg_get_functiondef(p.oid) definition,p.proacl::text acl
