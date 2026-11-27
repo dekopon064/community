@@ -33,7 +33,12 @@ export function cultureContext(row: LocalizedCuration, locale: string, translate
     const name = translate(`provinces.${province}`);
     return district ? name + ' ' + (locale === 'ja' ? translate(`districts.${province}.${district}`) : district) : name;
   });
-  return [topic, ...new Set(regions)].join(' · ');
+  const isForeignerProgram = facts.category === 'program'
+    && facts.foreignerProgram?.status === 'known' && facts.foreignerProgram.value === 'foreigner';
+  return {
+    topicAndRegion: [topic, ...new Set(regions)].join(' · '),
+    audience: isForeignerProgram ? translate('foreignerProgram') : undefined,
+  };
 }
 
 export type WeeklyEntry = {

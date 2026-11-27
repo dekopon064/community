@@ -20,11 +20,14 @@ export default function HomeContentCard({ item, locale, featured = false, layout
     data-image={image ? 'true' : 'false'} data-tone={featured ? colors.tone : undefined}
     style={featured ? colors.style as CSSProperties : undefined} draggable={false}>
     <article className={styles.cardGrid}>
-      {featured && item.cultureContext ? <div className={styles.cardHeading}><p>{item.cultureContext}</p>{heading}</div> : heading}
+      {featured && item.cultureContext ? <div className={styles.cardHeading}>
+        <p>{item.cultureContext.topicAndRegion}{item.cultureContext.audience && <> · <span className={styles.audience}>{item.cultureContext.audience}</span></>}</p>
+        {heading}
+      </div> : heading}
       {image && <div className={styles.poster}><Image src={image} alt="" width={280} height={320} unoptimized
         draggable={false} referrerPolicy="no-referrer" onError={() => setFailed(image)} /></div>}
       <p className={styles.summary}>{item.summary}</p>
-      {layout !== 'living' && <p className={styles.meta}><span>{item.categoryLabel}</span>{item.period && <span className={styles.period}>{item.period}</span>}</p>}
+      {layout !== 'living' && <p className={styles.meta}><span>{item.categoryLabel}</span>{item.period && <span className={styles.period} data-tone={featured ? item.periodTone : undefined}>{item.period}</span>}</p>}
       <span className={styles.detail}>{words.detail}<HomeArrow /></span>
     </article>
   </Link>;

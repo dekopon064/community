@@ -220,6 +220,25 @@ await test('actual route localizes public sections, bounds one color read and le
     assert(html.includes('href="/feedback"')); assert(html.includes('topic=daily_safety')); assert(html.includes('data-tone="purple"'));
   }
 });
+await test('featured audience label uses only confirmed program classification and preserves card order', async () => {
+  const programs = ['marked', 'other', 'unknown', 'legacy'].map(id => row(id));
+  const entries = [...programs, row('event', 'event')].map(raw);
+  delete entries[3].content_filters.foreignerProgram;
+  for (const locale of ['ko', 'ja']) {
+    entries[0].content_filters.foreignerProgram = known('other');
+    const baseline = (await route(entries, locale, now)).props.items;
+    entries[0].content_filters.foreignerProgram = known('foreigner');
+    entries[1].content_filters.foreignerProgram = known('other');
+    const items = (await route(entries, locale, now)).props.items;
+    const label = locale === 'ko' ? '외국인 프로그램' : '外国人向けプログラム';
+    assert.equal(items.length, entries.length);
+    assert.deepEqual(idList(items), idList(baseline));
+    for (const [index, item] of items.entries()) {
+      assert.equal(item.cultureContext.topicAndRegion, baseline[index].cultureContext.topicAndRegion);
+      assert.equal(item.cultureContext.audience, item.id === 'marked' ? label : undefined);
+    }
+  }
+});
 await test('ko/ja route updates latest living guides through the existing public fetch and bilingual gate', async () => {
   const guide=(id,date,patch={})=>raw(row(id,'living',{contentFilters:null,created_at:date,...patch}));
   const old=guide('guide-old','2026-10-01T00:00:00Z',{updated_at:'2027-01-01T00:00:00Z'});
