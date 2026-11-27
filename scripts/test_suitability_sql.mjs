@@ -63,6 +63,8 @@ try {
   if(n>=27)await db.query("insert into machimoa_review.processing_jobs values($1,$2,$3,'ai_enrichment','queued')",[job(n),id(n),rev]);
  }
  for(let n=1;n<=56;n++)await seed(n);
+ await db.query('insert into machimoa_review.source_items values($1,$2,$3,$4,$5,true,false,$6)',
+  [id(100),'seoul_culture_portal','festival',rev,hash,'합성 축제']);
  await db.query('insert into machimoa_review.admin_exclusion_episodes values($1,null)',[id(9)]);
  await db.query('insert into machimoa_review.curation_candidates values($1,$2,$3)',['myseoul_program','key8',rev]);
  const decide=item=>db.query("insert into machimoa_review.ingest_review_decisions values($1,$2,null,'relevance','approve_ai',$3,'{}')",[item,rev,actor]);
@@ -71,6 +73,7 @@ try {
  await seed(57);
  const snap=await report(first);
  assert.equal(snap.items.length,53);
+ assert.ok(!snap.items.some(row=>row.id===id(100)),'review-only festival stays outside suitability');
  assert.equal(snap.items.filter(x=>x.key==='key27').length,1);
  assert.ok(!snap.items.some(x=>['key7','key8','key9','key57'].includes(x.key)));
  const reserved=await claim(first); // simulate lost response; never reclaim this decision

@@ -1,0 +1,48 @@
+{
+  "id": "3395b5dd-59b8-457e-84ee-f7f2bb844b69",
+  "kind": "facts",
+  "facts": {
+    "scope": "unknown",
+    "regions": [],
+    "category": "",
+    "delivery": "unknown",
+    "eventEnd": "",
+    "evidence": "",
+    "deadlineOn": "",
+    "eventStart": "",
+    "productType": "",
+    "deadlineKind": "",
+    "foreignEligibility": "unknown"
+  },
+  "source": {
+    "url": "https://culture.seoul.go.kr/culture/culture/cultureEvent/view.do?cultcode=160152&menuNo=200010",
+    "body": "[기본 정보] venue\n서울 구로구 잔디광장\n\n[기본 정보] period\n2026-11-14 ~ 2026-11-15\n\n[기본 정보] hours\n11:00~19:30\n\n[기본 정보] audience\n누구나\n\n[기본 정보] fee\n5,000원\n\n[상세 본문] description\n전통 공예 체험과 공연을 진행합니다. 사전 예약 후 참여하세요.",
+    "name": "seoul_culture_portal",
+    "title": "합성 문화 행사 160138"
+  },
+  "status": "open",
+  "history": [],
+  "reasons": [
+    "portal_duplicate_suspected",
+    "portal_facts_review"
+  ],
+  "version": "4619fcc15a39fda7b89e87e036a54f518931115fa5bbdab94840a85d83e7bed5",
+  "aiStatus": "blocked",
+  "revision": "f97042bc6afa9662584caeed04a73f51157ebdd6a34314ffa95edb81e934c68a",
+  "editableFields": [],
+  "excludeAllowed": true,
+  "collectionReview": {
+    "issues": [],
+    "matches": [
+      {
+        "id": "dfd259a6-9f91-4eeb-bc6a-9ed64e294a65",
+        "kind": "possible_overlap",
+        "title": "합성 문화 행사 160138",
+        "source": "myseoul_program"
+      }
+    ],
+    "outcome": "new_review",
+    "observedRevision": "f97042bc6afa9662584caeed04a73f51157ebdd6a34314ffa95edb81e934c68a"
+  },
+  "restoredReviewPending": false
+}

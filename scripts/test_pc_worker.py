@@ -146,7 +146,7 @@ class ExistingWorkerTests(unittest.TestCase):
             calls=[]
             worker=ExistingWorkers(PROJECT,collect=lambda source:calls.append(source) or {'status':status})
             result=worker({**COMMAND,'source':'all'})
-            self.assertEqual(result['state'],state);self.assertEqual(calls,[next(iter(SOURCES))]);self.assertEqual(result['counts']['unprocessed_sources'],1)
+            self.assertEqual(result['state'],state);self.assertEqual(calls,[next(iter(SOURCES))]);self.assertEqual(result['counts']['unprocessed_sources'],len(SOURCES)-1)
         calls=[]
         def collect(source):
             calls.append(source)
