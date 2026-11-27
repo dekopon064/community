@@ -1,4 +1,4 @@
-import { formatCurationPeriod } from './applicationDeadlineDisplay';
+import { getCurationPeriodPresentation, type PeriodPresentation } from './applicationDeadlineDisplay';
 import { districtChoices, eventTopics, programTopics, provinceLabels } from './contentFilters';
 import { sortedDistrictChoices } from './districtSort';
 import type { LocalizedCuration } from './types';
@@ -7,7 +7,8 @@ import { eventTiming, programTiming, publicCurationItem } from './publicContentF
 
 export type { HomeTone } from './homeCardPalette';
 export type HomeItem = {
-  id: string; slug: string; title: string; summary: string; categoryLabel: string; cultureContext?: string;
+  id: string; slug: string; title: string; summary: string; categoryLabel: string;
+  cultureContext?: { topicAndRegion: string; audience?: string }; periodTone?: PeriodPresentation['tone'];
   imageUrl: string | null; period: string | null; tone?: HomeTone; toneManual?: boolean;
 };
 export type HomeSections = { living: HomeItem[]; learning: HomeItem[] };
@@ -31,12 +32,13 @@ export function homeItems(rows: readonly LocalizedCuration[], locale: string, to
       eventStartOn = occurrence?.start.value.slice(0, 10) ?? null;
       eventEndOn = occurrence?.end.value.slice(0, 10) ?? null;
     }
+    const period = getCurationPeriodPresentation({ category: item.userCategory, deadlineKind,
+      deadlineOn, eventStartOn, eventEndOn, todayKst: today, locale });
     return {
-    id: item.id, slug: item.slug, title: item.title, summary: item.summary,
-    imageUrl: item.source_image_url ?? null,
-    categoryLabel: item.userCategory ? categories(item.userCategory) : '',
-    period: formatCurationPeriod({ category: item.userCategory, deadlineKind,
-      deadlineOn, eventStartOn, eventEndOn, todayKst: today, locale }),
+      id: item.id, slug: item.slug, title: item.title, summary: item.summary,
+      imageUrl: item.source_image_url ?? null,
+      categoryLabel: item.userCategory ? categories(item.userCategory) : '',
+      period: period?.listLabel ?? null, periodTone: period?.tone,
     };
   });
 }
